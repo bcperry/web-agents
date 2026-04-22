@@ -1,0 +1,62 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+.env
+
+.ruff*
+
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+.terraform.lock.hcl
+
+.mypy_cache/
+.pytest_cache/
+# Certificates
+certs/
+.env.appsettings.json
+.azure/config
+eval/traces/
+eval/results/
+
+
+*.pdf
+!config/A2404.pdf
+eval/datasets/Chatbot Validation Questions.md
+scripts/pdf_to_md.py
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+*.tiff
+*.tif
+
+.chainlit/translations
+*.sqlite3
+*.db
+
+
+screenshots/
+
+MS_Army_Team_Logo.png
+
+

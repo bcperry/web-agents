@@ -1,0 +1,72 @@
+# ── Primary LLM Configuration ──────────────────────────────────────────────────
+# Provider is auto-detected from environment variables:
+#   1. AZURE_OPENAI_ENDPOINT set → Azure OpenAI
+#   2. OPENAI_API_KEY set → OpenAI-compatible (Ollama, local models, etc.)
+#   3. Both set → Azure takes priority
+#
+# === Option A: Azure OpenAI (default for production) ===
+AZURE_OPENAI_ENDPOINT="https://{your-custom-endpoint}.openai.azure.us/"
+AZURE_OPENAI_MODEL="your-deployment-name"
+AZURE_OPENAI_API_KEY="your-api-key"
+AZURE_OPENAI_API_VERSION="2025-01-01-preview"
+#
+# === Option B: OpenAI-compatible (Ollama, vLLM, LM Studio, etc.) ===
+# Uncomment these and comment out the AZURE_OPENAI_* vars above:
+# OPENAI_BASE_URL="http://localhost:11434/v1"
+# OPENAI_MODEL="llama3"
+# OPENAI_API_KEY="ollama"
+
+# ── Secondary/Fallback LLM (used for conversation summarization) ──────────────
+AZURE_OPENAI_SECONDARY_ENDPOINT="https://{your-secondary-endpoint}.openai.azure.us/"
+AZURE_OPENAI_SECONDARY_MODEL="your-secondary-deployment-name"
+AZURE_OPENAI_SECONDARY_API_KEY="your-secondary-api-key"
+AZURE_OPENAI_SECONDARY_API_VERSION="2025-01-01-preview"
+
+# ── LLM Tuning (optional, defaults shown) ────────────────────────────────────
+# LLM_TEMPERATURE=0.2
+
+# ── Azure SQL / Synapse ───────────────────────────────────────────────────────
+# For deployment as an app service, use Managed Identity authentication:
+# AZURE_SQL_CONNECTIONSTRING="Driver={ODBC Driver 18 for SQL Server};Server=tcp:<yourserver>.database.usgovcloudapi.net,1433;Database=<yourdatabase>;Encrypt=yes;TrustServerCertificate=no;Connection Timeout=30;Authentication=ActiveDirectoryMsi"
+#
+# For app service with User Assigned Identity (include UID):
+# AZURE_SQL_CONNECTIONSTRING="Driver={ODBC Driver 18 for SQL Server};Server=tcp:<yourserver>.database.usgovcloudapi.net,1433;Database=<yourdatabase>;Encrypt=yes;TrustServerCertificate=no;Connection Timeout=30;Authentication=ActiveDirectoryMsi;UID=<managed-identity-client-id>"
+#
+# For local development, use ActiveDirectoryInteractive:
+AZURE_SQL_CONNECTIONSTRING="Driver={ODBC Driver 18 for SQL Server};Server=tcp:<yourserver>.database.usgovcloudapi.net,1433;Database=<yourdatabase>;Encrypt=yes;Uid=<yourusername>;TrustServerCertificate=no;Connection Timeout=30;Authentication=ActiveDirectoryInteractive"
+
+# ── Azure AI Search ───────────────────────────────────────────────────────────
+SEARCH_SERVICE_ENDPOINT="https://{your-custom-endpoint}.search.azure.us"
+SEARCH_INDEX_NAME="{your-index-name}"
+SEARCH_API_KEY="{your-query-key}"
+
+# ── Authentication ────────────────────────────────────────────────────────────
+# Set AUTH_DISABLED=true for local development (bypasses Azure AD token validation)
+AUTH_DISABLED="true"
+# Azure AD / OAuth (required when AUTH_DISABLED is not true)
+OAUTH_AZURE_GOV_AD_CLIENT_ID="your-client-id"
+OAUTH_AZURE_GOV_AD_TENANT_ID="your-tenant-id"
+# AZURE_AD_AUTHORITY="https://login.microsoftonline.us"
+
+# ── UI Branding (optional, defaults shown) ────────────────────────────────────
+# APP_NAME="Web-Agents"
+# APP_TAGLINE="AI Agent Framework"
+# CLASSIFICATION_BANNER="UNCLASSIFIED"
+
+# ── Configurable Limits (optional, defaults shown) ────────────────────────────
+# MAX_USER_INPUT_CHARS=8000
+# MAX_QUERY_RESULT_ROWS=100
+# MAX_QUERY_RESULT_CHARS=12000
+# MAX_SQL_CELL_CHARS=1200
+# MAX_LOG_QUERY_CHARS=500
+# MAX_LOG_TOOL_RESULT_CHARS=100
+# MAX_SEARCH_SNIPPET_CHARS=500
+
+# ── Evaluation Pipeline (optional) ───────────────────────────────────────────
+# ENABLE_EVAL_TRACE_LOGGING=false
+# EVAL_TRACE_OUTPUT_PATH=eval/traces/agent_runs.jsonl
+
+# ── PowerBI Report Deep-Link (optional) ──────────────────────────────────────
+# Report definitions (IDs, page IDs, filters) live in config/powerbi/reports.txt.
+# Set this env var to override the base URL in that file (e.g., per-environment workspace).
+# POWERBI_REPORT_BASE_URL="https://app.powerbigov.us/groups/{workspace-id}/reports/"
