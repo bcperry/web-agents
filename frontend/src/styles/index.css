@@ -671,6 +671,43 @@ body {
   color: var(--accent-gold);
 }
 
+/* Tool result images */
+.tool-result-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.tool-result-image {
+  max-width: 100%;
+  max-height: 400px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-olive);
+  cursor: pointer;
+  object-fit: contain;
+}
+
+.tool-result-image:hover {
+  border-color: var(--accent-gold);
+}
+
+/* Inline images in chat messages (from tool results) */
+.message-tool-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.message-tool-image {
+  max-width: 100%;
+  max-height: 500px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-olive);
+  object-fit: contain;
+}
+
 /* T011: Disclaimer */
 .disclaimer-overlay {
   position: fixed;

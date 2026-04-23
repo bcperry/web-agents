@@ -14,7 +14,7 @@ from agent_framework._compaction import (
     TokenBudgetComposedStrategy,
     ToolResultCompactionStrategy,
 )
-from agent_framework.openai import OpenAIChatCompletionClient
+from agent_framework.openai import OpenAIChatClient
 
 from dotenv import load_dotenv
 
@@ -114,12 +114,12 @@ def _get_default_temperature() -> float:
 
 def _build_context_providers(
     token_budget: int,
-    summarizer_client: OpenAIChatCompletionClient | None = None,
+    summarizer_client: OpenAIChatClient | None = None,
     logical_profile: str | None = None,
     enable_search_context: bool = False,
     skill_names: list[str] | None = None,
 ) -> list[Any]:
-    summarizer = summarizer_client or OpenAIChatCompletionClient()
+    summarizer = summarizer_client or OpenAIChatClient()
     tokenizer = CharacterEstimatorTokenizer()
 
     pipeline = TokenBudgetComposedStrategy(
@@ -159,13 +159,13 @@ def _create_agent(
     token_budget: int,
     temperature: float,
     tools: Sequence[Any] | None = None,
-    client: OpenAIChatCompletionClient | None = None,
-    summarizer_client: OpenAIChatCompletionClient | None = None,
+    client: OpenAIChatClient | None = None,
+    summarizer_client: OpenAIChatClient | None = None,
     logical_profile: str | None = None,
     enable_search_context: bool = False,
     skill_names: list[str] | None = None,
 ) -> RuntimeAgent:
-    runtime_client = client or OpenAIChatCompletionClient()
+    runtime_client = client or OpenAIChatClient()
 
     return runtime_client.as_agent(
         name=_sanitize_agent_name(name),
@@ -196,8 +196,8 @@ def spawn_agent(
     token_budget: int = 16_000,
     temperature: float | None = None,
     tools: Sequence[Any] | None = None,
-    client: OpenAIChatCompletionClient | None = None,
-    summarizer_client: OpenAIChatCompletionClient | None = None,
+    client: OpenAIChatClient | None = None,
+    summarizer_client: OpenAIChatClient | None = None,
     logical_profile: str | None = None,
     enable_search_context: bool = False,
     skill_names: list[str] | None = None,
@@ -214,8 +214,8 @@ def spawn_agent(
     token_budget: int = 16_000,
     temperature: float | None = None,
     tools: Sequence[Any] | None = None,
-    client: OpenAIChatCompletionClient | None = None,
-    summarizer_client: OpenAIChatCompletionClient | None = None,
+    client: OpenAIChatClient | None = None,
+    summarizer_client: OpenAIChatClient | None = None,
     logical_profile: str | None = None,
     enable_search_context: bool = False,
     skill_names: list[str] | None = None,
@@ -258,7 +258,7 @@ def spawn_agent(
     )
 
 
-def _build_openai_clients() -> tuple[OpenAIChatCompletionClient, OpenAIChatCompletionClient]:
+def _build_openai_clients() -> tuple[OpenAIChatClient, OpenAIChatClient]:
     """Create primary and summarizer OpenAI clients from environment variables.
 
     The primary client uses zero-arg construction so the SDK auto-detects the
@@ -267,12 +267,12 @@ def _build_openai_clients() -> tuple[OpenAIChatCompletionClient, OpenAIChatCompl
     The secondary/summarizer client checks for AZURE_OPENAI_SECONDARY_* vars
     (which the SDK does not auto-detect) and falls back to the primary client.
     """
-    primary = OpenAIChatCompletionClient()
+    primary = OpenAIChatClient()
 
     secondary_endpoint = (os.getenv("AZURE_OPENAI_SECONDARY_ENDPOINT") or "").strip()
     if secondary_endpoint:
         try:
-            summarizer = OpenAIChatCompletionClient(
+            summarizer = OpenAIChatClient(
                 azure_endpoint=secondary_endpoint,
                 model=(os.getenv("AZURE_OPENAI_SECONDARY_MODEL") or "").strip() or None,
                 api_key=(os.getenv("AZURE_OPENAI_SECONDARY_API_KEY") or "").strip() or None,

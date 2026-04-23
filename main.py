@@ -355,8 +355,8 @@ async def _stream_agent_response(
                     else str(arguments)
                 )
 
-                if name and call_id:
-                    # First chunk of a new tool call — has name + call_id
+                if name and call_id and call_id not in tool_event_by_call_id:
+                    # First chunk of a new tool call — call_id not seen before
                     active_call_id = call_id
                     args_accumulator[call_id] = rendered_arguments
 
@@ -374,10 +374,29 @@ async def _stream_agent_response(
                         "name": name,
                         "arguments": rendered_arguments,
                     })
+                elif call_id and call_id in tool_event_by_call_id:
+                    # Continuation chunk for an existing call (Responses API sends
+                    # name+call_id on every delta, not just the first)
+                    active_call_id = call_id
+                    if rendered_arguments:
+                        args_accumulator[call_id] = args_accumulator.get(call_id, "") + rendered_arguments
+                        tool_event_by_call_id[call_id]["arguments"] = args_accumulator[call_id]
+                        yield _sse_event("function_call", {
+                            "call_id": call_id,
+                            "name": tool_event_by_call_id[call_id].get("name"),
+                            "arguments": args_accumulator[call_id],
+                        })
                 elif active_call_id:
                     # Continuation chunk — append arguments to the active call
                     if rendered_arguments:
                         args_accumulator[active_call_id] = args_accumulator.get(active_call_id, "") + rendered_arguments
+                        if active_call_id in tool_event_by_call_id:
+                            tool_event_by_call_id[active_call_id]["arguments"] = args_accumulator[active_call_id]
+                            yield _sse_event("function_call", {
+                                "call_id": active_call_id,
+                                "name": tool_event_by_call_id[active_call_id].get("name"),
+                                "arguments": args_accumulator[active_call_id],
+                            })
 
             elif content_type == "mcp_server_tool_call":
                 # MCP tools use a different content type with tool_name instead of name
@@ -390,7 +409,7 @@ async def _stream_agent_response(
                     else str(arguments)
                 )
 
-                if name and call_id:
+                if name and call_id and call_id not in tool_event_by_call_id:
                     args_accumulator[call_id] = rendered_arguments
 
                     event_payload = {
@@ -413,12 +432,40 @@ async def _stream_agent_response(
                 # function_result uses "result"; mcp_server_tool_result uses "output"
                 result = content.get("result") if content_type == "function_result" else content.get("output")
 
-                # MCP output is often a list of Content dicts — extract text for display
+                # Extract structured content items from the framework's "items" list.
+                # MCP servers return image content which the framework wraps as Content objects
+                # with {type:'data', uri:'data:image/jpeg;base64,...'}. Convert to frontend format.
+                content_items = None
+                items = content.get("items")
+                if isinstance(items, list):
+                    converted = []
+                    for item in items:
+                        if not isinstance(item, dict):
+                            continue
+                        item_type = item.get("type")
+                        if item_type == "text":
+                            converted.append({"type": "text", "text": item.get("text", "")})
+                        elif item_type == "data":
+                            uri = item.get("uri", "")
+                            if uri.startswith("data:image/"):
+                                # Parse data URI: data:image/jpeg;base64,<data>
+                                header, _, b64data = uri.partition(",")
+                                mime_type = header.split(";")[0].replace("data:", "")
+                                if b64data and mime_type:
+                                    converted.append({"type": "image", "data": b64data, "mimeType": mime_type})
+                        elif item_type == "image":
+                            # Direct image content (mcp_server_tool_result style)
+                            if item.get("data") and item.get("mimeType"):
+                                converted.append(item)
+                    if any(ci["type"] == "image" for ci in converted):
+                        content_items = converted
+
+                # Render text for display
                 if isinstance(result, list):
-                    text_parts = []
-                    for item in result:
-                        if isinstance(item, dict) and item.get("type") == "text":
-                            text_parts.append(item.get("text", ""))
+                    text_parts = [
+                        item.get("text", "") for item in result
+                        if isinstance(item, dict) and item.get("type") == "text"
+                    ]
                     rendered_result = "\n".join(text_parts) if text_parts else json.dumps(result, ensure_ascii=False)
                 elif isinstance(result, dict):
                     rendered_result = json.dumps(result, ensure_ascii=False)
@@ -433,9 +480,12 @@ async def _stream_agent_response(
                 active_call_id = None
 
                 yield _sse_event("function_result", {
-                    "call_id": call_id,
-                    "result": rendered_result,
-                    "arguments": accumulated_args,
+                    k: v for k, v in {
+                        "call_id": call_id,
+                        "result": rendered_result,
+                        "arguments": accumulated_args,
+                        "content_items": content_items,
+                    }.items() if v is not None
                 })
 
             elif content_type == "usage":
@@ -1040,7 +1090,7 @@ async def send_message(
     async def generate() -> AsyncGenerator[str, None]:
         try:
             async for event in _stream_agent_response(
-                session_data.agent, contents, session_data.agent_session
+                session_data.agent, contents, session_data.agent_session,
             ):
                 yield event
         except Exception as e:

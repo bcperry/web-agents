@@ -2,6 +2,7 @@ import { useState, useCallback, useRef } from 'react';
 import type {
   ChatMessage,
   ChatSession,
+  ContentItem,
   McpConnectionResult,
   McpServerEntry,
   SessionCreateResponse,
@@ -245,15 +246,23 @@ export function useChat(): ChatState {
             });
           },
           onFunctionCall: (data) => {
-            toolsRef.current = [
-              ...toolsRef.current,
-              {
-                call_id: data.call_id,
-                name: data.name,
-                arguments: data.arguments,
-                result: '',
-              },
-            ];
+            const existingIdx = toolsRef.current.findIndex((t) => t.call_id === data.call_id);
+            if (existingIdx >= 0) {
+              // Continuation chunk — update the existing tool's arguments
+              toolsRef.current = toolsRef.current.map((t, i) =>
+                i === existingIdx ? { ...t, arguments: data.arguments } : t
+              );
+            } else {
+              toolsRef.current = [
+                ...toolsRef.current,
+                {
+                  call_id: data.call_id,
+                  name: data.name,
+                  arguments: data.arguments,
+                  result: '',
+                },
+              ];
+            }
             setMessages((prev) => {
               const updated = [...prev];
               updated[assistantIndex] = {
@@ -272,6 +281,7 @@ export function useChat(): ChatState {
                     arguments: (data.arguments && data.arguments.length > 0)
                       ? data.arguments
                       : t.arguments,
+                    ...(data.content_items ? { content_items: data.content_items } : {}),
                   }
                 : t
             );
@@ -285,6 +295,7 @@ export function useChat(): ChatState {
                   arguments: (data.arguments && data.arguments.length > 0)
                     ? data.arguments
                     : toolsRef.current[pending].arguments,
+                  ...(data.content_items ? { content_items: data.content_items } : {}),
                 };
               }
             }
@@ -437,6 +448,33 @@ function extractMessagesFromSessionData(sessionData: Record<string, unknown>): C
                   existing.result = typeof rawResult === 'string'
                     ? rawResult
                     : JSON.stringify(rawResult ?? '');
+                }
+                // Extract structured content items (images) from the "items" list
+                // MCP servers return image content which the framework wraps as {type:'data', uri:'data:image/...;base64,...'}
+                const items = content.items as Array<Record<string, unknown>> | undefined;
+                if (Array.isArray(items)) {
+                  const converted: ContentItem[] = [];
+                  for (const item of items) {
+                    if (item.type === 'text') {
+                      converted.push({ type: 'text', text: (item.text as string) || '' });
+                    } else if (item.type === 'data') {
+                      const uri = (item.uri as string) || '';
+                      if (uri.startsWith('data:image/')) {
+                        const commaIdx = uri.indexOf(',');
+                        const header = uri.slice(0, commaIdx);
+                        const b64data = uri.slice(commaIdx + 1);
+                        const mimeType = header.split(';')[0].replace('data:', '');
+                        if (b64data && mimeType) {
+                          converted.push({ type: 'image', data: b64data, mimeType });
+                        }
+                      }
+                    } else if (item.type === 'image' && item.data && item.mimeType) {
+                      converted.push(item as unknown as ContentItem);
+                    }
+                  }
+                  if (converted.some((ci) => ci.type === 'image')) {
+                    existing.content_items = converted;
+                  }
                 }
               }
             }

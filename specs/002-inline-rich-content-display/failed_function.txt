@@ -1,0 +1,151 @@
+Semantic search args:
+{
+  "query": "small unmanned aircraft systems drone operations visual line of sight Part 107",
+  "top": 5
+}
+
+Semantic search result:
+{
+  "@odata.context": "https://avcoe-demo-ai-search-mcp-search.search.azure.us/indexes('multimodal-rag-1772547899496')/$metadata#docs(*)",
+  "@odata.count": 6960,
+  "@search.answers": [
+    {
+      "score": 0.9909999966621399,
+      "key": "51f62f9a01c9_aHR0cHM6Ly9hdmNvZWRlbW9haXNlYXJjaG1jcHN0Zy5ibG9iLmNvcmUudXNnb3ZjbG91ZGFwaS5uZXQvbXVsdGltb2RhbC1kYXRhLzAxMS1XU0gzMDAxTCUyMCUyMEludHJvZHVjdGlvbiUyMHRvJTIwVUFTJTIwKDA4JTIwTWF5JTIwMjQpJTIwRWRpdGVkJTIwMjUlMjBKdWwlMjAyNC5kb2N40_pages_20",
+      "text": "Slide – DoD UAS Classification: This video illustrates an example of the nano/micro class of UAS. Slide – Unmanned Aircraft Systems by echelon: Platoon Level: Provides the small unit organic capability to perform Beyond Visual Line-Of-Sight (BLOS) RSTA with payloads such as Full Motion Video. Exceptionally small form factor, intuitive operation;...",
+      "highlights": "Slide – DoD UAS Classification: This video illustrates an example of the nano/micro class of UAS. Slide –<em> Unmanned Aircraft Systems by echelon: Platoon </em>Level: Provides the<em> small unit organic capability to perform Beyond Visual Line-Of-Sight (BLOS) RSTA </em>with payloads such as Full Motion Video. Exceptionally small form factor, intuitive operation;..."
+    },
+    {
+      "score": 0.9760000109672546,
+      "key": "76b3625db2a7_aHR0cHM6Ly9hdmNvZWRlbW9haXNlYXJjaG1jcHN0Zy5ibG9iLmNvcmUudXNnb3ZjbG91ZGFwaS5uZXQvbXVsdGltb2RhbC1kYXRhL0NBTExfc1VBU0FpcnNwYWNlTWFuYWdlbWVudEFuZENvbnRyb2xfMjAyNTA5MTIucGRm0_normalized_images_18",
+      "text": "One soldier is kneeling in the foreground facing away from the camera, while another soldier standing to the left is holding and deploying a small drone with both hands.  ...ears to be a tablet or control unit, likely used to operate the droneThe scene suggests a military operation or training exercise involving drone deployment and reconnaissance.",
+      "highlights": "One<em> soldier is kneeling in the foreground facing away from the camera, </em>while another<em> soldier </em>standing<em> to </em>the left<em> is holding and deploying a small drone with both hands.</em> <em> ...ears to be a tablet or control unit, </em>likely used to operate the<em> droneT</em>he scene<em> suggests a military operation or training exercise involving drone deployment and reconnaissance.</em>"
+    },
+    {
+      "score": 0.9760000109672546,
+      "key": "eec64068e67e_aHR0cHM6Ly9hdmNvZWRlbW9haXNlYXJjaG1jcHN0Zy5ibG9iLmNvcmUudXNnb3ZjbG91ZGFwaS5uZXQvbXVsdGltb2RhbC1kYXRhLzAxMS1XU0gzMDAxTCUyMCUyMEludHJvZHVjdGlvbiUyMHRvJTIwVUFTJTIwKDA4JTIwTWF5JTIwMjQpLnBkZg2_pages_19",
+      "text": "UAS Classification: An example of a Nano class UAS is the AN/ZH-1 Black Hornet. Slide – Unmanned Aircraft Systems by echelon: Platoon Level: Provides the small unit organic capability to perform   Beyond Visual Line-Of-Sight (BLOS) RSTA with payloads such as Full Motion Video. Exceptionally small form factor,   intuitive operation; minimal train...",
+      "highlights": "UAS Classification: An example of a Nano class UAS is the AN/ZH-1 Black Hornet. Slide –<em> Unmanned Aircraft Systems by echelon: Platoon Level: </em>Provides the<em> small unit organic capability to perform   Beyond Visual Line-Of-Sight (BLOS) RSTA </em>with payloads such as Full Motion Video. Exceptionally small form factor,   intuitive operation; minimal train..."
+    },
+    {
+      "score": 0.9660000205039978,
+      "key": "dd714a27c4b8_aHR0cHM6Ly9hdmNvZWRlbW9haXNlYXJjaG1jcHN0Zy5ibG9iLmNvcmUudXNnb3ZjbG91ZGFwaS5uZXQvbXVsdGltb2RhbC1kYXRhL0Zvcm1zLCUyMFJlY29yZHMsJTIwYW5kJTIwT3BlcmF0aW9uYWwlMjBDb29yZGluYXRpb24ucHB0eA2_normalized_images_23",
+      "text": "The image shows a person dressed in military-style camouflage clothing holding a quadcopter drone in one hand and a remote control device in the other. The person is preparing to launch or has just caught the drone, with a clear sky in the background.  ...cene suggests an outdoor setting, likely related to drone operation or surveillance activities",
+      "highlights": "The image shows a person<em> dressed in military-style camouflage clothing holding a quadcopter drone in one hand </em>and a remote<em> control device </em>in the other. <em>The person is preparing to launch or has just caught the drone, with a clear sky in the background.</em>  ...cene suggests an outdoor setting, likely related to drone operation or surveillance activities"
+    },
+    {
+      "score": 0.9639999866485596,
+      "key": "677e837e800c_aHR0cHM6Ly9hdmNvZWRlbW9haXNlYXJjaG1jcHN0Zy5ibG9iLmNvcmUudXNnb3ZjbG91ZGFwaS5uZXQvbXVsdGltb2RhbC1kYXRhL0Jhc2ljJTIwRWxlY3RyaWNpdHklMjAoMTVYKSUyMFBvd2VycG9pbnQlMjAoMSkucHB0eA2_normalized_images_6",
+      "text": "The image shows a portable control console featuring a screen displaying a navigation or drone interface with map visuals and telemetry data. The console includes two joystick controllers, a full QWERTY keyboard, and various buttons and switches, all housed in a rugg... This setup appears intended for remotely operating unmanned vehicles or drones.",
+      "highlights": "The image shows a portable<em> control </em>console featuring a<em> screen displaying </em>a<em> navigation or drone interface </em>with<em> map visuals </em>and<em> telemetry data.</em> The console includes two joystick controllers, a full QWERTY keyboard, and various buttons and switches, all housed in a rugg... This setup appears intended for<em> remotely operating unmanned vehicles or drones.</em>"
+    }
+  ],
+  "@search.nextPageParameters": {
+    "search": "small unmanned aircraft systems drone operations visual line of sight Part 107",
+    "count": true,
+    "queryType": "semantic",
+    "semanticConfiguration": "multimodal-rag-1772547899496-semantic-configuration",
+    "captions": "extractive",
+    "answers": "extractive|count-5",
+    "select": "content_id,text_document_id,document_title,image_document_id,content_text,content_path",
+    "vectorQueries": [
+      {
+        "kind": "text",
+        "fields": "content_embedding",
+        "text": "small unmanned aircraft systems drone operations visual line of sight Part 107"
+      }
+    ]
+  },
+  "value": [
+    {
+      "image_document_id": "aHR0cHM6Ly9hdmNvZWRlbW9haXNlYXJjaG1jcHN0Zy5ibG9iLmNvcmUudXNnb3ZjbG91ZGFwaS5uZXQvbXVsdGltb2RhbC1kYXRhL0NBTExfc1VBU0FpcnNwYWNlTWFuYWdlbWVudEFuZENvbnRyb2xfMjAyNTA5MTIucGRm0",
+      "content_path": "multimodal-rag-images/aHR0cHM6Ly9hdmNvZWRlbW9haXNlYXJjaG1jcHN0Zy5ibG9iLmNvcmUudXNnb3ZjbG91ZGFwaS5uZXQvbXVsdGltb2RhbC1kYXRhL0NBTExfc1VBU0FpcnNwYWNlTWFuYWdlbWVudEFuZENvbnRyb2xfMjAyNTA5MTIucGRm0/normalized_images_13.jpg",
+      "content_id": "76b3625db2a7_aHR0cHM6Ly9hdmNvZWRlbW9haXNlYXJjaG1jcHN0Zy5ibG9iLmNvcmUudXNnb3ZjbG91ZGFwaS5uZXQvbXVsdGltb2RhbC1kYXRhL0NBTExfc1VBU0FpcnNwYWNlTWFuYWdlbWVudEFuZENvbnRyb2xfMjAyNTA5MTIucGRm0_normalized_images_13",
+      "text_document_id": null,
+      "content_text": "The image is a schematic representation of an operational scenario involving small unmanned aerial systems (SUAS) and other aerial assets within a designated area.\n\nKey elements include:\n1. Three SUAS are shown operating within marked zones (labeled 01, 02, and 08), each with defined operation areas or zones.\n2. A cluster of drones is depicted under the label \"OWA UAS Attack\" (07), appearing to launch or coordinate an attack.\n3. An ACM (Air Control Measure) area or system is represented (05), with a shaded zone indicating its influence or coverage.\n4. An aircraft labeled 06 is linked via a red dashed line to the ACM area, possibly indicating communication or control.\n5. Another aircraft (04) is shown flying in the upper airspace.\n6. Various buildings, cylindrical storage tanks, trees in different zones, and infrastructure elements are spread across the layout.\n7. Two shaded areas labeled \"SUAS Operation Area\" and \"ACM - SUAS\" indicate operational boundaries or no-fly zones related to the SUAS and ACM.\n\nOverall, the diagram illustrates an integrated air defense or operational system involving coordinated drone activity, air control measures, and supported by manned aerial platforms within a structured environment.",
+      "document_title": "CALL_sUASAirspaceManagementAndControl_20250912.pdf",
+      "@search.score": 0.029469121247529984,
+      "@search.rerankerScore": 2.7302064895629883,
+      "@search.highlights": null,
+      "@search.captions": [
+        {
+          "text": "The image is a schematic representation of an operational scenario involving small unmanned aerial systems (SUAS) and other aerial assets within a designated area. Three SUAS are shown operating within marked zones (labeled 01, 02, and 08), each with defined operation areas or zones. Two shaded areas labeled \"SUAS Operation Area\" and \"ACM - SUAS\".",
+          "highlights": "<em>The image </em>is<em> a schematic representation of an operational scenario involving small unmanned aerial systems (SUAS) and </em>other aerial assets within a designated area. <em>Three SUAS are shown operating within marked zones </em>(labeled 01, 02, and 08), each with defined operation areas or zones. <em>Two shaded areas labeled \"SUAS Operation Area\" and \"ACM - SUAS\".</em>"
+        }
+      ]
+    },
+    {
+      "image_document_id": "aHR0cHM6Ly9hdmNvZWRlbW9haXNlYXJjaG1jcHN0Zy5ibG9iLmNvcmUudXNnb3ZjbG91ZGFwaS5uZXQvbXVsdGltb2RhbC1kYXRhL0Jsb2dfU21hbGxEcm9uZU9wZXJhdG9yQUZTQ18yMDI1MDcxOC5wZGY1",
+      "content_path": "multimodal-rag-images/aHR0cHM6Ly9hdmNvZWRlbW9haXNlYXJjaG1jcHN0Zy5ibG9iLmNvcmUudXNnb3ZjbG91ZGFwaS5uZXQvbXVsdGltb2RhbC1kYXRhL0Jsb2dfU21hbGxEcm9uZU9wZXJhdG9yQUZTQ18yMDI1MDcxOC5wZGY1/normalized_images_2.jpg",
+      "content_id": "78aad9f948dc_aHR0cHM6Ly9hdmNvZWRlbW9haXNlYXJjaG1jcHN0Zy5ibG9iLmNvcmUudXNnb3ZjbG91ZGFwaS5uZXQvbXVsdGltb2RhbC1kYXRhL0Jsb2dfU21hbGxEcm9uZU9wZXJhdG9yQUZTQ18yMDI1MDcxOC5wZGY1_normalized_images_2",
+      "text_document_id": null,
+      "content_text": "The image is a social media post from \"The Airman's Dispatch\" discussing the importance of drones, specifically small Unmanned Aerial Systems (sUAS), in current military operations. It addresses a common question about whether a new Air Force Specialty Code (AFSC) will be created for sUAS operation. The post explains that small UAS are becoming vital for detection, defense, and deployment in the AFRICOM Area of Responsibility, highlighting real-time integration and response at Chabelley Airfield and Camp Lemonnier. It emphasizes the effort to develop UAS proficiency as a common skill across the Air Force, with a planning team dedicated to this goal. The post lists benefits such as low-cost, flexible platforms, transferable skillsets, and growing confidence in UAS employment across all AFSCs. It acknowledges the continued need for specialists but stresses adaptability and capability growth across the force.\n\nBelow the text, there is a photo showing two Airmen in uniform, one standing and one crouching, interacting with or preparing a small drone on the ground. The image is tagged with \"U.S. Africa Command (AFRICOM) Combined Joint Task Force-Horn of Africa.\" The Airman crouching appears to be inspecting or working on the drone, while the other stands nearby.",
+      "document_title": "Blog_SmallDroneOperatorAFSC_20250718.pdf",
+      "@search.score": 0.028985507786273956,
+      "@search.rerankerScore": 2.5414516925811768,
+      "@search.highlights": null,
+      "@search.captions": [
+        {
+          "text": "The image is a social media post from \"The Airman's Dispatch\" discussing the importance of drones, specifically small Unmanned Aerial Systems (sUAS), in current military operations. The post explains that small UAS are becoming vital for detection, defense, and deployment in the AFRICOM Area of Responsibility, highlighting real-time integration.",
+          "highlights": ""
+        }
+      ]
+    },
+    {
+      "image_document_id": "aHR0cHM6Ly9hdmNvZWRlbW9haXNlYXJjaG1jcHN0Zy5ibG9iLmNvcmUudXNnb3ZjbG91ZGFwaS5uZXQvbXVsdGltb2RhbC1kYXRhL0NBTExfc1VBU0FpcnNwYWNlTWFuYWdlbWVudEFuZENvbnRyb2xfMjAyNTA5MTIucGRm0",
+      "content_path": "multimodal-rag-images/aHR0cHM6Ly9hdmNvZWRlbW9haXNlYXJjaG1jcHN0Zy5ibG9iLmNvcmUudXNnb3ZjbG91ZGFwaS5uZXQvbXVsdGltb2RhbC1kYXRhL0NBTExfc1VBU0FpcnNwYWNlTWFuYWdlbWVudEFuZENvbnRyb2xfMjAyNTA5MTIucGRm0/normalized_images_18.jpg",
+      "content_id": "76b3625db2a7_aHR0cHM6Ly9hdmNvZWRlbW9haXNlYXJjaG1jcHN0Zy5ibG9iLmNvcmUudXNnb3ZjbG91ZGFwaS5uZXQvbXVsdGltb2RhbC1kYXRhL0NBTExfc1VBU0FpcnNwYWNlTWFuYWdlbWVudEFuZENvbnRyb2xfMjAyNTA5MTIucGRm0_normalized_images_18",
+      "text_document_id": null,
+      "content_text": "The image shows three soldiers in full combat gear, including helmets and tactical vests, positioned in a smoky, dusty environment. One soldier is kneeling in the foreground facing away from the camera, while another soldier standing to the left is holding and deploying a small drone with both hands. The third soldier stands to the right, holding a device that appears to be a tablet or control unit, likely used to operate the drone. The scene suggests a military operation or training exercise involving drone deployment and reconnaissance. The faces of the soldiers are blurred.",
+      "document_title": "CALL_sUASAirspaceManagementAndControl_20250912.pdf",
+      "@search.score": 0.019475480541586876,
+      "@search.rerankerScore": 2.497851848602295,
+      "@search.highlights": null,
+      "@search.captions": [
+        {
+          "text": "The image shows three soldiers in full combat gear, i... One soldier is kneeling in the foreground facing away from the camera, while another soldier standing to the left is holding and deploying a small drone with both hands. The third soldier stands to the right, holding a device that appears to be a tablet or control unit, likely used to.",
+          "highlights": "The image shows three soldiers in full combat gear, i... One<em> soldier is kneeling in the foreground facing away from the camera, </em>while another<em> soldier </em>standing<em> to </em>the left<em> is holding and deploying a small drone with both hands.</em> <em>The third soldier stands to the right, holding a device that appears to be a tablet or control unit, </em>likely used to."
+        }
+      ]
+    },
+    {
+      "image_document_id": null,
+      "content_path": null,
+      "content_id": "40462dbd0d73_aHR0cHM6Ly9hdmNvZWRlbW9haXNlYXJjaG1jcHN0Zy5ibG9iLmNvcmUudXNnb3ZjbG91ZGFwaS5uZXQvbXVsdGltb2RhbC1kYXRhL0NBTExfc1VBU0FpcnNwYWNlTWFuYWdlbWVudEFuZENvbnRyb2xfMjAyNTA5MTIucGRm0_pages_36",
+      "text_document_id": "aHR0cHM6Ly9hdmNvZWRlbW9haXNlYXJjaG1jcHN0Zy5ibG9iLmNvcmUudXNnb3ZjbG91ZGFwaS5uZXQvbXVsdGltb2RhbC1kYXRhL0NBTExfc1VBU0FpcnNwYWNlTWFuYWdlbWVudEFuZENvbnRyb2xfMjAyNTA5MTIucGRm0",
+      "content_text": "and defensive \n\noperations, with implications for airspace management in maneuver contexts. \n\nARMY FIELD MANUALS \n• Field Manual (FM) 3-52, Airspace Control, 20 October 2016. Provides detailed \n\ninformation on Army-specific airspace control procedures and responsibilities. \n\n• FM 3-52, Airspace (draft)18 \n\n• FM 6-0, Commander and Staff Organization and Operations, 16 May 2022. Outlines \n\nstaff responsibilities and processes, including those related to airspace management. \n\nJOINT PUBLICATIONS \n• Joint Publication (JP) 3-0, Joint Campaigns and Operations, 18 June 2022. \n\n• JP 3-30, Joint Air Operations, 28 April 2025. \n\n• JP 3-52, Joint Airspace Control, 22 October 2022. \n\nONLINE RESOURCES \n• Army Publishing Directorate: https://armypubs.army.mil/. \n\n• Federal Aviation Administration: https://www.faa.gov/. \n\nOTHER RELEVANT PUBLICATIONS AND RESOURCES \n• Federal Aviation Administration (FAA) Regulations: Consult relevant FAA regulations \n\ngoverning UAS operations in the National Airspace System (e.g., 14 Code of Federal \n\nRegulations [CFF] Part 107). \n\n• Army Unmanned Aircraft System (UAS) Training Materials: Refer to specific \n\ntraining materials and publications provided for the relevant small unmanned aircraft \n\nsystem (SUAS) platform(s) being employed. \n\n• Unit Standard Operating Procedures (SOPs): Adhere to any established unit SOPs \n\ngoverning SUAS operations, airspace coordination, and safety procedures. \n\n• Manufacturer Technical Manuals: Consult manufacturer-provided technical manuals \n\nfor detailed information on SUAS system specifications, operating limitations, and \n\nmaintenance procedures. \n\n \n18 The material in this publication is under development and subject to change. When published, this publication will \n\nsupersede FM 3-52, Airspace Control, 20 October 2016. \n\nhttps://armypubs.army.mil/\nhttps://www.faa.gov/\n\n\nNO. 25-14 (966) \nSeptember 2025\n\nApproved for Public Release\nDistribution Unlimited\n\nCENTER FOR ARMY LESSONS LEARNED",
+      "document_title": "CALL_sUASAirspaceManagementAndControl_20250912.pdf",
+      "@search.score": 0.014705882407724857,
+      "@search.rerankerScore": 2.481900691986084,
+      "@search.highlights": null,
+      "@search.captions": [
+        {
+          "text": "ONLINE RESOURCES  • Army Publishing Directorate: htt... OTHER RELEVANT PUBLICATIONS AND RESOURCES  • Federal Aviation Administration (FAA) Regulations: Consult relevant FAA regulations   governing UAS operations in the National Airspace System (e.g., 14 Code of Federal   Regulations [CFF] Part 107). • Army Unmanned Aircraft System (UAS) Training.",
+          "highlights": "ONLINE RESOURCES  • Army Publishing Directorate: htt... OTHER RELEVANT PUBLICATIONS AND RESOURCES  • Federal Aviation Administration (FAA) Regulations: Consult relevant FAA regulations   governing<em> UAS </em>operations in the National Airspace System (e.g.,<em> 14 Code of Federal   Regulations [CFF] Part 107).</em> • Army Unmanned Aircraft System (UAS) Training."
+        }
+      ]
+    },
+    {
+      "image_document_id": "aHR0cHM6Ly9hdmNvZWRlbW9haXNlYXJjaG1jcHN0Zy5ibG9iLmNvcmUudXNnb3ZjbG91ZGFwaS5uZXQvbXVsdGltb2RhbC1kYXRhL0NBTExfc1VBU0FpcnNwYWNlTWFuYWdlbWVudEFuZENvbnRyb2xfMjAyNTA5MTIucGRm0",
+      "content_path": "multimodal-rag-images/aHR0cHM6Ly9hdmNvZWRlbW9haXNlYXJjaG1jcHN0Zy5ibG9iLmNvcmUudXNnb3ZjbG91ZGFwaS5uZXQvbXVsdGltb2RhbC1kYXRhL0NBTExfc1VBU0FpcnNwYWNlTWFuYWdlbWVudEFuZENvbnRyb2xfMjAyNTA5MTIucGRm0/normalized_images_0.jpg",
+      "content_id": "76b3625db2a7_aHR0cHM6Ly9hdmNvZWRlbW9haXNlYXJjaG1jcHN0Zy5ibG9iLmNvcmUudXNnb3ZjbG91ZGFwaS5uZXQvbXVsdGltb2RhbC1kYXRhL0NBTExfc1VBU0FpcnNwYWNlTWFuYWdlbWVudEFuZENvbnRyb2xfMjAyNTA5MTIucGRm0_normalized_images_0",
+      "text_document_id": null,
+      "content_text": "The image is a cover page for a handbook titled \"Small Unmanned Aircraft System Airspace Management and Control: A Handbook for Army Leaders.\" The background shows three soldiers in military uniforms and helmets, with one soldier holding a control device for operating a small unmanned aircraft system (drone) visible flying near them. The scene includes a smoky or misty atmosphere, emphasizing a tactical or operational military environment.",
+      "document_title": "CALL_sUASAirspaceManagementAndControl_20250912.pdf",
+      "@search.score": 0.03159204125404358,
+      "@search.rerankerScore": 2.4452133178710938,
+      "@search.highlights": null,
+      "@search.captions": [
+        {
+          "text": "The image is a cover page for a handbook titled \"Small Unmanned Aircraft System Airspace Management and Control: A Handbook for Army Leaders.\". The background shows three soldiers in military uniforms and helmets, with one soldier holding a control device for operating a small unmanned aircraft system (drone) visible flying near them. The scene.",
+          "highlights": "The image is a cover page for a handbook titled \"Small Unmanned Aircraft System Airspace Management and Control: A Handbook for Army Leaders.\". The background shows three<em> soldiers </em>in military<em> uniforms and helmets, </em>with one soldier holding a control<em> device </em>for<em> operating a small unmanned aircraft system (drone) visible flying near them.</em> The scene."
+        }
+      ]
+    }
+  ]
+}
+
+get image args:
+{
+  "content_path": "multimodal-rag-images/aHR0cHM6Ly9hdmNvZWRlbW9haXNlYXJjaG1jcHN0Zy5ibG9iLmNvcmUudXNnb3ZjbG91ZGFwaS5uZXQvbXVsdGltb2RhbC1kYXRhL0NBTExfc1VBU0FpcnNwYWNlTWFuZWdlbWVudEFuZENvbnRyb2xfMjAyNTA5MTIucGRm0/normalized_images_0.jpg"
+}
