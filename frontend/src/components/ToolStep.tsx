@@ -1,5 +1,7 @@
 import { useState } from 'react';
-import type { ToolInvocation } from '../types/api';
+import type { ToolInvocation, ContentItem } from '../types/api';
+
+const ALLOWED_IMAGE_MIMES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
 
 interface Props {
   invocation: ToolInvocation;
@@ -60,6 +62,23 @@ export function ToolStep({ invocation }: Props) {
             <div className="tool-step-section">
               <div className="tool-step-label">Result</div>
               <pre className="tool-step-code">{prettyFormat(invocation.result)}</pre>
+              {invocation.content_items && invocation.content_items.length > 0 && (
+                <div className="tool-result-images">
+                  {invocation.content_items
+                    .filter((item: ContentItem): item is ContentItem & { type: 'image' } =>
+                      item.type === 'image' && ALLOWED_IMAGE_MIMES.has((item as { mimeType?: string }).mimeType ?? '')
+                    )
+                    .map((item, idx) => (
+                      <img
+                        key={idx}
+                        className="tool-result-image"
+                        src={`data:${item.mimeType};base64,${item.data}`}
+                        alt={`Tool result image ${idx + 1}`}
+                        onClick={() => window.open(`data:${item.mimeType};base64,${item.data}`, '_blank')}
+                      />
+                    ))}
+                </div>
+              )}
             </div>
           )}
         </div>

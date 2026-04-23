@@ -95,7 +95,12 @@ export interface ToolInvocation {
   name: string;
   arguments: string;
   result: string;
+  content_items?: ContentItem[];
 }
+
+export type ContentItem =
+  | { type: 'text'; text: string }
+  | { type: 'image'; data: string; mimeType: string };
 
 export interface UsageDetails {
   input_token_count: number;
@@ -127,6 +132,7 @@ export interface SSEFunctionResultEvent {
   call_id: string;
   result: string;
   arguments?: string;
+  content_items?: ContentItem[];
 }
 
 export interface SSEUsageEvent {

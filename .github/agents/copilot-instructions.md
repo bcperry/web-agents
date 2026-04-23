@@ -10,6 +10,8 @@
 - Browser localStorage (conversations, custom agents, user profile, theme)
 - Python 3.12+ (backend), TypeScript (frontend) + FastAPI, React, MSAL (Azure AD auth), agent-framework (MCPStdioTool, MCPStreamableHTTPTool) (001-mcp-server-ui-improvements)
 - In-memory session store (backend), localStorage (frontend custom agents) (001-mcp-server-ui-improvements)
+- Python 3.12+ (backend), TypeScript (frontend) + FastAPI, React, agent-framework-core, agent-framework-azure-ai-search (002-inline-rich-content-display)
+- N/A (images are transient, passed through SSE stream) (002-inline-rich-content-display)
 
 ## Project Structure
 
@@ -42,4 +44,5 @@ uv run pytest                      # Run tests
 - Package manager: uv only (never pip)
 
 ## Recent Changes
+- 002-inline-rich-content-display: Added Python 3.12+ (backend), TypeScript (frontend) + FastAPI, React, agent-framework-core, agent-framework-azure-ai-search
 - 001-mcp-server-ui-improvements: Added Python 3.12+ (backend), TypeScript (frontend) + FastAPI, React, MSAL (Azure AD auth), agent-framework (MCPStdioTool, MCPStreamableHTTPTool)
