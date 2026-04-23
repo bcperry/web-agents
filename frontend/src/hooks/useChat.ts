@@ -488,18 +488,36 @@ function extractMessagesFromSessionData(sessionData: Record<string, unknown>): C
       let text = '';
       const toolInvocations: ToolInvocation[] = [];
 
+      const toolByCallId: Record<string, ToolInvocation> = {};
+
       for (const content of contents) {
         const type = content.type as string;
         if (type === 'text') {
           text += content.text as string || '';
         } else if (type === 'function_call' || type === 'mcp_server_tool_call') {
           const args = content.arguments;
-          toolInvocations.push({
-            call_id: (content.call_id as string) || '',
-            name: (content.name as string) || (content.tool_name as string) || '',
-            arguments: typeof args === 'string' ? args : JSON.stringify(args ?? ''),
-            result: '',
-          });
+          const callId = (content.call_id as string) || '';
+          const renderedArgs = typeof args === 'string' ? args : JSON.stringify(args ?? '');
+          const existing = callId ? toolByCallId[callId] : undefined;
+          if (existing) {
+            // Continuation chunk for same call_id — accumulate arguments
+            if (renderedArgs) {
+              existing.arguments = (existing.arguments || '') + renderedArgs;
+            }
+            // Update name if previously empty
+            if (!existing.name) {
+              existing.name = (content.name as string) || (content.tool_name as string) || '';
+            }
+          } else {
+            const inv: ToolInvocation = {
+              call_id: callId,
+              name: (content.name as string) || (content.tool_name as string) || '',
+              arguments: renderedArgs,
+              result: '',
+            };
+            toolInvocations.push(inv);
+            if (callId) toolByCallId[callId] = inv;
+          }
         }
       }
 

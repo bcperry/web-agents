@@ -289,6 +289,11 @@ export async function sendMessage(
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  // currentEvent must persist across read() iterations because a single SSE
+  // event (e.g. function_result with a large base64 image) can span multiple
+  // chunks — the "event:" line may arrive in one chunk and the "data:" line
+  // in the next.
+  let currentEvent = '';
 
   while (true) {
     const { done, value } = await reader.read();
@@ -298,7 +303,6 @@ export async function sendMessage(
     const lines = buffer.split('\n');
     buffer = lines.pop() || '';
 
-    let currentEvent = '';
     for (const line of lines) {
       if (line.startsWith('event: ')) {
         currentEvent = line.slice(7).trim();
@@ -318,7 +322,6 @@ export async function sendMessage(
   // Process any remaining buffer
   if (buffer.trim()) {
     const remainingLines = buffer.split('\n');
-    let currentEvent = '';
     for (const line of remainingLines) {
       if (line.startsWith('event: ')) {
         currentEvent = line.slice(7).trim();
