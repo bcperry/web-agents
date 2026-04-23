@@ -2,7 +2,9 @@ import { useState, useCallback, useRef } from 'react';
 import type {
   ChatMessage,
   ChatSession,
+  McpConnectionResult,
   McpServerEntry,
+  SessionCreateResponse,
   StoredConversation,
   ToolInvocation,
   UsageDetails,
@@ -36,6 +38,10 @@ interface ChatState {
   isStreaming: boolean;
   session: ChatSession | null;
   sessionUsage: UsageDetails;
+  mcpResults: McpConnectionResult[];
+  toolsLoaded: string[];
+  skillsLoaded: string[];
+  searchContext: boolean;
   error: string | null;
   conversationId: string | null;
   saveCounter: number;
@@ -58,6 +64,10 @@ export function useChat(): ChatState {
   const [error, setError] = useState<string | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [saveCounter, setSaveCounter] = useState(0);
+  const [mcpResults, setMcpResults] = useState<McpConnectionResult[]>([]);
+  const [toolsLoaded, setToolsLoaded] = useState<string[]>([]);
+  const [skillsLoaded, setSkillsLoaded] = useState<string[]>([]);
+  const [searchContext, setSearchContext] = useState(false);
 
   // Accumulator refs for building the current assistant message during streaming
   const textAccRef = useRef('');
@@ -101,7 +111,7 @@ export function useChat(): ChatState {
         await deleteSession(session.session_id).catch(() => {});
       }
 
-      let newSession: ChatSession;
+      let newSession: SessionCreateResponse;
       let restoredMessages: ChatMessage[] = [];
 
       if (customParams) {
@@ -142,10 +152,25 @@ export function useChat(): ChatState {
         conversationIdRef.current = newSession.session_id;
       }
 
-      setSession(newSession);
+      const { mcp_results, tools_loaded, skills_loaded, search_context, ...sessionData } = newSession;
+      setSession(sessionData);
+      setMcpResults(mcp_results ?? []);
+      setToolsLoaded(tools_loaded ?? []);
+      setSkillsLoaded(skills_loaded ?? []);
+      setSearchContext(search_context ?? false);
       setMessages(restoredMessages);
       setSessionUsage({ input_token_count: 0, output_token_count: 0, total_token_count: 0 });
       setError(null);
+
+      // Emit toast for failed MCP servers
+      const failed = (mcp_results ?? []).filter((r) => r.status === 'failed');
+      if (failed.length > 0) {
+        const names = failed.map((r) => r.name).join(', ');
+        emitToast({
+          message: `MCP server${failed.length > 1 ? 's' : ''} failed to connect: ${names}`,
+          type: 'warning',
+        });
+      }
     } catch (err) {
       if (err instanceof AuthError) {
         setError(err.message);
@@ -160,6 +185,10 @@ export function useChat(): ChatState {
     }
     setSession(null);
     setMessages([]);
+    setMcpResults([]);
+    setToolsLoaded([]);
+    setSkillsLoaded([]);
+    setSearchContext(false);
     setConversationId(null);
     conversationIdRef.current = null;
     createdAtRef.current = null;
@@ -355,6 +384,10 @@ export function useChat(): ChatState {
     isStreaming,
     session,
     sessionUsage,
+    mcpResults,
+    toolsLoaded,
+    skillsLoaded,
+    searchContext,
     error,
     conversationId,
     saveCounter,

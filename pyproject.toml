@@ -17,6 +17,7 @@ dependencies = [
     "semantic-kernel>=1.37.0",
     "pypdf>=6.0.0",
     "azure-search-documents>=11.7.0b2",
+    "msal>=1.36.0",
 ]
 
 [dependency-groups]

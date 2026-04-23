@@ -645,9 +645,44 @@ async def get_profiles(user: AuthenticatedUser = Depends(get_current_user)):
             "icon": entry.get("icon", _DEFAULT_PROFILE_ICON),
             "starters": starters,
             "skills": [str(s) for s in (entry.get("skills") or []) if isinstance(s, str)],
+            "mcp_server_count": len(entry.get("mcp_servers") or []),
         })
 
     return {"profiles": profiles, "unavailable": unavailable}
+
+
+# POST /api/mcp/test — test MCP server connections without creating a session
+@app.post("/api/mcp/test")
+async def test_mcp_connections(
+    request: Request,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    body = await request.json()
+    raw_servers = body.get("mcp_servers", [])
+    if not isinstance(raw_servers, list) or not raw_servers:
+        raise HTTPException(status_code=400, detail="mcp_servers must be a non-empty list")
+
+    for entry in raw_servers:
+        if not isinstance(entry, dict):
+            raise HTTPException(status_code=400, detail="Each mcp_servers entry must be an object")
+        if entry.get("transport", "http") != "http":
+            raise HTTPException(status_code=400, detail="Only http MCP servers can be tested")
+
+    auth_header = request.headers.get("authorization", "")
+    user_token = auth_header.removeprefix("Bearer ").strip() if auth_header.lower().startswith("bearer ") else None
+
+    configs = parse_mcp_server_configs({"mcp_servers": raw_servers})
+    _tools, results = await connect_mcp_servers(configs, user_token=user_token)
+
+    # Clean up the test connections immediately
+    await cleanup_mcp_servers(_tools)
+
+    return {
+        "results": [
+            {"name": r.name, "transport": r.transport, "status": r.status, "tool_count": r.tool_count, "error": r.error}
+            for r in results
+        ],
+    }
 
 
 # GET /api/skills — list available skills for custom agent builder
@@ -689,6 +724,10 @@ async def create_session(
 ):
     body = await request.json()
     profile_id = body.get("profile_id", "")
+
+    # Extract bearer token for authenticated MCP servers
+    auth_header = request.headers.get("authorization", "")
+    user_bearer_token = auth_header.removeprefix("Bearer ").strip() if auth_header.lower().startswith("bearer ") else None
 
     # --- Custom agent branch ---
     if profile_id == "custom":
@@ -778,7 +817,7 @@ async def create_session(
                     raise HTTPException(status_code=400, detail=f"MCP server '{entry['name']}' (http) requires a 'url'")
 
             mcp_configs = parse_mcp_server_configs({"mcp_servers": raw_mcp_servers})
-            mcp_tools = await connect_mcp_servers(mcp_configs)
+            mcp_tools, mcp_results = await connect_mcp_servers(mcp_configs, user_token=user_bearer_token)
 
             # Auto-inject user profile into system prompt if agent has get_user_profile
             profile_context = ""
@@ -837,6 +876,13 @@ async def create_session(
             "session_id": session_id,
             "profile_id": "custom",
             "profile_name": custom_name,
+            "tools_loaded": list(custom_tools),
+            "skills_loaded": list(custom_skills),
+            "search_context": custom_search_context,
+            "mcp_results": [
+                {"name": r.name, "transport": r.transport, "status": r.status, "tool_count": r.tool_count, "error": r.error}
+                for r in mcp_results
+            ],
         }
 
     # --- Standard profile branch (unchanged) ---
@@ -866,7 +912,7 @@ async def create_session(
 
         # Connect MCP servers declared in the profile
         mcp_configs = parse_mcp_server_configs(profiles_data[logical_profile])
-        mcp_tools = await connect_mcp_servers(mcp_configs)
+        mcp_tools, mcp_results = await connect_mcp_servers(mcp_configs, user_token=user_bearer_token)
 
         # Auto-inject user profile into system prompt if agent has get_user_profile
         profile_context = ""
@@ -920,10 +966,20 @@ async def create_session(
 
     logger.info("Created session %s for user %s profile %s", session_id, user.user_id, logical_profile)
 
+    profile_skills = [str(s) for s in (profiles_data[logical_profile].get("skills") or []) if isinstance(s, str)]
+    profile_search_context = bool(profiles_data[logical_profile].get("search_context", False))
+
     return {
         "session_id": session_id,
         "profile_id": logical_profile,
         "profile_name": profile_name,
+        "tools_loaded": list(profile_tool_names),
+        "skills_loaded": profile_skills,
+        "search_context": profile_search_context,
+        "mcp_results": [
+            {"name": r.name, "transport": r.transport, "status": r.status, "tool_count": r.tool_count, "error": r.error}
+            for r in mcp_results
+        ],
     }
 
 

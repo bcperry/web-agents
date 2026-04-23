@@ -12,6 +12,7 @@ import { ChatInput } from '../components/ChatInput';
 import { ProfileSelector } from '../components/ProfileSelector';
 import { StarterQuestions } from '../components/StarterQuestions';
 import { TokenUsage } from '../components/TokenUsage';
+import { AgentCapabilitiesBar } from '../components/AgentCapabilitiesBar';
 import { Sidebar } from '../components/Sidebar';
 import { AgentBuilder } from './AgentBuilder';
 import { getRuntimeConfigSnapshot } from '../config/runtimeConfig';
@@ -40,6 +41,10 @@ export function ChatPage() {
     isStreaming,
     session,
     sessionUsage,
+    mcpResults,
+    toolsLoaded,
+    skillsLoaded,
+    searchContext,
     error,
     saveCounter,
     startSession,
@@ -306,6 +311,15 @@ export function ChatPage() {
             </button>
           </div>
         </header>
+
+        {(toolsLoaded.length > 0 || skillsLoaded.length > 0 || searchContext || mcpResults.length > 0) && (
+          <AgentCapabilitiesBar
+            toolsLoaded={toolsLoaded}
+            skillsLoaded={skillsLoaded}
+            searchContext={searchContext}
+            mcpResults={mcpResults}
+          />
+        )}
 
         <div className="chat-messages">
           {messages.length === 0 && selectedProfile && (

@@ -139,6 +139,12 @@ profiles:
         transport: http
         url: "https://ausa-mcp.azurewebsites.us/mcp/"
         description: "Aircraft Database as ingested from Palantir Foundry"
+      - name: drone-docs-mcp
+        transport: http
+        url: "https://avcoe-demo-ai-search-mcp.azurewebsites.us/mcp"
+        description: "Drone documentation search MCP with access to images"
+        auth: true
+        # auth_scope: "api://<this-mcp-server-client-id>/.default"
       
       # - name: sqlite-mcp
       #   transport: stdio
@@ -154,7 +160,9 @@ profiles:
       - label: Check airworthiness directives
         message: What airworthiness directives are currently active?
       - label: What tools do you have?
-        message: What FAA data tools are available to you?
+        message: What data tools are available to you?
+      - label: Search drone documentation
+        message: Can you search the drone documentation for information about drones and return a picture?
     system_prompt: |
       You are an aviation information assistant with access to FAA data tools.
 

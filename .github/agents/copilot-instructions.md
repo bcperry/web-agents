@@ -8,6 +8,8 @@
 - Azure SQL / Azure Synapse Analytics (read-only via pyodbc)
 - Azure AI Search (RAG context provider)
 - Browser localStorage (conversations, custom agents, user profile, theme)
+- Python 3.12+ (backend), TypeScript (frontend) + FastAPI, React, MSAL (Azure AD auth), agent-framework (MCPStdioTool, MCPStreamableHTTPTool) (001-mcp-server-ui-improvements)
+- In-memory session store (backend), localStorage (frontend custom agents) (001-mcp-server-ui-improvements)
 
 ## Project Structure
 
@@ -38,3 +40,6 @@ uv run pytest                      # Run tests
 - Python: standard conventions, type hints
 - TypeScript: strict mode, functional React components
 - Package manager: uv only (never pip)
+
+## Recent Changes
+- 001-mcp-server-ui-improvements: Added Python 3.12+ (backend), TypeScript (frontend) + FastAPI, React, MSAL (Azure AD auth), agent-framework (MCPStdioTool, MCPStreamableHTTPTool)
