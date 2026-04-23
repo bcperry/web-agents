@@ -1,7 +1,8 @@
 import type {
   AgentProfile,
-  ChatSession,
+  McpConnectionResult,
   McpServerEntry,
+  SessionCreateResponse,
   ToolInfo,
   ToolsResponse,
   UnavailableAgent,
@@ -109,6 +110,21 @@ export async function fetchSkills(): Promise<ToolInfo[]> {
   return data.skills;
 }
 
+export async function testMcpConnections(servers: McpServerEntry[]): Promise<McpConnectionResult[]> {
+  const resp = await fetch(`${API_BASE}/mcp/test`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify({ mcp_servers: servers }),
+  });
+  assertNotUnauthorized(resp, 'Failed to test MCP connections');
+  if (!resp.ok) await handleHttpError(resp, 'Failed to test MCP connections');
+  const data = await resp.json();
+  return data.results;
+}
+
 export async function createCustomSession(params: {
   custom_name: string;
   custom_prompt: string;
@@ -120,7 +136,7 @@ export async function createCustomSession(params: {
   history?: Record<string, unknown>;
   user_profile?: { name: string; preferences: string; notes: string };
   [key: string]: unknown;
-}): Promise<ChatSession> {
+}): Promise<SessionCreateResponse> {
   const { custom_name, custom_prompt, custom_tools, custom_search_context, custom_temperature, custom_skills, mcp_servers, history, user_profile } = params;
   const resp = await fetch(`${API_BASE}/sessions`, {
     method: 'POST',
@@ -161,7 +177,7 @@ export async function fetchProfiles(): Promise<ProfilesResponse> {
   return { profiles: data.profiles, unavailable: data.unavailable || [] };
 }
 
-export async function createSession(profileId: string, userProfile?: UserMemoryProfile | null): Promise<ChatSession> {
+export async function createSession(profileId: string, userProfile?: UserMemoryProfile | null): Promise<SessionCreateResponse> {
   const resp = await fetch(`${API_BASE}/sessions`, {
     method: 'POST',
     headers: {
@@ -200,7 +216,7 @@ export async function createSessionWithHistory(
   profileId: string,
   history: Record<string, unknown>,
   userProfile?: UserMemoryProfile | null,
-): Promise<ChatSession> {
+): Promise<SessionCreateResponse> {
   const resp = await fetch(`${API_BASE}/sessions`, {
     method: 'POST',
     headers: {

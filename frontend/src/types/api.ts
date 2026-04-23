@@ -24,6 +24,16 @@ export interface McpServerEntry {
   name: string;
   transport: 'http' | 'stdio';
   url: string;
+  authenticated?: boolean;
+  authScope?: string;
+}
+
+export interface McpConnectionResult {
+  name: string;
+  transport: string;
+  status: 'connected' | 'failed';
+  tool_count: number;
+  error?: string;
 }
 
 export interface CustomAgentDefinition {
@@ -49,6 +59,7 @@ export interface AgentProfile {
   icon: string;
   starters: StarterQuestion[];
   isCustom?: boolean;
+  mcp_server_count?: number;
 }
 
 export interface UnavailableAgent {
@@ -61,6 +72,16 @@ export interface ChatSession {
   session_id: string;
   profile_id: string;
   profile_name: string;
+}
+
+export interface SessionCreateResponse {
+  session_id: string;
+  profile_id: string;
+  profile_name: string;
+  tools_loaded?: string[];
+  skills_loaded?: string[];
+  search_context?: boolean;
+  mcp_results?: McpConnectionResult[];
 }
 
 export interface ImageData {

@@ -1404,6 +1404,8 @@ body {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  flex: 1;
+  min-width: 0;
   background-color: var(--bg-primary);
 }
 
@@ -1447,12 +1449,22 @@ body {
   flex: 1;
   overflow-y: auto;
   padding: 24px 32px;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: 1fr;
   gap: 24px;
-  max-width: 800px;
   width: 100%;
-  margin: 0 auto;
+  align-content: start;
+}
+
+@media (min-width: 1024px) {
+  .agent-builder-layout {
+    grid-template-columns: 300px 1fr;
+  }
+
+  .agent-builder-form {
+    grid-row: 1 / 3;
+    grid-column: 2;
+  }
 }
 
 .agent-builder-section-title {
@@ -1701,6 +1713,7 @@ body {
 
 .agent-builder-starter-add {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
 }
@@ -1727,6 +1740,19 @@ body {
 .agent-builder-starter-add-btn:hover:not(:disabled) {
   background-color: var(--bg-hover);
   border-color: var(--accent-gold);
+}
+
+/* MCP server add form — single row, wraps on small screens */
+.agent-builder-mcp-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.agent-builder-input--wide {
+  flex: 1;
+  min-width: 180px;
 }
 
 /* Actions */
@@ -1792,10 +1818,6 @@ body {
 @media (max-width: 768px) {
   .agent-builder-layout {
     padding: 16px;
-  }
-
-  .agent-builder-starter-add {
-    flex-direction: column;
   }
 
   .agent-builder-header {
@@ -2102,4 +2124,186 @@ body {
 
 [data-theme="light"] .toast__close:hover {
   color: #333;
+}
+
+/* Agent Capabilities Bar */
+.capabilities-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--border-olive);
+  background: var(--bg-header);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  align-items: center;
+}
+
+.capabilities-section {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.capabilities-section:not(:last-child)::after {
+  content: '';
+  display: block;
+  width: 1px;
+  height: 14px;
+  background: var(--border-olive);
+  margin-left: 10px;
+}
+
+.capabilities-label {
+  color: var(--text-muted);
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.capabilities-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.capabilities-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-olive);
+  background: var(--bg-panel);
+  color: var(--text-muted);
+}
+
+.capabilities-pill--tool {
+  color: var(--text-gold);
+  border-color: color-mix(in srgb, var(--text-gold) 30%, transparent);
+}
+
+.capabilities-pill--skill {
+  color: var(--accent-green);
+  border-color: color-mix(in srgb, var(--accent-green) 30%, transparent);
+}
+
+.capabilities-pill--search {
+  color: var(--accent-green);
+  border-color: color-mix(in srgb, var(--accent-green) 30%, transparent);
+}
+
+.capabilities-pill--ok {
+  border-color: color-mix(in srgb, var(--accent-green) 30%, transparent);
+}
+
+.capabilities-pill--fail {
+  border-color: color-mix(in srgb, var(--alert-red) 40%, transparent);
+}
+
+.capabilities-icon {
+  font-weight: bold;
+  font-size: 0.8rem;
+}
+
+.capabilities-icon--ok {
+  color: var(--accent-green);
+}
+
+.capabilities-icon--fail {
+  color: var(--alert-red);
+}
+
+/* MCP Status Indicator (legacy — used by McpStatusIndicator component) */
+.mcp-status-indicator {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 0;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+.mcp-status-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-olive);
+  background: var(--bg-panel);
+}
+
+.mcp-status-icon {
+  font-weight: bold;
+}
+
+.mcp-connected .mcp-status-icon {
+  color: var(--accent-green);
+}
+
+.mcp-failed .mcp-status-icon {
+  color: var(--alert-red);
+}
+
+.mcp-status-name {
+  color: var(--text-muted);
+}
+
+.mcp-status-bar {
+  padding: 4px 16px;
+  border-bottom: 1px solid var(--border-olive);
+  background: var(--bg-header);
+}
+
+/* Agent Builder MCP badges */
+.agent-builder-saved-mcp {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.agent-builder-mcp-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  border: 1px solid var(--border-olive);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+}
+
+/* MCP test connection button & inline status */
+.agent-builder-test-mcp-btn {
+  margin-top: 6px;
+  padding: 4px 12px;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-gold);
+  background: var(--bg-input);
+  border: 1px solid var(--border-gold);
+  border-radius: var(--radius);
+  cursor: pointer;
+  letter-spacing: 0.05em;
+}
+
+.agent-builder-test-mcp-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.agent-builder-test-mcp-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.mcp-test-status {
+  font-weight: bold;
+  font-size: 0.85rem;
+  margin-right: 4px;
+  flex-shrink: 0;
 }

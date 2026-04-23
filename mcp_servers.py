@@ -36,6 +36,18 @@ class MCPServerConfig:
     allowed_tools: list[str] | None = None
     request_timeout: int | None = None
     description: str | None = None
+    auth: bool = False
+    auth_scope: str | None = None
+
+
+@dataclass
+class MCPConnectionResult:
+    """Per-server connection outcome returned by connect_mcp_servers()."""
+    name: str
+    transport: str
+    status: str  # "connected" | "failed"
+    tool_count: int = 0
+    error: str | None = None
 
 
 def _interpolate_env_vars(value: str) -> str:
@@ -109,6 +121,16 @@ def parse_mcp_server_configs(profile_entry: dict[str, Any]) -> list[MCPServerCon
             except (TypeError, ValueError):
                 request_timeout = None
 
+        auth = bool(entry.get("auth", False) or entry.get("authenticated", False))
+        auth_scope = entry.get("auth_scope") or entry.get("authScope") or None
+        if isinstance(auth_scope, str):
+            auth_scope = auth_scope.strip() or None
+
+        if (auth or auth_scope) and transport != "http":
+            logger.warning("MCP server '%s': auth fields are only supported for http transport, ignoring", name)
+            auth = False
+            auth_scope = None
+
         configs.append(MCPServerConfig(
             name=str(name),
             transport=str(transport),
@@ -119,12 +141,71 @@ def parse_mcp_server_configs(profile_entry: dict[str, Any]) -> list[MCPServerCon
             allowed_tools=[str(t) for t in allowed_tools] if allowed_tools else None,
             request_timeout=request_timeout,
             description=entry.get("description"),
+            auth=auth,
+            auth_scope=auth_scope,
         ))
 
     return configs
 
 
-def create_mcp_tool(config: MCPServerConfig) -> MCPStdioTool | MCPStreamableHTTPTool:
+def resolve_mcp_auth_token(config: MCPServerConfig, user_token: str | None) -> str | None:
+    """Resolve the auth token for an MCP server based on its config.
+
+    - auth_scope set: OBO exchange via MSAL ConfidentialClientApplication
+    - auth=True: passthrough the user's token as-is
+    - Neither: return None (no auth)
+    """
+    if not config.auth and not config.auth_scope:
+        return None
+
+    if not user_token:
+        logger.warning("MCP server '%s' requires auth but no user token available", config.name)
+        return None
+
+    if config.auth_scope:
+        # OBO token exchange
+        client_id = os.environ.get("AZURE_AD_CLIENT_ID")
+        client_secret = os.environ.get("AZURE_AD_CLIENT_SECRET")
+        authority = os.environ.get("AZURE_AD_AUTHORITY")
+
+        if not client_secret:
+            logger.warning(
+                "MCP server '%s' requires OBO (auth_scope=%s) but AZURE_AD_CLIENT_SECRET is not set%s",
+                config.name,
+                config.auth_scope,
+                "; falling back to passthrough" if config.auth else "",
+            )
+            return user_token if config.auth else None
+
+        if not client_id or not authority:
+            logger.warning("MCP server '%s': AZURE_AD_CLIENT_ID or AZURE_AD_AUTHORITY not set, cannot perform OBO", config.name)
+            return user_token if config.auth else None
+
+        try:
+            import msal
+            cca = msal.ConfidentialClientApplication(
+                client_id,
+                authority=authority,
+                client_credential=client_secret,
+            )
+            result = cca.acquire_token_on_behalf_of(
+                user_assertion=user_token,
+                scopes=[config.auth_scope],
+            )
+            if "access_token" in result:
+                return result["access_token"]
+            error_desc = result.get("error_description", result.get("error", "Unknown OBO error"))
+            logger.warning("OBO token exchange failed for MCP server '%s': %s", config.name, error_desc)
+            return None
+        except Exception as e:
+            logger.warning("OBO token exchange error for MCP server '%s': %s", config.name, e)
+            return None
+
+    # Passthrough mode
+    return user_token
+
+
+def create_mcp_tool(config: MCPServerConfig, *, auth_token: str | None = None) -> MCPStdioTool | MCPStreamableHTTPTool:
     """Instantiate the correct MCPTool subclass based on transport type."""
     common_kwargs: dict[str, Any] = {
         "name": config.name,
@@ -138,6 +219,10 @@ def create_mcp_tool(config: MCPServerConfig) -> MCPStdioTool | MCPStreamableHTTP
         common_kwargs["request_timeout"] = config.request_timeout
 
     if config.transport == "http":
+        if auth_token:
+            import httpx
+            http_client = httpx.AsyncClient(headers={"Authorization": f"Bearer {auth_token}"})
+            common_kwargs["http_client"] = http_client
         return MCPStreamableHTTPTool(url=config.url, **common_kwargs)
     elif config.transport == "stdio":
         kwargs = {**common_kwargs, "command": config.command}
@@ -150,19 +235,41 @@ def create_mcp_tool(config: MCPServerConfig) -> MCPStdioTool | MCPStreamableHTTP
         raise ValueError(f"Unsupported MCP transport: {config.transport}")
 
 
-async def connect_mcp_servers(configs: list[MCPServerConfig]) -> list[Any]:
-    """Connect to MCP servers from configs. Returns list of successfully connected MCPTool instances."""
+async def connect_mcp_servers(
+    configs: list[MCPServerConfig],
+    *,
+    user_token: str | None = None,
+) -> tuple[list[Any], list[MCPConnectionResult]]:
+    """Connect to MCP servers from configs.
+
+    Returns (connected_tools, connection_results) where connection_results
+    contains a per-server outcome regardless of success or failure.
+    """
     connected: list[Any] = []
+    results: list[MCPConnectionResult] = []
     for config in configs:
         try:
-            tool = create_mcp_tool(config)
+            resolved_token = resolve_mcp_auth_token(config, user_token)
+            tool = create_mcp_tool(config, auth_token=resolved_token)
             await tool.connect()
             tool_count = len(tool.functions) if hasattr(tool, "functions") else 0
             logger.info("Connected MCP server '%s' (%s) — loaded %d tools", config.name, config.transport, tool_count)
             connected.append(tool)
-        except Exception as e:
+            results.append(MCPConnectionResult(
+                name=config.name,
+                transport=config.transport,
+                status="connected",
+                tool_count=tool_count,
+            ))
+        except BaseException as e:
             logger.warning("MCP server '%s' (%s) failed to connect: %s", config.name, config.transport, e)
-    return connected
+            results.append(MCPConnectionResult(
+                name=config.name,
+                transport=config.transport,
+                status="failed",
+                error=str(e),
+            ))
+    return connected, results
 
 
 async def cleanup_mcp_servers(tools: list[Any]) -> None:

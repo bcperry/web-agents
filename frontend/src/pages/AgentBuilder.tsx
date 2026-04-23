@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import type { ToolInfo, CustomAgentDefinition, StarterQuestion, McpServerEntry } from '../types/api';
-import { fetchTools, fetchSkills } from '../api/client';
+import type { ToolInfo, CustomAgentDefinition, StarterQuestion, McpServerEntry, McpConnectionResult } from '../types/api';
+import { fetchTools, fetchSkills, testMcpConnections } from '../api/client';
 
 interface AgentBuilderProps {
   agents: CustomAgentDefinition[];
@@ -38,6 +38,10 @@ export function AgentBuilder({ agents, onSave, onDelete, onBack }: AgentBuilderP
   const [newStarterMessage, setNewStarterMessage] = useState('');
   const [newMcpName, setNewMcpName] = useState('');
   const [newMcpUrl, setNewMcpUrl] = useState('');
+  const [newMcpAuth, setNewMcpAuth] = useState(false);
+  const [newMcpAuthScope, setNewMcpAuthScope] = useState('');
+  const [mcpTestResults, setMcpTestResults] = useState<Record<string, McpConnectionResult>>({});
+  const [mcpTesting, setMcpTesting] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
 
@@ -63,6 +67,9 @@ export function AgentBuilder({ agents, onSave, onDelete, onBack }: AgentBuilderP
     setNewStarterMessage('');
     setNewMcpName('');
     setNewMcpUrl('');
+    setNewMcpAuth(false);
+    setNewMcpAuthScope('');
+    setMcpTestResults({});
   };
 
   const handleEdit = (agent: CustomAgentDefinition) => {
@@ -116,6 +123,24 @@ export function AgentBuilder({ agents, onSave, onDelete, onBack }: AgentBuilderP
       ...prev,
       starters: prev.starters.filter((_, i) => i !== index),
     }));
+  };
+
+  const handleTestMcpConnections = async () => {
+    if (form.mcpServers.length === 0) return;
+    setMcpTesting(true);
+    setMcpTestResults({});
+    try {
+      const results = await testMcpConnections(form.mcpServers);
+      const map: Record<string, McpConnectionResult> = {};
+      for (const r of results) {
+        map[r.name] = r;
+      }
+      setMcpTestResults(map);
+    } catch {
+      // Error already shown via toast by client.ts
+    } finally {
+      setMcpTesting(false);
+    }
   };
 
   const parsedTemp = form.temperature !== '' ? parseFloat(form.temperature) : undefined;
@@ -175,6 +200,15 @@ export function AgentBuilder({ agents, onSave, onDelete, onBack }: AgentBuilderP
                 <div className="agent-builder-saved-info">
                   <div className="agent-builder-saved-name">{agent.name}</div>
                   <div className="agent-builder-saved-desc">{agent.description || 'No description'}</div>
+                  {agent.mcpServers && agent.mcpServers.length > 0 && (
+                    <div className="agent-builder-saved-mcp">
+                      {agent.mcpServers.map((s, i) => (
+                        <span key={i} className="agent-builder-mcp-badge" title={s.url}>
+                          {s.name}{s.authScope ? ' [OBO]' : s.authenticated ? ' [Auth]' : ''}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <div className="agent-builder-saved-actions">
                   <button onClick={() => handleEdit(agent)} type="button" title="Edit">✎</button>
@@ -326,27 +360,56 @@ export function AgentBuilder({ agents, onSave, onDelete, onBack }: AgentBuilderP
               Connect to remote tool servers using the Model Context Protocol
             </span>
             {form.mcpServers.length > 0 && (
-              <div className="agent-builder-starters-list">
-                {form.mcpServers.map((server, i) => (
-                  <div key={i} className="agent-builder-starter-item">
-                    <span className="agent-builder-starter-label">
-                      {server.name} — {server.url}
-                    </span>
-                    <button
-                      onClick={() => setForm((prev) => ({
-                        ...prev,
-                        mcpServers: prev.mcpServers.filter((_, idx) => idx !== i),
-                      }))}
-                      type="button"
-                      title="Remove"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))}
-              </div>
+              <>
+                <div className="agent-builder-starters-list">
+                  {form.mcpServers.map((server, i) => {
+                    const result = mcpTestResults[server.name];
+                    return (
+                      <div key={i} className="agent-builder-starter-item">
+                        {result && (
+                          <span
+                            className={`mcp-test-status ${result.status === 'connected' ? 'mcp-connected' : 'mcp-failed'}`}
+                            title={result.status === 'connected' ? `${result.tool_count} tool${result.tool_count !== 1 ? 's' : ''} loaded` : `Error: ${result.error}`}
+                          >
+                            {result.status === 'connected' ? '✓' : '✗'}
+                          </span>
+                        )}
+                        <span className="agent-builder-starter-label">
+                          {server.name} — {server.url}
+                          {server.authScope ? ` [OBO: ${server.authScope}]` : server.authenticated ? ' [Auth]' : ''}
+                        </span>
+                        <button
+                          onClick={() => {
+                            setForm((prev) => ({
+                              ...prev,
+                              mcpServers: prev.mcpServers.filter((_, idx) => idx !== i),
+                            }));
+                            setMcpTestResults((prev) => {
+                              const next = { ...prev };
+                              delete next[server.name];
+                              return next;
+                            });
+                          }}
+                          type="button"
+                          title="Remove"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+                <button
+                  className="agent-builder-test-mcp-btn"
+                  onClick={handleTestMcpConnections}
+                  type="button"
+                  disabled={mcpTesting}
+                >
+                  {mcpTesting ? 'TESTING...' : 'TEST CONNECTIONS'}
+                </button>
+              </>
             )}
-            <div className="agent-builder-starter-add">
+            <div className="agent-builder-mcp-add">
               <input
                 className="agent-builder-input"
                 type="text"
@@ -356,13 +419,31 @@ export function AgentBuilder({ agents, onSave, onDelete, onBack }: AgentBuilderP
                 maxLength={100}
               />
               <input
-                className="agent-builder-input"
+                className="agent-builder-input agent-builder-input--wide"
                 type="text"
                 value={newMcpUrl}
                 onChange={(e) => setNewMcpUrl(e.target.value)}
                 placeholder="Server URL (e.g. https://my-server.com/mcp)"
                 maxLength={500}
               />
+              <label className="agent-builder-tool-item" style={{ margin: 0, whiteSpace: 'nowrap' }}>
+                <input
+                  type="checkbox"
+                  checked={newMcpAuth}
+                  onChange={(e) => setNewMcpAuth(e.target.checked)}
+                />
+                <span className="agent-builder-tool-name">Authenticated</span>
+              </label>
+              {newMcpAuth && (
+                <input
+                  className="agent-builder-input agent-builder-input--wide"
+                  type="text"
+                  value={newMcpAuthScope}
+                  onChange={(e) => setNewMcpAuthScope(e.target.value)}
+                  placeholder="OBO scope (optional, e.g. api://client-id/.default)"
+                  maxLength={500}
+                />
+              )}
               <button
                 className="agent-builder-starter-add-btn"
                 onClick={() => {
@@ -373,10 +454,14 @@ export function AgentBuilder({ agents, onSave, onDelete, onBack }: AgentBuilderP
                       name: newMcpName.trim(),
                       transport: 'http' as const,
                       url: newMcpUrl.trim(),
+                      ...(newMcpAuth ? { authenticated: true } : {}),
+                      ...(newMcpAuthScope.trim() ? { authScope: newMcpAuthScope.trim() } : {}),
                     }],
                   }));
                   setNewMcpName('');
                   setNewMcpUrl('');
+                  setNewMcpAuth(false);
+                  setNewMcpAuthScope('');
                 }}
                 type="button"
                 disabled={!newMcpName.trim() || !newMcpUrl.trim()}
