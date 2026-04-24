@@ -807,10 +807,28 @@ def _parse_skill_md(skill_dir: Path) -> dict:
     return {"name": name, "description": description, "content": content}
 
 
+def _validate_skill_name(name: str, status_on_error: int = 400) -> str:
+    """Validate that name contains only safe characters; raise HTTP error if not.
+
+    This check runs *before* any path operation so that static analysis tools
+    can see the user-supplied value is sanitised prior to filesystem access.
+    Accepts the same alphabet as the creation regex (lowercase alphanumeric +
+    hyphens, starting with alphanumeric, max 64 chars).
+    """
+    if not name or not _SKILL_NAME_RE.match(name) or len(name) > 64:
+        raise HTTPException(status_code=status_on_error, detail="Invalid skill name")
+    return name
+
+
 def _prevent_path_traversal(name: str, skills_dir: Path) -> Path:
-    """Resolve skill path and ensure it stays inside skills_dir."""
+    """Resolve skill path and ensure it stays inside skills_dir.
+
+    `name` must already have been validated by ``_validate_skill_name`` before
+    this function is called.
+    """
     skill_path = (skills_dir / name).resolve()
-    if not str(skill_path).startswith(str(skills_dir.resolve())):
+    # Belt-and-suspenders: reject anything that escaped the skills directory
+    if not str(skill_path).startswith(str(skills_dir.resolve()) + "/"):
         raise HTTPException(status_code=400, detail="Invalid skill name")
     return skill_path
 
@@ -818,8 +836,9 @@ def _prevent_path_traversal(name: str, skills_dir: Path) -> Path:
 # GET /api/skills/{name} — fetch a single skill by name
 @app.get("/api/skills/{name}", response_model=SkillResponse)
 async def get_skill(name: str, user: AuthenticatedUser = Depends(get_current_user)):
+    safe_name = _validate_skill_name(name)
     skills_dir = _get_skills_dir()
-    skill_path = _prevent_path_traversal(name, skills_dir)
+    skill_path = _prevent_path_traversal(safe_name, skills_dir)
     data = _parse_skill_md(skill_path)
     return SkillResponse(**data)
 
@@ -827,59 +846,61 @@ async def get_skill(name: str, user: AuthenticatedUser = Depends(get_current_use
 # POST /api/skills — create a new skill
 @app.post("/api/skills", response_model=SkillResponse, status_code=201)
 async def create_skill(body: SkillCreateRequest, user: AuthenticatedUser = Depends(get_current_user)):
-    if not _SKILL_NAME_RE.match(body.name) or len(body.name) > 64:
-        raise HTTPException(status_code=422, detail="Skill name must match ^[a-z0-9][a-z0-9-]*$ (max 64 chars)")
+    safe_name = _validate_skill_name(body.name, status_on_error=422)
     if not body.description or len(body.description) > 256:
         raise HTTPException(status_code=422, detail="Description must be non-empty (max 256 chars)")
     if not body.content or len(body.content) > 65536:
         raise HTTPException(status_code=422, detail="Content must be non-empty (max 65536 chars)")
     skills_dir = _get_skills_dir()
-    skill_path = _prevent_path_traversal(body.name, skills_dir)
+    skill_path = _prevent_path_traversal(safe_name, skills_dir)
     if skill_path.exists():
-        raise HTTPException(status_code=409, detail=f"Skill already exists: {body.name}")
+        raise HTTPException(status_code=409, detail=f"Skill already exists: {safe_name}")
     skill_path.mkdir(parents=True, exist_ok=False)
     skill_file = skill_path / "SKILL.md"
     # Escape double quotes in description for YAML frontmatter
     safe_description = body.description.replace('"', '\\"')
     skill_file.write_text(
-        _SKILL_MD_TEMPLATE.format(name=body.name, description=safe_description, content=body.content),
+        _SKILL_MD_TEMPLATE.format(name=safe_name, description=safe_description, content=body.content),
         encoding="utf-8",
     )
-    return SkillResponse(name=body.name, description=body.description, content=body.content)
+    return SkillResponse(name=safe_name, description=body.description, content=body.content)
 
 
 # PUT /api/skills/{name} — update an existing skill
 @app.put("/api/skills/{name}", response_model=SkillResponse)
 async def update_skill(name: str, body: SkillUpdateRequest, user: AuthenticatedUser = Depends(get_current_user)):
+    safe_name = _validate_skill_name(name)
     if not body.description or len(body.description) > 256:
         raise HTTPException(status_code=422, detail="Description must be non-empty (max 256 chars)")
     if not body.content or len(body.content) > 65536:
         raise HTTPException(status_code=422, detail="Content must be non-empty (max 65536 chars)")
     skills_dir = _get_skills_dir()
-    skill_path = _prevent_path_traversal(name, skills_dir)
+    skill_path = _prevent_path_traversal(safe_name, skills_dir)
     if not skill_path.is_dir():
-        raise HTTPException(status_code=404, detail=f"Skill not found: {name}")
+        raise HTTPException(status_code=404, detail=f"Skill not found: {safe_name}")
     skill_file = skill_path / "SKILL.md"
     safe_description = body.description.replace('"', '\\"')
     skill_file.write_text(
-        _SKILL_MD_TEMPLATE.format(name=name, description=safe_description, content=body.content),
+        _SKILL_MD_TEMPLATE.format(name=safe_name, description=safe_description, content=body.content),
         encoding="utf-8",
     )
-    return SkillResponse(name=name, description=body.description, content=body.content)
+    return SkillResponse(name=safe_name, description=body.description, content=body.content)
 
 
 # DELETE /api/skills/{name} — remove a skill directory
 @app.delete("/api/skills/{name}", status_code=204)
 async def delete_skill(name: str, user: AuthenticatedUser = Depends(get_current_user)):
+    safe_name = _validate_skill_name(name)
     skills_dir = _get_skills_dir()
-    skill_path = _prevent_path_traversal(name, skills_dir)
+    skill_path = _prevent_path_traversal(safe_name, skills_dir)
     if not skill_path.is_dir():
-        raise HTTPException(status_code=404, detail=f"Skill not found: {name}")
+        raise HTTPException(status_code=404, detail=f"Skill not found: {safe_name}")
     shutil.rmtree(skill_path)
     return Response(status_code=204)
 
 
-
+# GET /api/sessions/{session_id}/history — export serialized session state
+@app.get("/api/sessions/{session_id}/history")
 async def get_session_history(
     session_id: str,
     user: AuthenticatedUser = Depends(get_current_user),
