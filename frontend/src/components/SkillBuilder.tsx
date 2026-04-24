@@ -222,7 +222,7 @@ export function SkillBuilder() {
               className="skill-textarea"
               value={formContent}
               onChange={(e) => setFormContent(e.target.value)}
-              placeholder="# Skill Instructions&#10;&#10;Write the skill instructions here in Markdown..."
+              placeholder={'# Skill Instructions\n\nWrite the skill instructions here in Markdown...'}
               maxLength={65536}
               disabled={formLoading}
               required

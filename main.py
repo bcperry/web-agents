@@ -824,11 +824,19 @@ def _prevent_path_traversal(name: str, skills_dir: Path) -> Path:
     """Resolve skill path and ensure it stays inside skills_dir.
 
     `name` must already have been validated by ``_validate_skill_name`` before
-    this function is called.
+    this function is called.  ``os.path.basename`` is applied as an additional
+    sanitization step so that static-analysis tools can identify the path-
+    traversal mitigation at the point of path construction.
     """
-    skill_path = (skills_dir / name).resolve()
-    # Belt-and-suspenders: reject anything that escaped the skills directory
-    if not str(skill_path).startswith(str(skills_dir.resolve()) + "/"):
+    # os.path.basename strips any leading directory components (e.g. "../")
+    # so that even if an unexpected character slips past the regex the
+    # resulting path cannot escape the skills directory.
+    base_name = os.path.basename(name)
+    skill_path = (skills_dir / base_name).resolve()
+    # Belt-and-suspenders: reject anything that escaped the skills directory.
+    # is_relative_to is used (Python 3.9+) for cross-platform correctness
+    # instead of string prefix matching.
+    if not skill_path.is_relative_to(skills_dir.resolve()):
         raise HTTPException(status_code=400, detail="Invalid skill name")
     return skill_path
 
