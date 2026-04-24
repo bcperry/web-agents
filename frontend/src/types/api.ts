@@ -173,3 +173,25 @@ export interface UserMemoryProfile {
   notes: string;
   updatedAt: string;
 }
+
+export interface SkillDefinition {
+  name: string;
+  description: string;
+  content: string;
+}
+
+export interface SkillSummary {
+  name: string;
+  description: string;
+}
+
+export interface SkillCreatePayload {
+  name: string;
+  description: string;
+  content: string;
+}
+
+export interface SkillUpdatePayload {
+  description: string;
+  content: string;
+}

@@ -8,16 +8,20 @@ React SPA static files from frontend/dist/.
 import json
 import logging
 import os
+import re
+import shutil
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncGenerator, Optional
 
+from pydantic import BaseModel
+
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from agent_framework import Agent as RuntimeAgent
@@ -739,7 +743,7 @@ async def test_mcp_connections(
 @app.get("/api/skills")
 async def get_skills(user: AuthenticatedUser = Depends(get_current_user)):
     from agent_framework import SkillsProvider
-    skills_dir = Path(__file__).resolve().parent / "skills"
+    skills_dir = _get_skills_dir()
     if not skills_dir.is_dir():
         return {"skills": []}
 
@@ -749,6 +753,225 @@ async def get_skills(user: AuthenticatedUser = Depends(get_current_user)):
         for skill in provider._skills.values()
     ]
     return {"skills": skills}
+
+
+# ---------------------------------------------------------------------------
+# Skills CRUD — Pydantic models
+# ---------------------------------------------------------------------------
+
+class SkillCreateRequest(BaseModel):
+    name: str
+    description: str
+    content: str
+
+
+class SkillUpdateRequest(BaseModel):
+    description: str
+    content: str
+
+
+class SkillResponse(BaseModel):
+    name: str
+    description: str
+    content: str
+
+
+class SkillGenerateRequest(BaseModel):
+    name: str | None = None
+    description: str
+
+
+class SkillGenerateResponse(BaseModel):
+    content: str
+
+
+_SKILL_NAME_RE = re.compile(r'^[a-z0-9][a-z0-9-]*$')
+_SKILL_MD_TEMPLATE = '---\nname: {name}\ndescription: "{description}"\n---\n\n{content}\n'
+
+
+def _get_skills_dir() -> Path:
+    return Path(__file__).resolve().parent / "skills"
+
+
+def _parse_skill_md(skill_dir: Path) -> dict:
+    """Parse a SKILL.md file; return {name, description, content}. Raises HTTPException(404) if missing."""
+    skill_file = skill_dir / "SKILL.md"
+    if not skill_dir.is_dir() or not skill_file.is_file():
+        raise HTTPException(status_code=404, detail=f"Skill not found: {skill_dir.name}")
+    raw = skill_file.read_text(encoding="utf-8")
+    # Parse YAML frontmatter between --- delimiters
+    name = skill_dir.name
+    description = ""
+    content = raw
+    if raw.startswith("---"):
+        end = raw.find("\n---", 3)
+        if end != -1:
+            frontmatter = raw[3:end].strip()
+            content = raw[end + 4:].lstrip("\n")
+            for line in frontmatter.splitlines():
+                if line.startswith("description:"):
+                    description = line[len("description:"):].strip().strip('"').strip("'")
+                elif line.startswith("name:"):
+                    name = line[len("name:"):].strip()
+    return {"name": name, "description": description, "content": content}
+
+
+def _validate_skill_name(name: str, status_on_error: int = 400) -> str:
+    """Validate that name contains only safe characters; raise HTTP error if not.
+
+    This check runs *before* any path operation so that static analysis tools
+    can see the user-supplied value is sanitised prior to filesystem access.
+    Accepts the same alphabet as the creation regex (lowercase alphanumeric +
+    hyphens, starting with alphanumeric, max 64 chars).
+    """
+    if not name or not _SKILL_NAME_RE.match(name) or len(name) > 64:
+        raise HTTPException(status_code=status_on_error, detail="Invalid skill name")
+    return name
+
+
+def _prevent_path_traversal(name: str, skills_dir: Path) -> Path:
+    """Resolve skill path and ensure it stays inside skills_dir.
+
+    `name` must already have been validated by ``_validate_skill_name`` before
+    this function is called.  ``os.path.basename`` is applied as an additional
+    sanitization step so that static-analysis tools can identify the path-
+    traversal mitigation at the point of path construction.
+    """
+    # os.path.basename strips any leading directory components (e.g. "../")
+    # so that even if an unexpected character slips past the regex the
+    # resulting path cannot escape the skills directory.
+    base_name = os.path.basename(name)
+    skill_path = (skills_dir / base_name).resolve()
+    # Belt-and-suspenders: reject anything that escaped the skills directory.
+    # is_relative_to is used (Python 3.9+) for cross-platform correctness
+    # instead of string prefix matching.
+    if not skill_path.is_relative_to(skills_dir.resolve()):
+        raise HTTPException(status_code=400, detail="Invalid skill name")
+    return skill_path
+
+
+# POST /api/skills/generate — generate skill markdown content from a description using the LLM
+@app.post("/api/skills/generate", response_model=SkillGenerateResponse)
+async def generate_skill_content(
+    body: SkillGenerateRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    description = (body.description or "").strip()
+    if not description:
+        raise HTTPException(status_code=422, detail="description is required")
+    if len(description) > 2048:
+        raise HTTPException(status_code=422, detail="description must be ≤ 2048 characters")
+    skill_name = (body.name or "new-skill").strip() or "new-skill"
+
+    from agent_framework.openai import OpenAIChatClient
+
+    system_prompt = (
+        "You are an expert at writing concise, well-structured Markdown skill "
+        "instructions for AI agents. Given a short skill description, produce "
+        "the BODY of a SKILL.md file (Markdown only, no YAML frontmatter, no "
+        "code fences wrapping the whole document). Use clear headings, bullet "
+        "points, and short examples where helpful. Be practical and "
+        "actionable. Do not include any preamble or commentary — output the "
+        "Markdown body directly."
+    )
+    user_prompt = (
+        f"Skill name: {skill_name}\n"
+        f"Skill description: {description}\n\n"
+        "Write the SKILL.md body now."
+    )
+
+    try:
+        client = OpenAIChatClient()
+        response = await client.get_response(
+            messages=[
+                ChatMessage(role="system", contents=[Content(type="text", text=system_prompt)]),
+                ChatMessage(role="user", contents=[Content(type="text", text=user_prompt)]),
+            ],
+        )
+    except Exception as exc:
+        logger.exception("Skill content generation failed")
+        raise HTTPException(status_code=502, detail=f"LLM generation failed: {exc}") from exc
+
+    text = (getattr(response, "text", "") or "").strip()
+    if not text:
+        raise HTTPException(status_code=502, detail="LLM returned empty content")
+
+    # Strip an outer ```markdown ... ``` fence if the model wrapped its output.
+    if text.startswith("```"):
+        first_nl = text.find("\n")
+        if first_nl != -1 and text.rstrip().endswith("```"):
+            text = text[first_nl + 1 : text.rstrip().rfind("```")].strip()
+
+    if len(text) > 65536:
+        text = text[:65536]
+
+    return SkillGenerateResponse(content=text)
+
+
+# GET /api/skills/{name} — fetch a single skill by name
+@app.get("/api/skills/{name}", response_model=SkillResponse)
+async def get_skill(name: str, user: AuthenticatedUser = Depends(get_current_user)):
+    safe_name = _validate_skill_name(name)
+    skills_dir = _get_skills_dir()
+    skill_path = _prevent_path_traversal(safe_name, skills_dir)
+    data = _parse_skill_md(skill_path)
+    return SkillResponse(**data)
+
+
+# POST /api/skills — create a new skill
+@app.post("/api/skills", response_model=SkillResponse, status_code=201)
+async def create_skill(body: SkillCreateRequest, user: AuthenticatedUser = Depends(get_current_user)):
+    safe_name = _validate_skill_name(body.name, status_on_error=422)
+    if not body.description or len(body.description) > 256:
+        raise HTTPException(status_code=422, detail="Description must be non-empty (max 256 chars)")
+    if not body.content or len(body.content) > 65536:
+        raise HTTPException(status_code=422, detail="Content must be non-empty (max 65536 chars)")
+    skills_dir = _get_skills_dir()
+    skill_path = _prevent_path_traversal(safe_name, skills_dir)
+    if skill_path.exists():
+        raise HTTPException(status_code=409, detail=f"Skill already exists: {safe_name}")
+    skill_path.mkdir(parents=True, exist_ok=False)
+    skill_file = skill_path / "SKILL.md"
+    # Escape double quotes in description for YAML frontmatter
+    safe_description = body.description.replace('"', '\\"')
+    skill_file.write_text(
+        _SKILL_MD_TEMPLATE.format(name=safe_name, description=safe_description, content=body.content),
+        encoding="utf-8",
+    )
+    return SkillResponse(name=safe_name, description=body.description, content=body.content)
+
+
+# PUT /api/skills/{name} — update an existing skill
+@app.put("/api/skills/{name}", response_model=SkillResponse)
+async def update_skill(name: str, body: SkillUpdateRequest, user: AuthenticatedUser = Depends(get_current_user)):
+    safe_name = _validate_skill_name(name)
+    if not body.description or len(body.description) > 256:
+        raise HTTPException(status_code=422, detail="Description must be non-empty (max 256 chars)")
+    if not body.content or len(body.content) > 65536:
+        raise HTTPException(status_code=422, detail="Content must be non-empty (max 65536 chars)")
+    skills_dir = _get_skills_dir()
+    skill_path = _prevent_path_traversal(safe_name, skills_dir)
+    if not skill_path.is_dir():
+        raise HTTPException(status_code=404, detail=f"Skill not found: {safe_name}")
+    skill_file = skill_path / "SKILL.md"
+    safe_description = body.description.replace('"', '\\"')
+    skill_file.write_text(
+        _SKILL_MD_TEMPLATE.format(name=safe_name, description=safe_description, content=body.content),
+        encoding="utf-8",
+    )
+    return SkillResponse(name=safe_name, description=body.description, content=body.content)
+
+
+# DELETE /api/skills/{name} — remove a skill directory
+@app.delete("/api/skills/{name}", status_code=204)
+async def delete_skill(name: str, user: AuthenticatedUser = Depends(get_current_user)):
+    safe_name = _validate_skill_name(name)
+    skills_dir = _get_skills_dir()
+    skill_path = _prevent_path_traversal(safe_name, skills_dir)
+    if not skill_path.is_dir():
+        raise HTTPException(status_code=404, detail=f"Skill not found: {safe_name}")
+    shutil.rmtree(skill_path)
+    return Response(status_code=204)
 
 
 # GET /api/sessions/{session_id}/history — export serialized session state
@@ -827,7 +1050,7 @@ async def create_session(
             raise HTTPException(status_code=400, detail="custom_skills must be a list of skill name strings")
         if custom_skills:
             from agent_framework import SkillsProvider
-            skills_dir = Path(__file__).resolve().parent / "skills"
+            skills_dir = _get_skills_dir()
             if skills_dir.is_dir():
                 sp = SkillsProvider(skill_paths=skills_dir)
                 available_skills = set(sp._skills.keys())

@@ -3,6 +3,9 @@ import type {
   McpConnectionResult,
   McpServerEntry,
   SessionCreateResponse,
+  SkillDefinition,
+  SkillCreatePayload,
+  SkillUpdatePayload,
   ToolInfo,
   ToolsResponse,
   UnavailableAgent,
@@ -108,6 +111,70 @@ export async function fetchSkills(): Promise<ToolInfo[]> {
   if (!resp.ok) await handleHttpError(resp, 'Failed to fetch skills');
   const data = await resp.json();
   return data.skills;
+}
+
+export async function fetchSkill(name: string): Promise<SkillDefinition> {
+  const resp = await fetch(`${API_BASE}/skills/${encodeURIComponent(name)}`, {
+    headers: getAuthHeaders(),
+  });
+  assertNotUnauthorized(resp, 'Failed to fetch skill');
+  if (!resp.ok) await handleHttpError(resp, 'Failed to fetch skill');
+  return resp.json();
+}
+
+export async function createSkill(skill: SkillCreatePayload): Promise<SkillDefinition> {
+  const resp = await fetch(`${API_BASE}/skills`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify(skill),
+  });
+  assertNotUnauthorized(resp, 'Failed to create skill');
+  if (!resp.ok) await handleHttpError(resp, 'Failed to create skill');
+  return resp.json();
+}
+
+export async function updateSkill(name: string, payload: SkillUpdatePayload): Promise<SkillDefinition> {
+  const resp = await fetch(`${API_BASE}/skills/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify(payload),
+  });
+  assertNotUnauthorized(resp, 'Failed to update skill');
+  if (!resp.ok) await handleHttpError(resp, 'Failed to update skill');
+  return resp.json();
+}
+
+export async function deleteSkill(name: string): Promise<void> {
+  const resp = await fetch(`${API_BASE}/skills/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+  assertNotUnauthorized(resp, 'Failed to delete skill');
+  if (!resp.ok && resp.status !== 204) await handleHttpError(resp, 'Failed to delete skill');
+}
+
+export async function generateSkillContent(
+  description: string,
+  name?: string,
+): Promise<string> {
+  const resp = await fetch(`${API_BASE}/skills/generate`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify({ description, ...(name ? { name } : {}) }),
+  });
+  assertNotUnauthorized(resp, 'Failed to generate skill content');
+  if (!resp.ok) await handleHttpError(resp, 'Failed to generate skill content');
+  const data = await resp.json();
+  return data.content as string;
 }
 
 export async function testMcpConnections(servers: McpServerEntry[]): Promise<McpConnectionResult[]> {
