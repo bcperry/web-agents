@@ -5,7 +5,6 @@ import { emitToast } from '../hooks/useToast';
 import { useChat } from '../hooks/useChat';
 import { useAuth } from '../hooks/useAuth';
 import { useTheme } from '../hooks/useTheme';
-import { useCustomAgents } from '../hooks/useCustomAgents';
 import { useConversationStore } from '../hooks/useConversationStore';
 import { ChatMessage } from '../components/ChatMessage';
 import { ChatInput } from '../components/ChatInput';
@@ -14,10 +13,15 @@ import { StarterQuestions } from '../components/StarterQuestions';
 import { TokenUsage } from '../components/TokenUsage';
 import { AgentCapabilitiesBar } from '../components/AgentCapabilitiesBar';
 import { Sidebar } from '../components/Sidebar';
-import { AgentBuilder } from './AgentBuilder';
 import { getRuntimeConfigSnapshot } from '../config/runtimeConfig';
+import type { CustomAgentDefinition } from '../types/api';
 
-export function ChatPage() {
+interface ChatPageProps {
+  onOpenAdmin: () => void;
+  customAgents: CustomAgentDefinition[];
+}
+
+export function ChatPage({ onOpenAdmin, customAgents }: ChatPageProps) {
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<AgentProfile | null>(null);
   const [loadingProfiles, setLoadingProfiles] = useState(true);
@@ -26,7 +30,6 @@ export function ChatPage() {
   const [spinnerTextIndex, setSpinnerTextIndex] = useState(0);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(window.innerWidth <= 768);
   const [conversationIndex, setConversationIndex] = useState<ConversationIndexEntry[]>([]);
-  const [showAgentBuilder, setShowAgentBuilder] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const SPINNER_MESSAGES = [
@@ -53,17 +56,10 @@ export function ChatPage() {
     saveCurrentConversation,
   } = useChat();
 
-  const { loadIndex, saveConversation, loadConversation, deleteConversation, deleteConversationsByCustomAgent } = useConversationStore();
+  const { loadIndex, saveConversation, loadConversation, deleteConversation } = useConversationStore();
   const { user, logout, classificationBanner } = useAuth();
   const { setActiveAgentId } = useTheme();
-  const { agents: customAgents, save: saveCustomAgent, remove: removeCustomAgent } = useCustomAgents();
   const { appName, appTagline, appLogo } = getRuntimeConfigSnapshot();
-
-  const handleDeleteCustomAgent = useCallback((id: string) => {
-    removeCustomAgent(id);
-    deleteConversationsByCustomAgent(id);
-    setConversationIndex(loadIndex());
-  }, [removeCustomAgent, deleteConversationsByCustomAgent, loadIndex]);
 
   // Merge server profiles with custom agents
   const allProfiles: AgentProfile[] = [
@@ -165,7 +161,6 @@ export function ChatPage() {
     await saveCurrentConversation();
     await endSession();
     setSelectedProfile(null);
-    setShowAgentBuilder(false);
     setConversationIndex(loadIndex());
   };
 
@@ -188,7 +183,6 @@ export function ChatPage() {
 
     const profile = allProfiles.find((p) => p.id === stored.profileId);
     setSelectedProfile(profile || null);
-    setShowAgentBuilder(false);
     setCreatingSession(true);
     setSpinnerTextIndex(0);
 
@@ -233,17 +227,6 @@ export function ChatPage() {
 
   // Main content
   const renderMainContent = () => {
-    if (showAgentBuilder) {
-      return (
-        <AgentBuilder
-          agents={customAgents}
-          onSave={saveCustomAgent}
-          onDelete={handleDeleteCustomAgent}
-          onBack={() => setShowAgentBuilder(false)}
-        />
-      );
-    }
-
     if (!session) {
       // Profile selection screen
       return (
@@ -364,7 +347,7 @@ export function ChatPage() {
         onToggle={toggleSidebar}
         userEmail={user?.email}
         onLogout={logout}
-        onOpenAgentBuilder={() => setShowAgentBuilder(true)}
+        onOpenAdmin={onOpenAdmin}
       />
       {renderMainContent()}
     </div>

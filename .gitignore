@@ -58,3 +58,4 @@ eval_traces/
 
 test-results/
 eval_traces/
+*.png

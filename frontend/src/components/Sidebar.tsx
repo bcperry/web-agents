@@ -16,7 +16,7 @@ interface SidebarProps {
   onToggle: () => void;
   userEmail?: string;
   onLogout?: () => void;
-  onOpenAgentBuilder?: () => void;
+  onOpenAdmin?: () => void;
 }
 
 function formatDate(isoString: string): string {
@@ -35,7 +35,7 @@ export function Sidebar({
   onToggle,
   userEmail,
   onLogout,
-  onOpenAgentBuilder,
+  onOpenAdmin,
 }: SidebarProps) {
   const { mode, setMode } = useTheme();
 
@@ -105,12 +105,12 @@ export function Sidebar({
         </div>
       )}
 
-      {!isCollapsed && (onOpenAgentBuilder || onLogout || userEmail) && (
+      {!isCollapsed && (onOpenAdmin || onLogout || userEmail) && (
         <div className="sidebar-advanced">
           <div className="sidebar-advanced-label">ADVANCED</div>
-          {onOpenAgentBuilder && (
-            <button className="sidebar-advanced-btn" onClick={onOpenAgentBuilder} type="button">
-              ⚙ CUSTOM AGENT BUILDER
+          {onOpenAdmin && (
+            <button className="sidebar-advanced-btn" onClick={onOpenAdmin} type="button">
+              ⚙ ADMIN
             </button>
           )}
           {userEmail && <div className="sidebar-advanced-email" title={userEmail}>{userEmail}</div>}
