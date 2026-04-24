@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { SkillSummary, SkillDefinition, SkillCreatePayload } from '../types/api';
-import { fetchSkills, fetchSkill, createSkill, updateSkill, deleteSkill } from '../api/client';
+import { fetchSkills, fetchSkill, createSkill, updateSkill, deleteSkill, generateSkillContent } from '../api/client';
 
 type ViewMode = 'list' | 'create' | 'edit';
 
@@ -24,6 +24,9 @@ export function SkillBuilder() {
 
   // Delete confirm
   const [deletingName, setDeletingName] = useState<string | null>(null);
+
+  // AI generation
+  const [aiLoading, setAiLoading] = useState(false);
 
   const loadSkills = useCallback(async () => {
     setLoading(true);
@@ -142,6 +145,24 @@ export function SkillBuilder() {
     }
   };
 
+  const handleGenerateWithAI = async () => {
+    clearFeedback();
+    if (!formDescription.trim()) {
+      setErrorMsg('Enter a description first so the AI knows what to generate.');
+      return;
+    }
+    setAiLoading(true);
+    try {
+      const content = await generateSkillContent(formDescription, formName || undefined);
+      setFormContent(content);
+      setSuccessMsg('Generated skill content from description.');
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Failed to generate skill content.');
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
   const handleDeleteConfirm = async (name: string) => {
     clearFeedback();
     try {
@@ -217,6 +238,18 @@ export function SkillBuilder() {
             <label className="agent-builder-label" htmlFor="skill-content">
               CONTENT (Markdown)
             </label>
+            <div className="skill-ai-row">
+              <button
+                className="skill-btn-ai"
+                type="button"
+                onClick={handleGenerateWithAI}
+                disabled={aiLoading || formLoading || !formDescription.trim()}
+                title="Generate Markdown content from the description above"
+              >
+                {aiLoading ? 'GENERATING…' : '✨ GENERATE WITH AI'}
+              </button>
+              <span className="skill-ai-hint">Uses the description above as the prompt</span>
+            </div>
             <textarea
               id="skill-content"
               className="skill-textarea"
@@ -299,6 +332,18 @@ export function SkillBuilder() {
               <label className="agent-builder-label" htmlFor="skill-edit-content">
                 CONTENT (Markdown)
               </label>
+              <div className="skill-ai-row">
+                <button
+                  className="skill-btn-ai"
+                  type="button"
+                  onClick={handleGenerateWithAI}
+                  disabled={aiLoading || formLoading || !formDescription.trim()}
+                  title="Regenerate Markdown content from the description above (replaces current content)"
+                >
+                  {aiLoading ? 'GENERATING…' : '✨ GENERATE WITH AI'}
+                </button>
+                <span className="skill-ai-hint">Replaces current content</span>
+              </div>
               <textarea
                 id="skill-edit-content"
                 className="skill-textarea"

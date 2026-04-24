@@ -159,6 +159,24 @@ export async function deleteSkill(name: string): Promise<void> {
   if (!resp.ok && resp.status !== 204) await handleHttpError(resp, 'Failed to delete skill');
 }
 
+export async function generateSkillContent(
+  description: string,
+  name?: string,
+): Promise<string> {
+  const resp = await fetch(`${API_BASE}/skills/generate`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify({ description, ...(name ? { name } : {}) }),
+  });
+  assertNotUnauthorized(resp, 'Failed to generate skill content');
+  if (!resp.ok) await handleHttpError(resp, 'Failed to generate skill content');
+  const data = await resp.json();
+  return data.content as string;
+}
+
 export async function testMcpConnections(servers: McpServerEntry[]): Promise<McpConnectionResult[]> {
   const resp = await fetch(`${API_BASE}/mcp/test`, {
     method: 'POST',

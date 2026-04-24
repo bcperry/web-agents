@@ -2610,9 +2610,9 @@ body {
 
 /* Skill action buttons */
 .skill-btn-primary {
-  background: var(--accent-color);
-  color: #fff;
-  border: none;
+  background: var(--accent-gold);
+  color: #000;
+  border: 1px solid var(--accent-gold);
   padding: 7px 16px;
   font-family: var(--font-mono);
   font-size: 0.8rem;
@@ -2620,16 +2620,56 @@ body {
   letter-spacing: 0.06em;
   border-radius: 3px;
   cursor: pointer;
-  transition: opacity 0.15s;
+  transition: opacity 0.15s, background 0.15s;
 }
 
 .skill-btn-primary:hover:not(:disabled) {
-  opacity: 0.85;
+  opacity: 0.9;
+  background: var(--text-gold);
+  border-color: var(--text-gold);
 }
 
 .skill-btn-primary:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.skill-btn-ai {
+  background: transparent;
+  color: var(--accent-gold);
+  border: 1px solid var(--accent-gold);
+  padding: 7px 16px;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.skill-btn-ai:hover:not(:disabled) {
+  background: var(--accent-gold);
+  color: #000;
+}
+
+.skill-btn-ai:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.skill-ai-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -4px 0 4px;
+}
+
+.skill-ai-hint {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
 }
 
 .skill-btn-secondary {

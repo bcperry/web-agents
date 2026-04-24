@@ -776,6 +776,15 @@ class SkillResponse(BaseModel):
     content: str
 
 
+class SkillGenerateRequest(BaseModel):
+    name: str | None = None
+    description: str
+
+
+class SkillGenerateResponse(BaseModel):
+    content: str
+
+
 _SKILL_NAME_RE = re.compile(r'^[a-z0-9][a-z0-9-]*$')
 _SKILL_MD_TEMPLATE = '---\nname: {name}\ndescription: "{description}"\n---\n\n{content}\n'
 
@@ -839,6 +848,64 @@ def _prevent_path_traversal(name: str, skills_dir: Path) -> Path:
     if not skill_path.is_relative_to(skills_dir.resolve()):
         raise HTTPException(status_code=400, detail="Invalid skill name")
     return skill_path
+
+
+# POST /api/skills/generate — generate skill markdown content from a description using the LLM
+@app.post("/api/skills/generate", response_model=SkillGenerateResponse)
+async def generate_skill_content(
+    body: SkillGenerateRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    description = (body.description or "").strip()
+    if not description:
+        raise HTTPException(status_code=422, detail="description is required")
+    if len(description) > 2048:
+        raise HTTPException(status_code=422, detail="description must be ≤ 2048 characters")
+    skill_name = (body.name or "new-skill").strip() or "new-skill"
+
+    from agent_framework.openai import OpenAIChatClient
+
+    system_prompt = (
+        "You are an expert at writing concise, well-structured Markdown skill "
+        "instructions for AI agents. Given a short skill description, produce "
+        "the BODY of a SKILL.md file (Markdown only, no YAML frontmatter, no "
+        "code fences wrapping the whole document). Use clear headings, bullet "
+        "points, and short examples where helpful. Be practical and "
+        "actionable. Do not include any preamble or commentary — output the "
+        "Markdown body directly."
+    )
+    user_prompt = (
+        f"Skill name: {skill_name}\n"
+        f"Skill description: {description}\n\n"
+        "Write the SKILL.md body now."
+    )
+
+    try:
+        client = OpenAIChatClient()
+        response = await client.get_response(
+            messages=[
+                ChatMessage(role="system", contents=[Content(type="text", text=system_prompt)]),
+                ChatMessage(role="user", contents=[Content(type="text", text=user_prompt)]),
+            ],
+        )
+    except Exception as exc:
+        logger.exception("Skill content generation failed")
+        raise HTTPException(status_code=502, detail=f"LLM generation failed: {exc}") from exc
+
+    text = (getattr(response, "text", "") or "").strip()
+    if not text:
+        raise HTTPException(status_code=502, detail="LLM returned empty content")
+
+    # Strip an outer ```markdown ... ``` fence if the model wrapped its output.
+    if text.startswith("```"):
+        first_nl = text.find("\n")
+        if first_nl != -1 and text.rstrip().endswith("```"):
+            text = text[first_nl + 1 : text.rstrip().rfind("```")].strip()
+
+    if len(text) > 65536:
+        text = text[:65536]
+
+    return SkillGenerateResponse(content=text)
 
 
 # GET /api/skills/{name} — fetch a single skill by name
