@@ -31,6 +31,7 @@ export function ChatPage({ onOpenAdmin, customAgents }: ChatPageProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(window.innerWidth <= 768);
   const [conversationIndex, setConversationIndex] = useState<ConversationIndexEntry[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const isEndingSessionRef = useRef(false);
 
   const SPINNER_MESSAGES = [
     'INITIALIZING AGENT RUNTIME...',
@@ -146,6 +147,8 @@ export function ChatPage({ onOpenAdmin, customAgents }: ChatPageProps) {
         } else {
           await startSession(profileId);
         }
+        // Push a history entry so the back button returns to profile selection.
+        window.history.pushState({ view: 'chat-active' }, '');
       } finally {
         setCreatingSession(false);
       }
@@ -156,13 +159,36 @@ export function ChatPage({ onOpenAdmin, customAgents }: ChatPageProps) {
     send(content, images);
   };
 
-  const handleNewChat = async () => {
-    // Save current conversation before switching
-    await saveCurrentConversation();
-    await endSession();
-    setSelectedProfile(null);
-    setConversationIndex(loadIndex());
-  };
+  const handleNewChat = useCallback(async () => {
+    if (isEndingSessionRef.current) return;
+    isEndingSessionRef.current = true;
+    try {
+      // Save current conversation before switching
+      await saveCurrentConversation();
+      await endSession();
+      setSelectedProfile(null);
+      setConversationIndex(loadIndex());
+      // Replace the chat-active history entry with a chat entry so the back
+      // button doesn't try to re-enter a session that no longer exists.
+      if ((window.history.state as { view?: string } | null)?.view === 'chat-active') {
+        window.history.replaceState({ view: 'chat' }, '');
+      }
+    } finally {
+      isEndingSessionRef.current = false;
+    }
+  }, [saveCurrentConversation, endSession, loadIndex]);
+
+  // Handle browser back button: return to profile selection when leaving an active session.
+  useEffect(() => {
+    const handlePopState = (e: PopStateEvent) => {
+      const view = (e.state as { view?: string } | null)?.view;
+      if (view === 'chat' && session && !isEndingSessionRef.current) {
+        void handleNewChat();
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [session, handleNewChat]);
 
   const handleSelectConversation = useCallback(async (id: string) => {
     // Save the current conversation if one is active
@@ -210,6 +236,12 @@ export function ChatPage({ onOpenAdmin, customAgents }: ChatPageProps) {
         }
       } else {
         await startSession(stored.profileId, stored);
+      }
+      // Push a history entry so the back button returns to profile selection,
+      // but only if we're not already in an active session (switching conversations
+      // should not add an extra back step).
+      if ((window.history.state as { view?: string } | null)?.view !== 'chat-active') {
+        window.history.pushState({ view: 'chat-active' }, '');
       }
     } finally {
       setCreatingSession(false);
