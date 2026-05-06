@@ -33,7 +33,7 @@ from auth import AuthenticatedUser, get_current_user
 from eval_trace import EvalTraceLogger
 from mcp_servers import parse_mcp_server_configs, connect_mcp_servers, cleanup_mcp_servers, get_search_service_config
 from prompt_config import get_profile_display_name, load_agents_yaml, resolve_logical_profile
-from tools import SqlDatabase, UserProfileStore
+from tools import UserProfileStore
 
 load_dotenv()
 
@@ -158,13 +158,6 @@ def _build_tool_instances(
     """Instantiate the selected backend tools for a session or tool inventory call."""
     function_tools: list[Any] = []
     user_profile_store = None
-
-    if "sql_read_query" in tool_names:
-        connection_string = os.environ.get("AZURE_SQL_CONNECTIONSTRING")
-        if not connection_string:
-            raise HTTPException(status_code=500, detail="sql_read_query tool requires AZURE_SQL_CONNECTIONSTRING")
-        db_tool = SqlDatabase(connection_string)
-        function_tools.append(db_tool.sql_read_query)
 
     if {"get_user_profile", "save_user_profile"} & tool_names:
         user_profile_store = UserProfileStore(user_profile_data if isinstance(user_profile_data, dict) else None)
@@ -539,16 +532,7 @@ async def _stream_agent_response(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler — runs on startup and shutdown."""
-    # Startup: discover SQL view metadata
-    connection_string = os.environ.get("AZURE_SQL_CONNECTIONSTRING")
-    if connection_string:
-        db_bootstrap = SqlDatabase(connection_string)
-        db_bootstrap.discover_view_metadata()
-        logger.info("Module-level view metadata discovery complete")
-    else:
-        logger.warning("AZURE_SQL_CONNECTIONSTRING not set — skipping metadata discovery")
 
-    logger.info("FastAPI application started")
     yield
 
     # Shutdown: clean up sessions

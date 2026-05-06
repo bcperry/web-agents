@@ -89,3 +89,48 @@ variable "search_api_key" {
   type        = string
   sensitive   = true
 }
+
+# Entra ID / Azure AD authentication
+variable "entra_tenant_id" {
+  description = "Entra ID (Azure AD) tenant ID for authentication"
+  type        = string
+  default     = ""
+}
+
+variable "entra_client_id" {
+  description = "Entra ID (Azure AD) client/application ID for authentication"
+  type        = string
+  default     = ""
+}
+
+variable "entra_client_secret" {
+  description = "Entra ID (Azure AD) client secret (leave empty to use managed identity)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+# Branding / application configuration
+variable "classification_banner" {
+  description = "Classification banner text displayed in the UI"
+  type        = string
+  default     = "UNCLASSIFIED"
+}
+
+variable "app_name" {
+  description = "Application display name"
+  type        = string
+  default     = "Web-Agents"
+}
+
+variable "app_tagline" {
+  description = "Application tagline"
+  type        = string
+  default     = "AI Agent Framework"
+}
+
+variable "app_logo" {
+  description = "Application logo path"
+  type        = string
+  default     = "/Microsoft.png"
+}
