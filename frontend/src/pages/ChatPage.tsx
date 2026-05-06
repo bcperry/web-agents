@@ -178,12 +178,16 @@ export function ChatPage({ onOpenAdmin, customAgents }: ChatPageProps) {
     }
   }, [saveCurrentConversation, endSession, loadIndex]);
 
-  // Handle browser back button: return to profile selection when leaving an active session.
+  // Handle browser back/forward button navigation for active sessions.
   useEffect(() => {
     const handlePopState = (e: PopStateEvent) => {
       const view = (e.state as { view?: string } | null)?.view;
       if (view === 'chat' && session && !isEndingSessionRef.current) {
+        // Back from active session → end it and return to profile selection.
         void handleNewChat();
+      } else if (view === 'chat-active' && !session) {
+        // Forward into an expired session → neutralize the stale history entry.
+        window.history.replaceState({ view: 'chat' }, '');
       }
     };
     window.addEventListener('popstate', handlePopState);
