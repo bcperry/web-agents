@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import type { AgentProfile, ConversationIndexEntry } from '../types/api';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import type { AgentCustomizationOverride, AgentProfile, ConversationIndexEntry } from '../types/api';
 import { fetchProfiles, AuthError } from '../api/client';
 import { emitToast } from '../hooks/useToast';
 import { useChat } from '../hooks/useChat';
@@ -19,9 +19,17 @@ import type { CustomAgentDefinition } from '../types/api';
 interface ChatPageProps {
   onOpenAdmin: () => void;
   customAgents: CustomAgentDefinition[];
+  builtInOverrides: AgentCustomizationOverride[];
 }
 
-export function ChatPage({ onOpenAdmin, customAgents }: ChatPageProps) {
+const SPINNER_MESSAGES = [
+  'INITIALIZING AGENT RUNTIME...',
+  'ESTABLISHING SECURE CONNECTION...',
+  'LOADING MISSION PARAMETERS...',
+  'FINDING THE T-1000...',
+];
+
+export function ChatPage({ onOpenAdmin, customAgents, builtInOverrides }: ChatPageProps) {
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<AgentProfile | null>(null);
   const [loadingProfiles, setLoadingProfiles] = useState(true);
@@ -32,13 +40,6 @@ export function ChatPage({ onOpenAdmin, customAgents }: ChatPageProps) {
   const [conversationIndex, setConversationIndex] = useState<ConversationIndexEntry[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isEndingSessionRef = useRef(false);
-
-  const SPINNER_MESSAGES = [
-    'INITIALIZING AGENT RUNTIME...',
-    'ESTABLISHING SECURE CONNECTION...',
-    'LOADING MISSION PARAMETERS...',
-    'FINDING THE T-1000...',
-  ];
 
   const {
     messages,
@@ -63,8 +64,19 @@ export function ChatPage({ onOpenAdmin, customAgents }: ChatPageProps) {
   const { appName, appTagline, appLogo } = getRuntimeConfigSnapshot();
 
   // Merge server profiles with custom agents
-  const allProfiles: AgentProfile[] = [
-    ...profiles,
+  const allProfiles: AgentProfile[] = useMemo(() => [
+    ...profiles.map((profile) => {
+      const override = builtInOverrides.find((item) => item.baseProfileId === profile.id);
+      return override
+        ? {
+            ...profile,
+            isCustomized: true,
+            builtInOverride: override,
+            overrideUpdatedAt: override.updatedAt,
+            starters: override.starters.length > 0 ? override.starters : profile.starters,
+          }
+        : profile;
+    }),
     ...customAgents.map((a) => ({
       id: a.id,
       name: a.name,
@@ -72,8 +84,9 @@ export function ChatPage({ onOpenAdmin, customAgents }: ChatPageProps) {
       icon: a.icon,
       starters: a.starters,
       isCustom: true as const,
+      customAgent: a,
     })),
-  ];
+  ], [builtInOverrides, customAgents, profiles]);
 
   // Load profiles and conversation index on mount
   useEffect(() => {
@@ -130,30 +143,14 @@ export function ChatPage({ onOpenAdmin, customAgents }: ChatPageProps) {
       setCreatingSession(true);
       setSpinnerTextIndex(0);
       try {
-        if (profile.isCustom) {
-          const customDef = customAgents.find((a) => a.id === profileId);
-          if (customDef) {
-            await startSession('custom', undefined, {
-              customAgentId: customDef.id,
-              custom_name: customDef.name,
-              custom_prompt: customDef.systemPrompt,
-              custom_tools: customDef.tools,
-              custom_search_context: customDef.useSearchContext,
-              mcp_servers: customDef.mcpServers,
-              custom_temperature: customDef.temperature,
-              custom_skills: customDef.skills,
-            });
-          }
-        } else {
-          await startSession(profileId);
-        }
+        await startSession(profile);
         // Push a history entry so the back button returns to profile selection.
         window.history.pushState({ view: 'chat-active' }, '');
       } finally {
         setCreatingSession(false);
       }
     }
-  }, [allProfiles, customAgents, startSession]);
+  }, [allProfiles, startSession]);
 
   const handleSend = (content: string, images?: File[]) => {
     send(content, images);
@@ -222,25 +219,13 @@ export function ChatPage({ onOpenAdmin, customAgents }: ChatPageProps) {
     }
 
     try {
-      if (stored.customAgentId) {
-        const customDef = customAgents.find((a) => a.id === stored.customAgentId);
-        if (customDef) {
-          await startSession('custom', stored, {
-            customAgentId: customDef.id,
-            custom_name: customDef.name,
-            custom_prompt: customDef.systemPrompt,
-            custom_tools: customDef.tools,
-            custom_search_context: customDef.useSearchContext,
-            mcp_servers: customDef.mcpServers,
-            custom_temperature: customDef.temperature,
-            custom_skills: customDef.skills,
-          });
-        } else {
-          await startSession(stored.profileId, stored);
-        }
-      } else {
-        await startSession(stored.profileId, stored);
-      }
+      await startSession(profile || {
+        id: stored.profileId,
+        name: stored.profileName,
+        description: stored.description,
+        icon: '/icons/custom.svg',
+        starters: [],
+      }, stored);
       // Push a history entry so the back button returns to profile selection,
       // but only if we're not already in an active session (switching conversations
       // should not add an extra back step).
@@ -250,7 +235,7 @@ export function ChatPage({ onOpenAdmin, customAgents }: ChatPageProps) {
     } finally {
       setCreatingSession(false);
     }
-  }, [session, allProfiles, customAgents, startSession, endSession, saveCurrentConversation, loadConversation, saveConversation, loadIndex]);
+  }, [session, allProfiles, startSession, endSession, saveCurrentConversation, loadConversation, saveConversation, loadIndex]);
 
   const handleDeleteConversation = useCallback((id: string) => {
     deleteConversation(id);
@@ -331,12 +316,13 @@ export function ChatPage({ onOpenAdmin, customAgents }: ChatPageProps) {
           </div>
         </header>
 
-        {(toolsLoaded.length > 0 || skillsLoaded.length > 0 || searchContext || mcpResults.length > 0) && (
+        {(toolsLoaded.length > 0 || skillsLoaded.length > 0 || searchContext || mcpResults.length > 0 || selectedProfile?.isCustomized) && (
           <AgentCapabilitiesBar
             toolsLoaded={toolsLoaded}
             skillsLoaded={skillsLoaded}
             searchContext={searchContext}
             mcpResults={mcpResults}
+            isCustomized={selectedProfile?.isCustomized}
           />
         )}
 

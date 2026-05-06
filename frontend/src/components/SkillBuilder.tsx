@@ -72,7 +72,7 @@ export function SkillBuilder() {
       setFormName(skill.name);
       setFormDescription(skill.description);
       setFormContent(skill.content);
-    } catch (err) {
+    } catch {
       setErrorMsg('Failed to load skill for editing.');
     } finally {
       setFormLoading(false);

@@ -1,10 +1,10 @@
 import { useState, useCallback, useRef } from 'react';
 import type {
+  AgentProfile,
   ChatMessage,
   ChatSession,
   ContentItem,
   McpConnectionResult,
-  McpServerEntry,
   SessionCreateResponse,
   StoredConversation,
   ToolInvocation,
@@ -13,6 +13,7 @@ import type {
 import {
   createSession,
   createCustomSession,
+  createSessionWithProfileOverride,
   createSessionWithHistory,
   deleteSession,
   fetchHistory,
@@ -22,17 +23,6 @@ import {
 import { emitToast } from './useToast';
 import { useConversationStore } from './useConversationStore';
 import { loadProfile, saveProfile } from './useUserProfile';
-
-export interface CustomAgentParams {
-  customAgentId: string;
-  custom_name: string;
-  custom_prompt: string;
-  custom_tools: string[];
-  custom_search_context: boolean;
-  custom_temperature?: number;
-  custom_skills?: string[];
-  mcp_servers?: McpServerEntry[];
-}
 
 interface ChatState {
   messages: ChatMessage[];
@@ -46,7 +36,7 @@ interface ChatState {
   error: string | null;
   conversationId: string | null;
   saveCounter: number;
-  startSession: (profileId: string, history?: StoredConversation, customParams?: CustomAgentParams) => Promise<void>;
+  startSession: (profile: AgentProfile, history?: StoredConversation) => Promise<void>;
   endSession: () => Promise<void>;
   send: (content: string, images?: File[]) => Promise<void>;
   clearError: () => void;
@@ -77,6 +67,11 @@ export function useChat(): ChatState {
   const createdAtRef = useRef<string | null>(null);
   const conversationIdRef = useRef<string | null>(null);
   const customAgentIdRef = useRef<string | null>(null);
+  const builtInOverrideRef = useRef<{
+    usedBuiltInOverride: boolean;
+    baseProfileId?: string;
+    overrideUpdatedAt?: string;
+  }>({ usedBuiltInOverride: false });
 
   const { saveConversation } = useConversationStore();
 
@@ -99,13 +94,18 @@ export function useChat(): ChatState {
         lastActivityAt: now,
         sessionData: historyResp.session_data,
         ...(customAgentIdRef.current ? { customAgentId: customAgentIdRef.current } : {}),
+        ...(builtInOverrideRef.current.usedBuiltInOverride ? {
+          usedBuiltInOverride: true,
+          baseProfileId: builtInOverrideRef.current.baseProfileId,
+          overrideUpdatedAt: builtInOverrideRef.current.overrideUpdatedAt,
+        } : {}),
       });
     } catch {
       // Non-fatal — persistence is best-effort
     }
   }, [session, messages, saveConversation]);
 
-  const startSession = useCallback(async (profileId: string, history?: StoredConversation, customParams?: CustomAgentParams) => {
+  const startSession = useCallback(async (profile: AgentProfile, history?: StoredConversation) => {
     try {
       // Clean up previous session if any
       if (session) {
@@ -114,43 +114,72 @@ export function useChat(): ChatState {
 
       let newSession: SessionCreateResponse;
       let restoredMessages: ChatMessage[] = [];
+      const userProfile = loadProfile();
 
-      if (customParams) {
+      if (profile.customAgent) {
         // Custom agent session (fresh or with history resume)
-        customAgentIdRef.current = customParams.customAgentId;
-        const profile = loadProfile();
+        customAgentIdRef.current = profile.customAgent.id;
+        builtInOverrideRef.current = { usedBuiltInOverride: false };
         newSession = await createCustomSession({
-          ...customParams,
+          customAgentId: profile.customAgent.id,
+          custom_name: profile.customAgent.name,
+          custom_prompt: profile.customAgent.systemPrompt,
+          custom_tools: profile.customAgent.tools,
+          custom_search_context: profile.customAgent.useSearchContext,
+          custom_temperature: profile.customAgent.temperature,
+          custom_skills: profile.customAgent.skills,
+          mcp_servers: profile.customAgent.mcpServers,
           ...(history?.sessionData ? { history: history.sessionData } : {}),
-          ...(profile ? { user_profile: { name: profile.name, preferences: profile.preferences, notes: profile.notes } } : {}),
+          ...(userProfile ? { user_profile: { name: userProfile.name, preferences: userProfile.preferences, notes: userProfile.notes } } : {}),
         });
-        if (history) {
-          createdAtRef.current = history.createdAt;
-          setConversationId(history.id);
-          conversationIdRef.current = history.id;
-          restoredMessages = extractMessagesFromSessionData(history.sessionData);
-        } else {
-          createdAtRef.current = new Date().toISOString();
-          setConversationId(newSession.session_id);
-          conversationIdRef.current = newSession.session_id;
-        }
+      } else if (profile.builtInOverride) {
+        customAgentIdRef.current = null;
+        builtInOverrideRef.current = {
+          usedBuiltInOverride: true,
+          baseProfileId: profile.builtInOverride.baseProfileId,
+          overrideUpdatedAt: profile.builtInOverride.updatedAt,
+        };
+        newSession = await createSessionWithProfileOverride(
+          profile.builtInOverride.baseProfileId,
+          profile.builtInOverride,
+          userProfile,
+          history?.sessionData,
+        );
       } else if (history?.sessionData) {
         // Resume standard profile with history
         customAgentIdRef.current = null;
-        const profile = loadProfile();
-        newSession = await createSessionWithHistory(profileId, history.sessionData, profile);
+        builtInOverrideRef.current = history.usedBuiltInOverride
+          ? {
+              usedBuiltInOverride: true,
+              baseProfileId: history.baseProfileId ?? profile.id,
+              overrideUpdatedAt: history.overrideUpdatedAt,
+            }
+          : { usedBuiltInOverride: false };
+        newSession = await createSessionWithHistory(profile.id, history.sessionData, userProfile);
+      } else {
+        // Fresh session
+        customAgentIdRef.current = null;
+        builtInOverrideRef.current = { usedBuiltInOverride: false };
+        newSession = await createSession(profile.id, userProfile);
+      }
+
+      if (history) {
         createdAtRef.current = history.createdAt;
         setConversationId(history.id);
         conversationIdRef.current = history.id;
         restoredMessages = extractMessagesFromSessionData(history.sessionData);
       } else {
-        // Fresh session
-        customAgentIdRef.current = null;
-        const profile = loadProfile();
-        newSession = await createSession(profileId, profile);
         createdAtRef.current = new Date().toISOString();
         setConversationId(newSession.session_id);
         conversationIdRef.current = newSession.session_id;
+      }
+
+      if (newSession.used_profile_override) {
+        builtInOverrideRef.current = {
+          usedBuiltInOverride: true,
+          baseProfileId: profile.builtInOverride?.baseProfileId ?? profile.id,
+          overrideUpdatedAt: newSession.override_updated_at ?? profile.builtInOverride?.updatedAt,
+        };
       }
 
       const { mcp_results, tools_loaded, skills_loaded, search_context, ...sessionData } = newSession;
@@ -193,6 +222,8 @@ export function useChat(): ChatState {
     setConversationId(null);
     conversationIdRef.current = null;
     createdAtRef.current = null;
+    customAgentIdRef.current = null;
+    builtInOverrideRef.current = { usedBuiltInOverride: false };
     setSessionUsage({ input_token_count: 0, output_token_count: 0, total_token_count: 0 });
   }, [session]);
 
@@ -329,7 +360,6 @@ export function useChat(): ChatState {
             emitToast({
               message: data.message,
               type: isRetryable ? 'warning' : 'error',
-              ...(isRetryable ? { action: { label: 'RETRY', onClick: () => send(content, images) } } : {}),
             });
           },
           onDone: () => {
@@ -369,6 +399,11 @@ export function useChat(): ChatState {
                       lastActivityAt: now,
                       sessionData: historyResp.session_data,
                       ...(customAgentIdRef.current ? { customAgentId: customAgentIdRef.current } : {}),
+                      ...(builtInOverrideRef.current.usedBuiltInOverride ? {
+                        usedBuiltInOverride: true,
+                        baseProfileId: builtInOverrideRef.current.baseProfileId,
+                        overrideUpdatedAt: builtInOverrideRef.current.overrideUpdatedAt,
+                      } : {}),
                     });
                     return currentMessages; // Don't modify messages
                   });

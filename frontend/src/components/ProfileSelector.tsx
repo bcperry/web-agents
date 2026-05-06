@@ -27,6 +27,7 @@ export function ProfileSelector({ profiles, onSelect }: Props) {
             />
             <div className="profile-card-name">{profile.name}</div>
             <div className="profile-card-desc">{profile.description}</div>
+            {profile.isCustomized && <span className="profile-card-badge profile-card-badge--customized">CUSTOMIZED</span>}
             {profile.isCustom && <span className="profile-card-badge">CUSTOM</span>}
           </button>
         ))}

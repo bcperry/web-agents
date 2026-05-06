@@ -22,7 +22,7 @@ export function useConversationStore() {
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed)) return [];
       // Validate entries have required fields
-      let entries = parsed.filter(
+      const entries = parsed.filter(
         (e: Record<string, unknown>) => e && typeof e.id === 'string' && typeof e.description === 'string',
       ) as ConversationIndexEntry[];
       // Trim to max if config changed between deployments
@@ -52,7 +52,7 @@ export function useConversationStore() {
   }, []);
 
   const saveConversation = useCallback((conversation: StoredConversation) => {
-    let index = loadIndex();
+    const index = loadIndex();
 
     // Update or add to index
     const existing = index.findIndex((e) => e.id === conversation.id);
@@ -64,6 +64,11 @@ export function useConversationStore() {
       createdAt: conversation.createdAt,
       lastActivityAt: conversation.lastActivityAt,
       ...(conversation.customAgentId ? { customAgentId: conversation.customAgentId } : {}),
+      ...(conversation.usedBuiltInOverride ? {
+        usedBuiltInOverride: true,
+        baseProfileId: conversation.baseProfileId,
+        overrideUpdatedAt: conversation.overrideUpdatedAt,
+      } : {}),
     };
 
     if (existing >= 0) {

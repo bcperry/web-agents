@@ -1,31 +1,28 @@
 <!--
   Sync Impact Report
   ==================
-  Version change: 2.0.2 → 2.1.0
-  Bump rationale: MINOR — add mandatory Visual Verification
-    Protocol section. All frontend/UI changes now require
-    automated Playwright-based screenshot capture and agentic
-    visual review before work is considered complete. This is
-    a new enforceable section, not just a workflow note.
+  Version change: 2.1.0 → 2.1.1
+  Bump rationale: PATCH — clarify Visual Verification workflow
+    with a reusable Playwright screenshot script convention and
+    document the current Admin agent builder capture helper.
 
   Modified principles:
     - (none)
 
   Added sections:
-    - Visual Verification Protocol (new section after
-      Development Workflow)
+    - (none)
 
   Removed sections:
     - (none)
 
   Modified workflow rules:
-    - Development Workflow → Frontend changes: replaced vague
-      "take a screenshot" note with reference to the new
-      Visual Verification Protocol section
+    - Visual Verification Protocol → Procedure/Rules: prefer
+      reusable scripts under `scripts/` for repeated Playwright
+      capture flows; record command and generated screenshot names
+      in the final verification report.
 
   Templates requiring updates:
-    - .specify/templates/tasks-template.md — tasks that touch
-      frontend files SHOULD include a visual verification task
+    - .specify/templates/tasks-template.md — ✅ no updates needed
     - .specify/templates/plan-template.md — ✅ no updates needed
     - .specify/templates/spec-template.md — ✅ no updates needed
 
@@ -283,6 +280,12 @@ regressions that only a rendered screenshot can reveal.
    - Empty chat view (with starter questions visible)
    - Chat view with at least one user message and one AI response
    - Any screen specifically affected by the current change
+    For repeated or multi-screen flows, save the Playwright capture
+    as a reusable script under `scripts/` instead of pasting large
+    one-off commands into the terminal. The script MUST accept a
+    base URL argument and SHOULD accept screenshot output directory,
+    viewport, and Chrome executable path arguments. Re-run the script
+    after every visual fix that affects those screens.
 4. **Agentic visual review**: The agent MUST view each captured
    screenshot image (using image viewing tools) and evaluate:
    - Text is readable (no clipping, overflow, or truncation)
@@ -310,6 +313,12 @@ regressions that only a rendered screenshot can reveal.
   and 360×640.
 - **Screenshot storage**: Save screenshots to `screenshots/` at
   the repository root. This directory SHOULD be .gitignored.
+- **Reusable capture scripts**: Prefer repo-local scripts for
+  repeatable screenshot flows so future agents can regenerate the
+  same evidence with low overhead. Existing example:
+  `uv run python scripts/capture_admin_agent_screenshots.py --base-url http://localhost:8000`
+  captures Admin agent builder states and saves them to
+  `screenshots/`.
 - **Playwright dependency**: `playwright` is a dev dependency in
   `pyproject.toml`. Use system Chrome (`/usr/bin/google-chrome`)
   as the executable path to avoid Playwright browser downloads
@@ -342,4 +351,4 @@ compliance with the principles defined above.
   (Simplicity) MUST be documented with concrete rationale in the
   relevant PR description.
 
-**Version**: 2.1.0 | **Ratified**: 2026-03-20 | **Last Amended**: 2026-03-27
+**Version**: 2.1.1 | **Ratified**: 2026-03-20 | **Last Amended**: 2026-05-06
