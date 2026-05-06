@@ -7,11 +7,15 @@ profiles:
     description: Data analyst agent that queries SQL databases.
     icon: /icons/sql.svg
     tools:
-      - sql_read_query
       - get_user_profile
       - save_user_profile
     skills:
       - table-usage
+    mcp_servers:
+      - name: aircraft-data-mcp
+        transport: http
+        url: "https://ausa-mcp.azurewebsites.us/mcp/"
+        description: "Aircraft Database as ingested from Palantir Foundry"
     temperature: 0.1
     starters:
       - label: List all database tables
@@ -84,11 +88,15 @@ profiles:
     icon: /icons/hybrid.svg
     search_context: true
     tools:
-      - sql_read_query
       - get_user_profile
       - save_user_profile
     skills:
       - table-usage
+    mcp_servers:
+      - name: aircraft-data-mcp
+        transport: http
+        url: "https://ausa-mcp.azurewebsites.us/mcp/"
+        description: "Aircraft Database as ingested from Palantir Foundry"
     starters:
       - label: Cross-reference data and documents
         message: Based on my database, what records are relevant, and what documents support them?
@@ -243,3 +251,55 @@ profiles:
       - If a question is outside the Azure Government scope, say so and point to the
         appropriate resource.
 
+  faa:
+    name: Drone Questions AI
+    description: Aviation information assistant powered by FAA data tools.
+    icon: /icons/hybrid.svg
+    tools:
+      - get_user_profile
+      - save_user_profile
+    mcp_servers:
+      - name: drone-docs-mcp
+        transport: http
+        url: "https://avcoe-demo-ai-search-mcp.azurewebsites.us/mcp"
+        description: "Drone documentation search MCP with access to images"
+        auth: true
+        # auth_scope: "api://<this-mcp-server-client-id>/.default"
+      
+      # - name: sqlite-mcp
+      #   transport: stdio
+      #   command: uvx
+      #   args:
+      #     - mcp-server-sqlite
+      #     - --db-path
+      #     - ./data/faa.db
+      #   description: "Local SQLite database for FAA data"
+    starters:
+      - label: What tools do you have?
+        message: What data tools are available to you?
+      - label: Search drone documentation
+        message: Can you search the drone documentation for information about drones and return a picture of a gray eagle?
+    system_prompt: |
+      You are an aviation information assistant with access to FAA data tools.
+
+      Mission:
+      - Answer user questions about drone data using the tools available to you.
+      - Always use your tools to retrieve authoritative data — never fabricate
+      - If a tool call fails or returns no results, state that clearly.
+
+      Image retrieval:
+      - When semantic_search returns results with a "content_path" field, you can
+        retrieve the image by calling get_image_from_content_path.
+      - CRITICAL: The content_path value contains base64-encoded data. You MUST copy
+        the content_path string EXACTLY as returned — do not alter, retype, or
+        approximate any characters. Even a single changed character will cause failure.
+      - ONLY retrieve images that are directly relevant to the user's question.
+        Read the content_text description of each search result and select the one
+        that best matches what the user asked for. Do not just pick the first result.
+      - If no search result has an image that clearly matches the user's request,
+        say so rather than returning an unrelated image.
+
+      Communication rules:
+      - Use clear, professional language appropriate for aviation professionals.
+      - Cite tool results directly. Do not speculate beyond what the data shows.
+      - If the user's question is outside the scope of your available tools, say so.

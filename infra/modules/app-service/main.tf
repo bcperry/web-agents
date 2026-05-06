@@ -57,6 +57,16 @@ resource "azurerm_linux_web_app" "app_service" {
     SEARCH_SERVICE_ENDPOINT = var.search_service_endpoint
     SEARCH_INDEX_NAME       = var.search_index_name
     SEARCH_API_KEY          = var.search_api_key
+
+    # Entra ID / Azure AD authentication
+    OAUTH_AZURE_GOV_AD_TENANT_ID = var.entra_tenant_id
+    OAUTH_AZURE_GOV_AD_CLIENT_ID = var.entra_client_id
+
+    # Branding / application configuration
+    CLASSIFICATION_BANNER = var.classification_banner
+    APP_NAME              = var.app_name
+    APP_TAGLINE           = var.app_tagline
+    APP_LOGO              = var.app_logo
   }
 
   logs {

@@ -61,4 +61,15 @@ module "app_service" {
   search_service_endpoint     = var.search_service_endpoint
   search_index_name           = var.search_index_name
   search_api_key              = var.search_api_key
+
+  # Entra ID / Azure AD authentication
+  entra_tenant_id     = var.entra_tenant_id
+  entra_client_id     = var.entra_client_id
+  entra_client_secret = var.entra_client_secret
+
+  # Branding / application configuration
+  classification_banner = var.classification_banner
+  app_name              = var.app_name
+  app_tagline           = var.app_tagline
+  app_logo              = var.app_logo
 }

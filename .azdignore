@@ -1,6 +1,9 @@
 # Azure Developer CLI ignore file
+# Used INSTEAD of .gitignore for deployment packaging.
+# frontend/dist/ is intentionally NOT excluded here so the prepackage-built
+# frontend is included in the deployment zip.
 
-# Python
+# Python build artifacts
 __pycache__/
 *.py[cod]
 *$py.class
@@ -8,7 +11,6 @@ __pycache__/
 .Python
 build/
 develop-eggs/
-dist/
 downloads/
 eggs/
 .eggs/
@@ -23,14 +25,12 @@ wheels/
 *.egg
 MANIFEST
 
-# Environment variables
+# Virtual environments
 .env
 .venv
 env/
 venv/
 ENV/
-env.bak/
-venv.bak/
 
 # IDE
 .vscode/
@@ -43,18 +43,35 @@ venv.bak/
 .DS_Store
 Thumbs.db
 
-# Azure
+# Azure / infra (not needed at runtime)
 .azure/
-*.azd.env
+infra/
 
 # Git
 .git/
 .gitignore
+.azdignore
 
-# Documentation
-README.md
-*.md
+# Node modules (frontend deps not needed - only dist/ matters)
+node_modules/
+frontend/node_modules/
 
-# Infrastructure
-infra/
-azure.yaml
+# Tests / specs / screenshots (not needed at runtime)
+tests/
+test-results/
+specs/
+screenshots/
+eval_traces/
+
+# Large/binary files
+*.tiff
+*.tif
+*.sqlite3
+*.db
+MS_Army_Team_Logo.png
+
+# Terraform state files
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json

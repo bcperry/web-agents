@@ -14,6 +14,8 @@
 - N/A (images are transient, passed through SSE stream) (002-inline-rich-content-display)
 - Python 3.12 (backend), TypeScript/React 18 (frontend) + FastAPI (backend), React + existing component library (frontend) (003-admin-page-agent-skill-builder)
 - Filesystem (`skills/<name>/SKILL.md`), localStorage (custom agents — unchanged) (003-admin-page-agent-skill-builder)
+- Python 3.12 (backend), TypeScript (frontend) + FastAPI, React/Vite, Terraform (azurerm ~> 4.0) (004-azd-deploy-frontend)
+- Azure SQL (read-only, connection string passed via env var) (004-azd-deploy-frontend)
 
 ## Project Structure
 
@@ -46,6 +48,6 @@ uv run pytest                      # Run tests
 - Package manager: uv only (never pip)
 
 ## Recent Changes
+- 004-azd-deploy-frontend: Added Python 3.12 (backend), TypeScript (frontend) + FastAPI, React/Vite, Terraform (azurerm ~> 4.0)
 - 003-admin-page-agent-skill-builder: Added Python 3.12 (backend), TypeScript/React 18 (frontend) + FastAPI (backend), React + existing component library (frontend)
 - 002-inline-rich-content-display: Added Python 3.12+ (backend), TypeScript (frontend) + FastAPI, React, agent-framework-core, agent-framework-azure-ai-search
-- 001-mcp-server-ui-improvements: Added Python 3.12+ (backend), TypeScript (frontend) + FastAPI, React, MSAL (Azure AD auth), agent-framework (MCPStdioTool, MCPStreamableHTTPTool)

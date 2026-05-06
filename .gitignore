@@ -21,6 +21,8 @@ crash.log
 crash.*.log
 *.tfvars
 *.tfvars.json
+# azd requires infra/main.tfvars.json as a template (contains ${VAR} placeholders, not secrets)
+!infra/main.tfvars.json
 override.tf
 override.tf.json
 *_override.tf
@@ -59,3 +61,4 @@ eval_traces/
 test-results/
 eval_traces/
 *.png
+.envazd
