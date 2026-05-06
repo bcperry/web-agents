@@ -16,6 +16,8 @@
 - Filesystem (`skills/<name>/SKILL.md`), localStorage (custom agents — unchanged) (003-admin-page-agent-skill-builder)
 - Python 3.12 (backend), TypeScript (frontend) + FastAPI, React/Vite, Terraform (azurerm ~> 4.0) (004-azd-deploy-frontend)
 - Azure SQL (read-only, connection string passed via env var) (004-azd-deploy-frontend)
+- Python 3.12.6 backend; TypeScript 5.9 frontend; React 19; Vite 8 + FastAPI, agent-framework-core/openai/azure-ai-search, React, MSAL, localStorage APIs (005-baked-agent-customization)
+- Browser localStorage for per-user built-in agent overrides; existing `config/agents.yaml` remains canonical shared standard profile source; backend in-memory sessions unchanged (005-baked-agent-customization)
 
 ## Project Structure
 
@@ -48,6 +50,6 @@ uv run pytest                      # Run tests
 - Package manager: uv only (never pip)
 
 ## Recent Changes
+- 005-baked-agent-customization: Added Python 3.12.6 backend; TypeScript 5.9 frontend; React 19; Vite 8 + FastAPI, agent-framework-core/openai/azure-ai-search, React, MSAL, localStorage APIs
 - 004-azd-deploy-frontend: Added Python 3.12 (backend), TypeScript (frontend) + FastAPI, React/Vite, Terraform (azurerm ~> 4.0)
 - 003-admin-page-agent-skill-builder: Added Python 3.12 (backend), TypeScript/React 18 (frontend) + FastAPI (backend), React + existing component library (frontend)
-- 002-inline-rich-content-display: Added Python 3.12+ (backend), TypeScript (frontend) + FastAPI, React, agent-framework-core, agent-framework-azure-ai-search

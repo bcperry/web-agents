@@ -1,5 +1,7 @@
 import type {
   AgentProfile,
+  AgentCustomizationOverride,
+  BuiltInAgentDefinition,
   McpConnectionResult,
   McpServerEntry,
   SessionCreateResponse,
@@ -226,6 +228,48 @@ export async function createCustomSession(params: {
   });
   assertNotUnauthorized(resp, 'Failed to create custom session');
   if (!resp.ok) await handleHttpError(resp, 'Failed to create custom session');
+  return resp.json();
+}
+
+export async function fetchBuiltInProfileDefinition(profileId: string): Promise<BuiltInAgentDefinition> {
+  const resp = await fetch(`${API_BASE}/profiles/${encodeURIComponent(profileId)}/definition`, {
+    headers: getAuthHeaders(),
+  });
+  assertNotUnauthorized(resp, 'Failed to fetch profile definition');
+  if (!resp.ok) await handleHttpError(resp, 'Failed to fetch profile definition');
+  return resp.json();
+}
+
+export async function createSessionWithProfileOverride(
+  profileId: string,
+  override: AgentCustomizationOverride,
+  userProfile?: UserMemoryProfile | null,
+  history?: Record<string, unknown>,
+): Promise<SessionCreateResponse> {
+  const resp = await fetch(`${API_BASE}/sessions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeaders(),
+    },
+    body: JSON.stringify({
+      profile_id: profileId,
+      profile_override: {
+        description: override.description,
+        custom_prompt: override.systemPrompt,
+        custom_tools: override.tools,
+        custom_search_context: override.useSearchContext,
+        ...(override.temperature !== undefined ? { custom_temperature: override.temperature } : {}),
+        ...(override.skills.length > 0 ? { custom_skills: override.skills } : {}),
+        ...(override.mcpServers.length > 0 ? { mcp_servers: override.mcpServers } : {}),
+        override_updated_at: override.updatedAt,
+      },
+      ...(history ? { history } : {}),
+      ...(userProfile ? { user_profile: { name: userProfile.name, preferences: userProfile.preferences, notes: userProfile.notes } } : {}),
+    }),
+  });
+  assertNotUnauthorized(resp, 'Failed to create customized built-in session');
+  if (!resp.ok) await handleHttpError(resp, 'Failed to create customized built-in session');
   return resp.json();
 }
 

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from './hooks/useAuth'
+import { useBuiltInAgentCustomizations } from './hooks/useBuiltInAgentCustomizations'
 import { useCustomAgents } from './hooks/useCustomAgents'
 import { useConversationStore } from './hooks/useConversationStore'
 import { ThemeProvider } from './hooks/useTheme'
@@ -15,6 +16,11 @@ function AppContent() {
   const { appName } = getRuntimeConfigSnapshot()
   const [currentView, setCurrentView] = useState<'chat' | 'admin'>('chat')
   const { agents: customAgents, save: saveCustomAgent, remove: removeCustomAgent } = useCustomAgents()
+  const {
+    overrides: builtInOverrides,
+    save: saveBuiltInOverride,
+    remove: resetBuiltInOverride,
+  } = useBuiltInAgentCustomizations()
   const { loadIndex, deleteConversationsByCustomAgent } = useConversationStore()
 
   // Initialise history state so the back button can return here from admin.
@@ -76,13 +82,17 @@ function AppContent() {
         <AdminPage
           onBack={handleAdminBack}
           agents={customAgents}
+          builtInOverrides={builtInOverrides}
           onSaveAgent={saveCustomAgent}
           onDeleteAgent={handleDeleteAgent}
+          onSaveBuiltInOverride={saveBuiltInOverride}
+          onResetBuiltInOverride={resetBuiltInOverride}
         />
       ) : (
         <ChatPage
           onOpenAdmin={handleOpenAdmin}
           customAgents={customAgents}
+          builtInOverrides={builtInOverrides}
         />
       )}
     </Disclaimer>

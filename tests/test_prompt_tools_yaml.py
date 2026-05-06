@@ -6,7 +6,7 @@ import yaml
 
 
 AGENTS_YAML_PATH = Path(__file__).resolve().parent.parent / "config" / "agents.yaml"
-ALLOWED_PROFILES = {"sql", "search", "hybrid", "faa"}
+ALLOWED_PROFILES = {"sql", "search", "hybrid", "faa", "azure-gov", "drone"}
 REQUIRED_PROFILE_FIELDS = {"name", "description", "tools", "system_prompt"}
 
 

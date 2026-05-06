@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import type { CustomAgentDefinition } from '../types/api';
 
 const STORAGE_KEY = 'webagents_custom_agents';
@@ -18,11 +18,6 @@ function persistAgents(agents: CustomAgentDefinition[]): void {
 
 export function useCustomAgents() {
   const [agents, setAgents] = useState<CustomAgentDefinition[]>(loadAgents);
-
-  // Sync from localStorage on mount
-  useEffect(() => {
-    setAgents(loadAgents());
-  }, []);
 
   const save = useCallback((agent: CustomAgentDefinition) => {
     setAgents((prev) => {

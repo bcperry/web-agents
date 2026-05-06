@@ -1,11 +1,25 @@
 import { useState, useEffect } from 'react';
-import type { ToolInfo, CustomAgentDefinition, StarterQuestion, McpServerEntry, McpConnectionResult } from '../types/api';
-import { fetchTools, fetchSkills, testMcpConnections } from '../api/client';
+import type {
+  AgentCustomizationOverride,
+  AgentProfile,
+  BuiltInAgentDefinition,
+  ToolInfo,
+  CustomAgentDefinition,
+  StarterQuestion,
+  McpServerEntry,
+  McpConnectionResult,
+  StandardAgentCandidate,
+} from '../types/api';
+import { fetchBuiltInProfileDefinition, fetchProfiles, fetchSkills, fetchTools, testMcpConnections } from '../api/client';
+import { generateStandardAgentCandidate } from '../utils/standardAgentCandidate';
 
 interface AgentBuilderProps {
   agents: CustomAgentDefinition[];
+  builtInOverrides: AgentCustomizationOverride[];
   onSave: (agent: CustomAgentDefinition) => void;
   onDelete: (id: string) => void;
+  onSaveBuiltInOverride: (override: AgentCustomizationOverride) => void;
+  onResetBuiltInOverride: (baseProfileId: string) => void;
   onBack: () => void;
 }
 
@@ -26,13 +40,24 @@ const EMPTY_FORM = {
   temperature: '' as string,
 };
 
-export function AgentBuilder({ agents, onSave, onDelete, onBack }: AgentBuilderProps) {
+export function AgentBuilder({
+  agents,
+  builtInOverrides,
+  onSave,
+  onDelete,
+  onSaveBuiltInOverride,
+  onResetBuiltInOverride,
+  onBack,
+}: AgentBuilderProps) {
   const [availableTools, setAvailableTools] = useState<ToolInfo[]>([]);
+  const [builtInProfiles, setBuiltInProfiles] = useState<AgentProfile[]>([]);
   const [searchContextAvailable, setSearchContextAvailable] = useState(true);
   const [availableSkills, setAvailableSkills] = useState<ToolInfo[]>([]);
   const [loadingTools, setLoadingTools] = useState(true);
   const [loadingSkills, setLoadingSkills] = useState(true);
+  const [loadingBuiltIns, setLoadingBuiltIns] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingBuiltInDefinition, setEditingBuiltInDefinition] = useState<BuiltInAgentDefinition | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [newStarterLabel, setNewStarterLabel] = useState('');
   const [newStarterMessage, setNewStarterMessage] = useState('');
@@ -43,6 +68,9 @@ export function AgentBuilder({ agents, onSave, onDelete, onBack }: AgentBuilderP
   const [mcpTestResults, setMcpTestResults] = useState<Record<string, McpConnectionResult>>({});
   const [mcpTesting, setMcpTesting] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [candidate, setCandidate] = useState<StandardAgentCandidate | null>(null);
+  const [builtInsCollapsed, setBuiltInsCollapsed] = useState(false);
+  const [customAgentsCollapsed, setCustomAgentsCollapsed] = useState(false);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
@@ -57,11 +85,16 @@ export function AgentBuilder({ agents, onSave, onDelete, onBack }: AgentBuilderP
       .then(setAvailableSkills)
       .catch((err) => console.error('Failed to load skills:', err))
       .finally(() => setLoadingSkills(false));
+    fetchProfiles()
+      .then(({ profiles }) => setBuiltInProfiles(profiles))
+      .catch((err) => console.error('Failed to load built-in agents:', err))
+      .finally(() => setLoadingBuiltIns(false));
   }, []);
 
   const resetForm = () => {
     setForm(EMPTY_FORM);
     setEditingId(null);
+    setEditingBuiltInDefinition(null);
     setTouched({});
     setNewStarterLabel('');
     setNewStarterMessage('');
@@ -74,13 +107,14 @@ export function AgentBuilder({ agents, onSave, onDelete, onBack }: AgentBuilderP
 
   const handleEdit = (agent: CustomAgentDefinition) => {
     setEditingId(agent.id);
+    setEditingBuiltInDefinition(null);
     setTouched({});
-    const availableToolNames = new Set(availableTools.map((t) => t.name));
+    const availableToolNames = new Set(availableTools.map((tool) => tool.name));
     setForm({
       name: agent.name,
       description: agent.description,
       systemPrompt: agent.systemPrompt,
-      tools: agent.tools.filter((t) => availableToolNames.has(t)),
+      tools: agent.tools.filter((tool) => availableToolNames.has(tool)),
       skills: [...(agent.skills || [])],
       mcpServers: [...(agent.mcpServers || [])],
       useSearchContext: searchContextAvailable ? agent.useSearchContext : false,
@@ -88,6 +122,32 @@ export function AgentBuilder({ agents, onSave, onDelete, onBack }: AgentBuilderP
       starters: [...agent.starters],
       temperature: agent.temperature !== undefined ? String(agent.temperature) : '',
     });
+  };
+
+  const handleEditBuiltIn = async (profile: AgentProfile) => {
+    try {
+      const definition = await fetchBuiltInProfileDefinition(profile.id);
+      const override = builtInOverrides.find((item) => item.baseProfileId === definition.id);
+      const source = override ?? definition;
+      const availableToolNames = new Set(availableTools.map((tool) => tool.name));
+      setEditingId(null);
+      setEditingBuiltInDefinition(definition);
+      setTouched({});
+      setForm({
+        name: definition.name,
+        description: source.description,
+        systemPrompt: source.systemPrompt,
+        tools: source.tools.filter((tool) => availableToolNames.has(tool)),
+        skills: [...source.skills],
+        mcpServers: [...source.mcpServers],
+        useSearchContext: searchContextAvailable ? source.useSearchContext : false,
+        icon: source.icon,
+        starters: [...source.starters],
+        temperature: source.temperature !== undefined ? String(source.temperature) : '',
+      });
+    } catch (err) {
+      console.error('Failed to load built-in agent definition:', err);
+    }
   };
 
   const handleToolToggle = (toolName: string) => {
@@ -147,9 +207,36 @@ export function AgentBuilder({ agents, onSave, onDelete, onBack }: AgentBuilderP
   const tempValid = parsedTemp === undefined || (!isNaN(parsedTemp) && parsedTemp >= 0 && parsedTemp <= 2);
 
   const handleSave = () => {
-    if (!form.name.trim() || !form.systemPrompt.trim() || !tempValid) return;
+    if ((!editingBuiltInDefinition && !form.name.trim()) || !form.systemPrompt.trim() || !tempValid) return;
 
     const now = new Date().toISOString();
+    if (editingBuiltInDefinition) {
+      const existingOverride = builtInOverrides.find((item) => item.baseProfileId === editingBuiltInDefinition.id);
+      const override: AgentCustomizationOverride = {
+        id: existingOverride?.id ?? `builtin_override_${editingBuiltInDefinition.id}`,
+        baseProfileId: editingBuiltInDefinition.id,
+        baseProfileName: editingBuiltInDefinition.name,
+        description: form.description.trim(),
+        systemPrompt: form.systemPrompt,
+        tools: form.tools,
+        skills: form.skills,
+        mcpServers: form.mcpServers,
+        useSearchContext: form.useSearchContext,
+        icon: editingBuiltInDefinition.icon,
+        starters: form.starters,
+        ...(parsedTemp !== undefined ? { temperature: parsedTemp } : {}),
+        source: 'builtin-override',
+        createdAt: existingOverride?.createdAt ?? now,
+        updatedAt: now,
+      };
+
+      onSaveBuiltInOverride(override);
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 2000);
+      resetForm();
+      return;
+    }
+
     const agent: CustomAgentDefinition = {
       id: editingId || generateId(),
       name: form.name.trim(),
@@ -179,7 +266,27 @@ export function AgentBuilder({ agents, onSave, onDelete, onBack }: AgentBuilderP
     onDelete(id);
   };
 
-  const isValid = form.name.trim() && form.systemPrompt.trim() && tempValid;
+  const handleMakeStandard = (override: AgentCustomizationOverride) => {
+    setCandidate(generateStandardAgentCandidate(override));
+  };
+
+  const handleCopyCandidate = async () => {
+    if (!candidate) return;
+    await navigator.clipboard.writeText(candidate.yaml);
+  };
+
+  const handleDownloadCandidate = () => {
+    if (!candidate) return;
+    const blob = new Blob([candidate.yaml], { type: 'text/yaml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `${candidate.profileId}.agents.yaml`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const isValid = (editingBuiltInDefinition || form.name.trim()) && form.systemPrompt.trim() && tempValid;
 
   return (
     <div className="agent-builder">
@@ -191,38 +298,89 @@ export function AgentBuilder({ agents, onSave, onDelete, onBack }: AgentBuilderP
       </div>
 
       <div className="agent-builder-layout">
-        {/* Saved agents list */}
-        {agents.length > 0 && (
-          <div className="agent-builder-saved">
-            <h3 className="agent-builder-section-title">SAVED AGENTS</h3>
-            {agents.map((agent) => (
-              <div key={agent.id} className={`agent-builder-saved-entry ${editingId === agent.id ? 'editing' : ''}`}>
-                <div className="agent-builder-saved-info">
-                  <div className="agent-builder-saved-name">{agent.name}</div>
-                  <div className="agent-builder-saved-desc">{agent.description || 'No description'}</div>
-                  {agent.mcpServers && agent.mcpServers.length > 0 && (
-                    <div className="agent-builder-saved-mcp">
-                      {agent.mcpServers.map((s, i) => (
-                        <span key={i} className="agent-builder-mcp-badge" title={s.url}>
-                          {s.name}{s.authScope ? ' [OBO]' : s.authenticated ? ' [Auth]' : ''}
-                        </span>
-                      ))}
+        <div className="agent-builder-lists">
+          <div className={`agent-builder-saved ${builtInsCollapsed ? 'collapsed' : ''}`}>
+          <button
+            className="agent-builder-section-toggle"
+            type="button"
+            aria-expanded={!builtInsCollapsed}
+            onClick={() => setBuiltInsCollapsed((collapsed) => !collapsed)}
+          >
+            <span className="agent-builder-section-title">BUILT-IN AGENTS</span>
+            <span className="agent-builder-section-toggle-icon" aria-hidden="true">{builtInsCollapsed ? '+' : '-'}</span>
+          </button>
+          {!builtInsCollapsed && (
+            loadingBuiltIns ? (
+              <div className="agent-builder-loading">Loading built-in agents...</div>
+            ) : (
+              builtInProfiles.map((profile) => {
+                const override = builtInOverrides.find((item) => item.baseProfileId === profile.id);
+                return (
+                  <div
+                    key={profile.id}
+                    className={`agent-builder-saved-entry ${editingBuiltInDefinition?.id === profile.id ? 'editing' : ''}`}
+                  >
+                    <div className="agent-builder-saved-info">
+                      <div className="agent-builder-saved-name">
+                        {profile.name}
+                        {override && <span className="agent-builder-mcp-badge agent-builder-mcp-badge--customized">CUSTOMIZED</span>}
+                      </div>
+                      <div className="agent-builder-saved-desc">{profile.description || 'No description'}</div>
                     </div>
-                  )}
-                </div>
-                <div className="agent-builder-saved-actions">
-                  <button onClick={() => handleEdit(agent)} type="button" title="Edit">✎</button>
-                  <button onClick={() => handleDelete(agent.id)} type="button" title="Delete">🗑</button>
-                </div>
-              </div>
-            ))}
+                    <div className="agent-builder-saved-actions">
+                      <button onClick={() => handleEditBuiltIn(profile)} type="button" title="Customize built-in agent">EDIT</button>
+                      {override && (
+                        <>
+                          <button onClick={() => onResetBuiltInOverride(profile.id)} type="button" title="Reset local customization">RESET</button>
+                          <button
+                            onClick={() => handleMakeStandard(override)}
+                            type="button"
+                            title="Save a downloadable standard agent candidate to provide to devs for consideration"
+                          >
+                            SAVE
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            )
+          )}
           </div>
-        )}
+
+          {/* Custom agents list */}
+          {agents.length > 0 && (
+            <div className={`agent-builder-saved ${customAgentsCollapsed ? 'collapsed' : ''}`}>
+            <button
+              className="agent-builder-section-toggle"
+              type="button"
+              aria-expanded={!customAgentsCollapsed}
+              onClick={() => setCustomAgentsCollapsed((collapsed) => !collapsed)}
+            >
+              <span className="agent-builder-section-title">CUSTOM AGENTS</span>
+              <span className="agent-builder-section-toggle-icon" aria-hidden="true">{customAgentsCollapsed ? '+' : '-'}</span>
+            </button>
+            {!customAgentsCollapsed && agents.map((agent) => (
+                <div key={agent.id} className={`agent-builder-saved-entry ${editingId === agent.id ? 'editing' : ''}`}>
+                  <div className="agent-builder-saved-info">
+                    <div className="agent-builder-saved-name">{agent.name}</div>
+                    <div className="agent-builder-saved-desc">{agent.description || 'No description'}</div>
+                  </div>
+                  <div className="agent-builder-saved-actions">
+                    <button onClick={() => handleEdit(agent)} type="button" title="Edit custom agent">EDIT</button>
+                    <button onClick={() => handleDelete(agent.id)} type="button" title="Delete custom agent">DELETE</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         {/* Form */}
         <div className="agent-builder-form">
           <h3 className="agent-builder-section-title">
-            {editingId ? 'EDIT AGENT' : 'CREATE NEW AGENT'}
+            {editingBuiltInDefinition ? 'CUSTOMIZE BUILT-IN AGENT' : editingId ? 'EDIT AGENT' : 'CREATE NEW AGENT'}
           </h3>
 
           <label className="agent-builder-label">
@@ -235,6 +393,7 @@ export function AgentBuilder({ agents, onSave, onDelete, onBack }: AgentBuilderP
               onBlur={() => setTouched((prev) => ({ ...prev, name: true }))}
               placeholder="e.g. Data Analyst"
               maxLength={100}
+              readOnly={Boolean(editingBuiltInDefinition)}
             />
             {touched.name && !form.name.trim() && (
               <span className="agent-builder-error-text">Name is required</span>
@@ -514,7 +673,7 @@ export function AgentBuilder({ agents, onSave, onDelete, onBack }: AgentBuilderP
 
           {/* Actions */}
           <div className="agent-builder-actions">
-            {editingId && (
+            {(editingId || editingBuiltInDefinition) && (
               <button className="agent-builder-cancel" onClick={resetForm} type="button">
                 CANCEL
               </button>
@@ -525,7 +684,7 @@ export function AgentBuilder({ agents, onSave, onDelete, onBack }: AgentBuilderP
               type="button"
               disabled={!isValid}
             >
-              {editingId ? 'UPDATE AGENT' : 'SAVE AGENT'}
+              {editingBuiltInDefinition ? 'SAVE CUSTOMIZATION' : editingId ? 'UPDATE AGENT' : 'SAVE AGENT'}
             </button>
           </div>
 
@@ -534,6 +693,43 @@ export function AgentBuilder({ agents, onSave, onDelete, onBack }: AgentBuilderP
           )}
         </div>
       </div>
+
+      {candidate && (
+        <div className="agent-builder-modal-backdrop" role="presentation" onClick={() => setCandidate(null)}>
+          <div className="agent-builder-candidate-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+            <div className="agent-builder-candidate-header">
+              <h3 className="agent-builder-section-title">STANDARD AGENT CANDIDATE</h3>
+              <button onClick={() => setCandidate(null)} type="button" title="Close">CLOSE</button>
+            </div>
+            <div className="agent-builder-candidate-meta">
+              <span>{candidate.profileId}</span>
+              <span>{candidate.generatedAt}</span>
+            </div>
+            <div className="agent-builder-candidate-notice">
+              Download this candidate to save as a standard agent. Provide it to devs for source review, tests, and evals before adding it to shared agents.yaml.
+            </div>
+            <textarea
+              className="agent-builder-candidate-code"
+              value={candidate.yaml}
+              readOnly
+              rows={16}
+            />
+            <div className="agent-builder-actions">
+              <button
+                className="agent-builder-cancel"
+                onClick={handleDownloadCandidate}
+                type="button"
+                title="Download this to save as a standard agent"
+              >
+                DOWNLOAD CANDIDATE
+              </button>
+              <button className="agent-builder-save" onClick={handleCopyCandidate} type="button">
+                COPY YAML
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

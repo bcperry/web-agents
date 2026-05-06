@@ -41,6 +41,12 @@ eval/traces/
 eval/results/
 
 node_modules/
+.DS_Store
+Thumbs.db
+*.tmp
+*.swp
+.vscode/
+.idea/
 
 # Frontend
 frontend/node_modules/

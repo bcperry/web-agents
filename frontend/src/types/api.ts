@@ -23,9 +23,10 @@ export interface ToolsResponse {
 export interface McpServerEntry {
   name: string;
   transport: 'http' | 'stdio';
-  url: string;
+  url?: string;
   authenticated?: boolean;
   authScope?: string;
+  description?: string;
 }
 
 export interface McpConnectionResult {
@@ -52,6 +53,47 @@ export interface CustomAgentDefinition {
   updatedAt: string;
 }
 
+export interface AgentCustomizationOverride {
+  id: string;
+  description: string;
+  systemPrompt: string;
+  tools: string[];
+  skills: string[];
+  mcpServers: McpServerEntry[];
+  useSearchContext: boolean;
+  icon: string;
+  starters: StarterQuestion[];
+  temperature?: number;
+  source: 'builtin-override';
+  createdAt: string;
+  updatedAt: string;
+  baseProfileId: string;
+  baseProfileName?: string;
+}
+
+export interface BuiltInAgentDefinition {
+  id: string;
+  name: string;
+  description: string;
+  systemPrompt: string;
+  tools: string[];
+  skills: string[];
+  mcpServers: McpServerEntry[];
+  useSearchContext: boolean;
+  icon: string;
+  starters: StarterQuestion[];
+  temperature?: number;
+  source: 'builtin';
+}
+
+export interface StandardAgentCandidate {
+  profileId: string;
+  yaml: string;
+  profile: Record<string, unknown>;
+  generatedAt: string;
+  sourceOverrideUpdatedAt: string;
+}
+
 export interface AgentProfile {
   id: string;
   name: string;
@@ -59,6 +101,12 @@ export interface AgentProfile {
   icon: string;
   starters: StarterQuestion[];
   isCustom?: boolean;
+  isCustomized?: boolean;
+  customAgent?: CustomAgentDefinition;
+  builtInOverride?: AgentCustomizationOverride;
+  baseProfileId?: string;
+  usedBuiltInOverride?: boolean;
+  overrideUpdatedAt?: string;
   mcp_server_count?: number;
 }
 
@@ -82,6 +130,8 @@ export interface SessionCreateResponse {
   skills_loaded?: string[];
   search_context?: boolean;
   mcp_results?: McpConnectionResult[];
+  used_profile_override?: boolean;
+  override_updated_at?: string | null;
 }
 
 export interface ImageData {
@@ -154,6 +204,9 @@ export interface ConversationIndexEntry {
   createdAt: string;
   lastActivityAt: string;
   customAgentId?: string;
+  usedBuiltInOverride?: boolean;
+  baseProfileId?: string;
+  overrideUpdatedAt?: string;
 }
 
 export interface StoredConversation {
@@ -165,6 +218,9 @@ export interface StoredConversation {
   lastActivityAt: string;
   sessionData: Record<string, unknown>;
   customAgentId?: string;
+  usedBuiltInOverride?: boolean;
+  baseProfileId?: string;
+  overrideUpdatedAt?: string;
 }
 
 export interface UserMemoryProfile {

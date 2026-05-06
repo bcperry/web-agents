@@ -539,6 +539,26 @@ body {
   line-height: 1.4;
 }
 
+.profile-card-badge {
+  margin-top: 12px;
+  padding: 2px 8px;
+  border: 1px solid var(--border-olive);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  background: var(--bg-input);
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+}
+
+.profile-card-badge--customized,
+.capabilities-pill--customized,
+.agent-builder-mcp-badge--customized {
+  color: var(--text-gold);
+  border-color: color-mix(in srgb, var(--text-gold) 45%, transparent);
+  background: color-mix(in srgb, var(--text-gold) 12%, var(--bg-input));
+}
+
 /* T009: Starter questions */
 .starter-questions {
   display: flex;
@@ -1443,6 +1463,8 @@ body {
   height: 100vh;
   flex: 1;
   min-width: 0;
+  max-width: 100vw;
+  overflow-x: hidden;
   background-color: var(--bg-primary);
 }
 
@@ -1485,23 +1507,28 @@ body {
 .agent-builder-layout {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 24px 32px;
   display: grid;
   grid-template-columns: 1fr;
   gap: 24px;
   width: 100%;
+  min-width: 0;
   align-content: start;
+  align-items: start;
 }
 
 @media (min-width: 1024px) {
   .agent-builder-layout {
     grid-template-columns: 300px 1fr;
   }
+}
 
-  .agent-builder-form {
-    grid-row: 1 / 3;
-    grid-column: 2;
-  }
+.agent-builder-lists {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  min-width: 0;
 }
 
 .agent-builder-section-title {
@@ -1513,18 +1540,69 @@ body {
   margin-bottom: 12px;
 }
 
+.agent-builder-section-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  margin-bottom: 12px;
+  text-align: left;
+}
+
+.agent-builder-section-toggle .agent-builder-section-title {
+  margin-bottom: 0;
+}
+
+.agent-builder-section-toggle-icon {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-olive);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.agent-builder-section-toggle:hover .agent-builder-section-toggle-icon,
+.agent-builder-section-toggle:focus-visible .agent-builder-section-toggle-icon {
+  border-color: var(--accent-gold);
+  color: var(--text-gold);
+}
+
+.agent-builder-section-toggle:focus-visible {
+  outline: 1px solid var(--accent-gold);
+  outline-offset: 4px;
+}
+
 /* Saved agents list */
 .agent-builder-saved {
   border: 1px solid var(--border-olive);
   border-radius: var(--radius);
   padding: 16px;
   background-color: var(--bg-panel);
+  height: fit-content;
+  min-width: 0;
+}
+
+.agent-builder-saved.collapsed .agent-builder-section-toggle {
+  margin-bottom: 0;
 }
 
 .agent-builder-saved-entry {
   display: flex;
-  align-items: center;
+  align-items: stretch;
+  flex-direction: column;
   justify-content: space-between;
+  gap: 8px;
   padding: 10px 12px;
   border: 1px solid var(--border-olive);
   border-radius: var(--radius);
@@ -1547,6 +1625,10 @@ body {
 }
 
 .agent-builder-saved-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
   font-family: var(--font-mono);
   font-size: 0.95rem;
   color: var(--text-gold);
@@ -1565,6 +1647,7 @@ body {
 
 .agent-builder-saved-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   flex-shrink: 0;
 }
@@ -1577,6 +1660,8 @@ body {
   padding: 4px 8px;
   border-radius: var(--radius);
   font-size: 0.85rem;
+  font-family: var(--font-mono);
+  letter-spacing: 0;
 }
 
 .agent-builder-saved-actions button:hover {
@@ -1590,6 +1675,7 @@ body {
   border-radius: var(--radius);
   padding: 20px;
   background-color: var(--bg-panel);
+  min-width: 0;
 }
 
 .agent-builder-label {
@@ -2231,6 +2317,10 @@ body {
   border-color: color-mix(in srgb, var(--accent-green) 30%, transparent);
 }
 
+.capabilities-pill--customized {
+  font-weight: 600;
+}
+
 .capabilities-pill--ok {
   border-color: color-mix(in srgb, var(--accent-green) 30%, transparent);
 }
@@ -2333,6 +2423,78 @@ body {
   background: var(--bg-hover);
 }
 
+.agent-builder-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.62);
+}
+
+.agent-builder-candidate-modal {
+  width: min(760px, 100%);
+  max-height: min(760px, calc(100vh - 48px));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid var(--border-gold);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+}
+
+.agent-builder-candidate-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.agent-builder-candidate-header button {
+  padding: 4px 8px;
+  border: 1px solid var(--border-olive);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.agent-builder-candidate-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+}
+
+.agent-builder-candidate-notice {
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--text-gold) 35%, transparent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--text-gold) 10%, var(--bg-input));
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
+.agent-builder-candidate-code {
+  min-height: 280px;
+  resize: vertical;
+  padding: 12px;
+  border: 1px solid var(--border-olive);
+  border-radius: var(--radius);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
 .agent-builder-test-mcp-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -2353,6 +2515,8 @@ body {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  width: 100%;
+  max-width: 100vw;
   background: var(--bg-primary);
   color: var(--text-primary);
   overflow: hidden;
@@ -2429,7 +2593,9 @@ body {
 .admin-content {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 0;
+  min-width: 0;
 }
 
 /* ===========================================================================

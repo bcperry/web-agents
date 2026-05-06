@@ -5,6 +5,7 @@ interface Props {
   skillsLoaded: string[];
   searchContext: boolean;
   mcpResults: McpConnectionResult[];
+  isCustomized?: boolean;
 }
 
 export function AgentCapabilitiesBar({
@@ -12,16 +13,25 @@ export function AgentCapabilitiesBar({
   skillsLoaded,
   searchContext,
   mcpResults,
+  isCustomized = false,
 }: Props) {
   const hasTools = toolsLoaded.length > 0;
   const hasSkills = skillsLoaded.length > 0;
   const hasMcp = mcpResults.length > 0;
   const hasSearch = searchContext;
 
-  if (!hasTools && !hasSkills && !hasMcp && !hasSearch) return null;
+  if (!hasTools && !hasSkills && !hasMcp && !hasSearch && !isCustomized) return null;
 
   return (
     <div className="capabilities-bar">
+      {isCustomized && (
+        <div className="capabilities-section">
+          <span className="capabilities-label">PROFILE</span>
+          <div className="capabilities-items">
+            <span className="capabilities-pill capabilities-pill--customized">CUSTOMIZED</span>
+          </div>
+        </div>
+      )}
       {hasTools && (
         <div className="capabilities-section">
           <span className="capabilities-label">TOOLS</span>

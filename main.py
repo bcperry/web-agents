@@ -76,7 +76,7 @@ class SessionData:
         "agent", "agent_session", "tools", "usage",
         "eval_trace_logger", "prompt_manifest", "prompt_logical_profile",
         "created_at", "context_usage", "user_profile_store",
-        "mcp_tools",
+        "mcp_tools", "used_profile_override", "override_updated_at",
     )
 
     def __init__(
@@ -113,6 +113,8 @@ class SessionData:
         }
         self.user_profile_store = None
         self.mcp_tools: list[Any] = []
+        self.used_profile_override = False
+        self.override_updated_at: str | None = None
 
 
 _sessions: dict[str, SessionData] = {}
@@ -566,6 +568,43 @@ app.add_middleware(
 )
 
 
+class McpServerEntryRequest(BaseModel):
+    name: str
+    transport: str = "http"
+    url: str | None = None
+    authenticated: bool | None = None
+    auth: bool | None = None
+    authScope: str | None = None
+    auth_scope: str | None = None
+    description: str | None = None
+
+
+class ProfileOverrideRequest(BaseModel):
+    description: str | None = None
+    custom_prompt: str
+    custom_tools: list[str] = []
+    custom_search_context: bool = False
+    custom_temperature: float | None = None
+    custom_skills: list[str] = []
+    mcp_servers: list[McpServerEntryRequest] = []
+    override_updated_at: str | None = None
+
+
+class BuiltInProfileDefinitionResponse(BaseModel):
+    id: str
+    name: str
+    description: str
+    icon: str
+    systemPrompt: str
+    tools: list[str]
+    skills: list[str]
+    mcpServers: list[dict[str, Any]]
+    useSearchContext: bool
+    starters: list[dict[str, str]]
+    temperature: float | None = None
+    source: str = "builtin"
+
+
 # ---------------------------------------------------------------------------
 # API Endpoints
 # ---------------------------------------------------------------------------
@@ -689,6 +728,14 @@ async def get_profiles(user: AuthenticatedUser = Depends(get_current_user)):
     return {"profiles": profiles, "unavailable": unavailable}
 
 
+@app.get("/api/profiles/{profile_id}/definition", response_model=BuiltInProfileDefinitionResponse)
+async def get_profile_definition(
+    profile_id: str,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    return _get_builtin_profile_definition(profile_id)
+
+
 # POST /api/mcp/test — test MCP server connections without creating a session
 @app.post("/api/mcp/test")
 async def test_mcp_connections(
@@ -775,6 +822,79 @@ _SKILL_MD_TEMPLATE = '---\nname: {name}\ndescription: "{description}"\n---\n\n{c
 
 def _get_skills_dir() -> Path:
     return Path(__file__).resolve().parent / "skills"
+
+
+def _starter_definitions(raw_starters: Any) -> list[dict[str, str]]:
+    return [
+        {"label": str(s.get("label", "")), "message": str(s.get("message", ""))}
+        for s in (raw_starters or [])
+        if isinstance(s, dict)
+    ]
+
+
+def _safe_mcp_server_definitions(raw_servers: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw_servers, list):
+        return []
+
+    safe_servers: list[dict[str, Any]] = []
+    for entry in raw_servers:
+        if not isinstance(entry, dict):
+            continue
+
+        name = entry.get("name")
+        transport = entry.get("transport", "http")
+        if not name or transport not in ("http", "stdio"):
+            continue
+
+        safe_entry: dict[str, Any] = {
+            "name": str(name),
+            "transport": str(transport),
+        }
+        for source_key, target_key in (
+            ("url", "url"),
+            ("description", "description"),
+            ("auth", "authenticated"),
+            ("authenticated", "authenticated"),
+            ("auth_scope", "authScope"),
+            ("authScope", "authScope"),
+        ):
+            value = entry.get(source_key)
+            if value is not None:
+                safe_entry[target_key] = value
+
+        safe_servers.append(safe_entry)
+
+    return safe_servers
+
+
+def _get_builtin_profile_definition(profile_id: str) -> BuiltInProfileDefinitionResponse:
+    agents_doc = load_agents_yaml()
+    profiles_data = agents_doc.get("profiles") or {}
+    entry = profiles_data.get(profile_id)
+    if not isinstance(entry, dict):
+        raise HTTPException(status_code=404, detail=f"Profile not found: {profile_id}")
+
+    raw_temperature = entry.get("temperature")
+    temperature: float | None = None
+    if raw_temperature is not None:
+        try:
+            temperature = float(raw_temperature)
+        except (TypeError, ValueError):
+            temperature = None
+
+    return BuiltInProfileDefinitionResponse(
+        id=profile_id,
+        name=str(entry.get("name", profile_id)),
+        description=str(entry.get("description", "")),
+        icon=str(entry.get("icon", _DEFAULT_PROFILE_ICON)),
+        systemPrompt=str(entry.get("system_prompt", "")).strip(),
+        tools=[str(t) for t in (entry.get("tools") or []) if isinstance(t, str)],
+        skills=[str(s) for s in (entry.get("skills") or []) if isinstance(s, str)],
+        mcpServers=_safe_mcp_server_definitions(entry.get("mcp_servers")),
+        useSearchContext=bool(entry.get("search_context", False)),
+        starters=_starter_definitions(entry.get("starters")),
+        temperature=temperature,
+    )
 
 
 def _parse_skill_md(skill_dir: Path) -> dict:
@@ -970,6 +1090,8 @@ async def get_session_history(
         "profile_id": session_data.profile_id,
         "profile_name": session_data.profile_name,
         "session_data": session_data.agent_session.to_dict(),
+        "used_profile_override": session_data.used_profile_override,
+        "override_updated_at": session_data.override_updated_at,
     }
 
 
@@ -1148,18 +1270,52 @@ async def create_session(
     agents_doc = load_agents_yaml()
     profiles_data = agents_doc.get("profiles") or {}
 
-    # Accept either a direct profile key (e.g. "sql") or a display name (e.g. "Tactical Readiness AI")
+    # Accept either a direct profile key (e.g. "sql") or an exact display name.
     if profile_id in profiles_data:
         logical_profile = profile_id
     else:
-        logical_profile = resolve_logical_profile(profile_id)
+        normalized_profile_id = " ".join(str(profile_id).strip().lower().split())
+        logical_profile = ""
+        for key, entry in profiles_data.items():
+            if not isinstance(entry, dict):
+                continue
+            normalized_name = " ".join(str(entry.get("name", "")).strip().lower().split())
+            if normalized_name and normalized_name == normalized_profile_id:
+                logical_profile = key
+                break
 
     if logical_profile not in profiles_data:
         raise HTTPException(status_code=400, detail=f"Unknown profile: {profile_id}")
 
+    profile_entry = profiles_data[logical_profile]
+    profile_name = str(profile_entry.get("name", logical_profile))
+    raw_profile_override = body.get("profile_override")
+    profile_override: ProfileOverrideRequest | None = None
+    if raw_profile_override is not None:
+        if not isinstance(raw_profile_override, dict):
+            raise HTTPException(status_code=400, detail="profile_override must be an object")
+        if "name" in raw_profile_override or "custom_name" in raw_profile_override:
+            raise HTTPException(status_code=400, detail="Built-in profile overrides cannot change the agent name")
+        try:
+            profile_override = ProfileOverrideRequest(**raw_profile_override)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid profile_override: {e}")
+
+        if not profile_override.custom_prompt.strip() or len(profile_override.custom_prompt) > DEFAULT_MAX_USER_INPUT_CHARS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"custom_prompt is required and must be ≤ {DEFAULT_MAX_USER_INPUT_CHARS} characters",
+            )
+        if profile_override.custom_temperature is not None and not (0.0 <= profile_override.custom_temperature <= 2.0):
+            raise HTTPException(status_code=400, detail="custom_temperature must be between 0.0 and 2.0")
+
     session_id = str(uuid.uuid4())
 
-    profile_tool_names = (profiles_data[logical_profile].get("tools") or [])
+    profile_tool_names = (
+        list(profile_override.custom_tools)
+        if profile_override is not None
+        else (profile_entry.get("tools") or [])
+    )
     try:
         function_tools, user_profile_store = _build_tool_instances(
             set(profile_tool_names),
@@ -1167,8 +1323,38 @@ async def create_session(
             user_profile_data=body.get("user_profile"),
         )
 
-        # Connect MCP servers declared in the profile
-        mcp_configs = parse_mcp_server_configs(profiles_data[logical_profile])
+        if profile_override is not None:
+            known_tools: set[str] = {"get_user_profile", "save_user_profile"}
+            for entry in profiles_data.values():
+                if isinstance(entry, dict):
+                    for t in (entry.get("tools") or []):
+                        if isinstance(t, str):
+                            known_tools.add(t)
+            invalid_tools = [t for t in profile_override.custom_tools if t not in known_tools]
+            if invalid_tools:
+                raise HTTPException(status_code=400, detail=f"Unknown tools: {', '.join(invalid_tools)}")
+
+            if profile_override.custom_skills:
+                from agent_framework import SkillsProvider
+                skills_dir = _get_skills_dir()
+                if skills_dir.is_dir():
+                    sp = SkillsProvider(skill_paths=skills_dir)
+                    available_skills = set(sp._skills.keys())
+                else:
+                    available_skills = set()
+                invalid_skills = [s for s in profile_override.custom_skills if s not in available_skills]
+                if invalid_skills:
+                    raise HTTPException(status_code=400, detail=f"Unknown skills: {', '.join(invalid_skills)}")
+
+            raw_mcp_servers = [server.model_dump(exclude_none=True) for server in profile_override.mcp_servers]
+            for entry in raw_mcp_servers:
+                if entry.get("transport") != "http":
+                    raise HTTPException(status_code=400, detail="Built-in profile overrides only support 'http' MCP servers")
+                if not entry.get("url"):
+                    raise HTTPException(status_code=400, detail=f"MCP server '{entry['name']}' (http) requires a 'url'")
+            mcp_configs = parse_mcp_server_configs({"mcp_servers": raw_mcp_servers})
+        else:
+            mcp_configs = parse_mcp_server_configs(profile_entry)
         mcp_tools, mcp_results = await connect_mcp_servers(mcp_configs, user_token=user_bearer_token)
 
         # Auto-inject user profile into system prompt if agent has get_user_profile
@@ -1176,20 +1362,30 @@ async def create_session(
         if "get_user_profile" in profile_tool_names:
             profile_context = _build_user_profile_context(body.get("user_profile"))
 
-        chat_runtime = create_chat_runtime(
-            chat_profile=get_profile_display_name(logical_profile, fallback=profile_id),
-            function_tools=function_tools,
-            mcp_servers=mcp_tools,
-            extra_instructions=profile_context or None,
-        )
+        if profile_override is not None:
+            chat_runtime = create_chat_runtime(
+                custom_name=profile_name,
+                custom_instructions=profile_override.custom_prompt.strip(),
+                function_tools=function_tools,
+                mcp_servers=mcp_tools,
+                temperature=profile_override.custom_temperature,
+                enable_search_context=profile_override.custom_search_context,
+                custom_skills=profile_override.custom_skills or None,
+                extra_instructions=profile_context or None,
+            )
+        else:
+            chat_runtime = create_chat_runtime(
+                chat_profile=get_profile_display_name(logical_profile, fallback=profile_id),
+                function_tools=function_tools,
+                mcp_servers=mcp_tools,
+                extra_instructions=profile_context or None,
+            )
     except HTTPException as e:
         logger.error("Session creation failed for profile '%s': %s", logical_profile, e.detail)
         raise
     except Exception as e:
         logger.exception("Unexpected error creating session for profile '%s'", logical_profile)
         raise HTTPException(status_code=500, detail=str(e))
-
-    profile_name = profiles_data[logical_profile].get("name", logical_profile)
 
     # Restore session history if provided
     history = body.get("history")
@@ -1218,13 +1414,23 @@ async def create_session(
     )
     session_data.user_profile_store = user_profile_store
     session_data.mcp_tools = mcp_tools
+    session_data.used_profile_override = profile_override is not None
+    session_data.override_updated_at = profile_override.override_updated_at if profile_override else None
 
     _sessions[session_id] = session_data
 
     logger.info("Created session %s for user %s profile %s", session_id, user.user_id, logical_profile)
 
-    profile_skills = [str(s) for s in (profiles_data[logical_profile].get("skills") or []) if isinstance(s, str)]
-    profile_search_context = bool(profiles_data[logical_profile].get("search_context", False))
+    profile_skills = (
+        list(profile_override.custom_skills)
+        if profile_override is not None
+        else [str(s) for s in (profile_entry.get("skills") or []) if isinstance(s, str)]
+    )
+    profile_search_context = (
+        bool(profile_override.custom_search_context)
+        if profile_override is not None
+        else bool(profile_entry.get("search_context", False))
+    )
 
     return {
         "session_id": session_id,
@@ -1237,6 +1443,8 @@ async def create_session(
             {"name": r.name, "transport": r.transport, "status": r.status, "tool_count": r.tool_count, "error": r.error}
             for r in mcp_results
         ],
+        "used_profile_override": profile_override is not None,
+        "override_updated_at": profile_override.override_updated_at if profile_override else None,
     }
 
 

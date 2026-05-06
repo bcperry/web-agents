@@ -251,7 +251,7 @@ profiles:
       - If a question is outside the Azure Government scope, say so and point to the
         appropriate resource.
 
-  faa:
+  drone:
     name: Drone Questions AI
     description: Aviation information assistant powered by FAA data tools.
     icon: /icons/hybrid.svg
