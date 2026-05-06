@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from './hooks/useAuth'
 import { useCustomAgents } from './hooks/useCustomAgents'
 import { useConversationStore } from './hooks/useConversationStore'
@@ -16,6 +16,31 @@ function AppContent() {
   const [currentView, setCurrentView] = useState<'chat' | 'admin'>('chat')
   const { agents: customAgents, save: saveCustomAgent, remove: removeCustomAgent } = useCustomAgents()
   const { loadIndex, deleteConversationsByCustomAgent } = useConversationStore()
+
+  // Initialise history state so the back button can return here from admin.
+  useEffect(() => {
+    window.history.replaceState({ view: 'chat' }, '')
+  }, [])
+
+  // Sync currentView with browser back/forward navigation.
+  useEffect(() => {
+    const handlePopState = (e: PopStateEvent) => {
+      const view = (e.state as { view?: string } | null)?.view
+      setCurrentView(view === 'admin' ? 'admin' : 'chat')
+    }
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
+
+  const handleOpenAdmin = useCallback(() => {
+    window.history.pushState({ view: 'admin' }, '')
+    setCurrentView('admin')
+  }, [])
+
+  const handleAdminBack = useCallback(() => {
+    // Let the browser pop the history entry; the popstate listener updates the view.
+    window.history.back()
+  }, [])
 
   const handleDeleteAgent = (id: string) => {
     removeCustomAgent(id)
@@ -49,14 +74,14 @@ function AppContent() {
     <Disclaimer>
       {currentView === 'admin' ? (
         <AdminPage
-          onBack={() => setCurrentView('chat')}
+          onBack={handleAdminBack}
           agents={customAgents}
           onSaveAgent={saveCustomAgent}
           onDeleteAgent={handleDeleteAgent}
         />
       ) : (
         <ChatPage
-          onOpenAdmin={() => setCurrentView('admin')}
+          onOpenAdmin={handleOpenAdmin}
           customAgents={customAgents}
         />
       )}
