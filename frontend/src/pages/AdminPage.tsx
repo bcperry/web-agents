@@ -30,9 +30,9 @@ export function AdminPage({
     <div className="admin-page">
       <div className="admin-header">
         <button className="admin-back-btn" onClick={onBack} type="button">
-          ← BACK TO CHAT
+          BACK TO CHAT
         </button>
-        <h2 className="admin-title">⚙ ADMIN</h2>
+        <h2 className="admin-title">ADMIN</h2>
       </div>
 
       <div className="admin-tabs">
