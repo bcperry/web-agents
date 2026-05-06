@@ -36,6 +36,11 @@ def open_admin(page: Page) -> None:
     page.get_by_text("BUILT-IN AGENTS").wait_for(timeout=5_000)
 
 
+def open_skills(page: Page) -> None:
+    page.get_by_role("button", name="SKILLS").click(timeout=5_000)
+    page.get_by_text("SAVED SKILLS").wait_for(timeout=5_000)
+
+
 def ensure_expanded(page: Page, section_index: int) -> None:
     toggle = page.locator(".agent-builder-section-toggle").nth(section_index)
     if toggle.get_attribute("aria-expanded") == "false":
@@ -77,6 +82,34 @@ def panel_metrics(page: Page) -> dict[str, int]:
     )
 
 
+def capture_skills_states(page: Page, output_dir: Path) -> None:
+    open_skills(page)
+    page.screenshot(path=str(output_dir / "006-admin-skills-list.png"), full_page=True)
+
+    page.get_by_role("button", name="NEW SKILL").click(timeout=5_000)
+    page.screenshot(path=str(output_dir / "006-admin-skills-create.png"), full_page=True)
+
+    edit_button = page.locator(".agent-builder-saved-entry").first.get_by_role("button", name="EDIT")
+    if edit_button.count() > 0:
+        edit_button.click(timeout=5_000)
+        page.locator("#skill-content").wait_for(timeout=5_000)
+        page.screenshot(path=str(output_dir / "006-admin-skills-edit.png"), full_page=True)
+
+    delete_button = page.locator(".agent-builder-saved-entry").first.get_by_role("button", name="DELETE")
+    if delete_button.count() > 0:
+        delete_button.click(timeout=5_000)
+        page.screenshot(path=str(output_dir / "006-admin-skills-delete-confirm.png"), full_page=True)
+        page.locator(".skill-delete-confirm").get_by_role("button", name="CANCEL").click(timeout=5_000)
+
+    page.set_viewport_size({"width": 768, "height": 1024})
+    page.screenshot(path=str(output_dir / "006-admin-skills-tablet.png"), full_page=True)
+
+    page.set_viewport_size({"width": 360, "height": 640})
+    page.screenshot(path=str(output_dir / "006-admin-skills-mobile.png"), full_page=True)
+
+    page.set_viewport_size({"width": 1440, "height": 900})
+
+
 def capture(args: argparse.Namespace) -> None:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -112,6 +145,8 @@ def capture(args: argparse.Namespace) -> None:
         ensure_collapsed(page, 1)
         scroll_agent_layout(page, "bottom")
         page.screenshot(path=str(output_dir / "005-admin-agents-custom-collapsed.png"), full_page=True)
+
+        capture_skills_states(page, output_dir)
 
         browser.close()
 

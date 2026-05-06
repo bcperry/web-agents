@@ -10,6 +10,7 @@ export function SkillBuilder() {
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<ViewMode>('list');
+  const [skillsCollapsed, setSkillsCollapsed] = useState(false);
 
   // Form state
   const [formName, setFormName] = useState('');
@@ -35,6 +36,7 @@ export function SkillBuilder() {
       setSkills(data as SkillSummary[]);
     } catch (err) {
       console.error('Failed to load skills:', err);
+      setErrorMsg('Failed to load skills.');
     } finally {
       setLoading(false);
     }
@@ -169,6 +171,10 @@ export function SkillBuilder() {
       await deleteSkill(name);
       setSuccessMsg(`Skill "${name}" deleted.`);
       setDeletingName(null);
+      if (editingName === name) {
+        resetForm();
+        setView('list');
+      }
       await loadSkills();
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Failed to delete skill.');
@@ -190,264 +196,174 @@ export function SkillBuilder() {
     formContent.trim().length > 0 &&
     formContent.length <= 65536;
 
-  if (view === 'create') {
-    return (
-      <div className="skill-builder">
-        <div className="skill-form-header">
-          <button className="skill-btn-secondary" onClick={handleBack} type="button">
-            ← BACK
-          </button>
-          <h3 className="skill-form-title">NEW SKILL</h3>
-        </div>
-        {errorMsg && <div className="skill-error">{errorMsg}</div>}
-        {successMsg && <div className="skill-success">{successMsg}</div>}
-        <form className="skill-form" onSubmit={handleCreate}>
-          <div className="skill-form-field">
-            <label className="agent-builder-label" htmlFor="skill-name">
-              NAME <span className="skill-hint">(lowercase letters, numbers, hyphens)</span>
-            </label>
-            <input
-              id="skill-name"
-              className="agent-builder-input"
-              type="text"
-              value={formName}
-              onChange={(e) => setFormName(e.target.value)}
-              placeholder="e.g. my-skill"
-              maxLength={64}
-              disabled={formLoading}
-              required
-            />
-          </div>
-          <div className="skill-form-field">
-            <label className="agent-builder-label" htmlFor="skill-description">
-              DESCRIPTION
-            </label>
-            <input
-              id="skill-description"
-              className="agent-builder-input"
-              type="text"
-              value={formDescription}
-              onChange={(e) => setFormDescription(e.target.value)}
-              placeholder="Brief description of what this skill does"
-              maxLength={256}
-              disabled={formLoading}
-              required
-            />
-          </div>
-          <div className="skill-form-field">
-            <label className="agent-builder-label" htmlFor="skill-content">
-              CONTENT (Markdown)
-            </label>
-            <div className="skill-ai-row">
-              <button
-                className="skill-btn-ai"
-                type="button"
-                onClick={handleGenerateWithAI}
-                disabled={aiLoading || formLoading || !formDescription.trim()}
-                title="Generate Markdown content from the description above"
-              >
-                {aiLoading ? 'GENERATING…' : '✨ GENERATE WITH AI'}
-              </button>
-              <span className="skill-ai-hint">Uses the description above as the prompt</span>
-            </div>
-            <textarea
-              id="skill-content"
-              className="skill-textarea"
-              value={formContent}
-              onChange={(e) => setFormContent(e.target.value)}
-              placeholder={'# Skill Instructions\n\nWrite the skill instructions here in Markdown...'}
-              maxLength={65536}
-              disabled={formLoading}
-              required
-              rows={16}
-            />
-          </div>
-          <div className="agent-builder-actions">
-            <button
-              className="agent-builder-save"
-              type="submit"
-              disabled={formLoading || !isCreateFormValid}
-            >
-              {formLoading ? 'CREATING...' : 'CREATE SKILL'}
-            </button>
-            <button
-              className="agent-builder-cancel"
-              type="button"
-              onClick={handleBack}
-              disabled={formLoading}
-            >
-              CANCEL
-            </button>
-          </div>
-        </form>
-      </div>
-    );
-  }
+  const isEditing = view === 'edit';
+  const formTitle = isEditing ? `EDIT SKILL${editingName ? ` - ${editingName}` : ''}` : 'CREATE NEW SKILL';
+  const submitLabel = isEditing ? 'SAVE CHANGES' : 'CREATE SKILL';
+  const loadingLabel = isEditing ? 'SAVING...' : 'CREATING...';
 
-  if (view === 'edit') {
-    return (
-      <div className="skill-builder">
-        <div className="skill-form-header">
-          <button className="skill-btn-secondary" onClick={handleBack} type="button">
-            ← BACK
-          </button>
-          <h3 className="skill-form-title">EDIT SKILL — {editingName}</h3>
-        </div>
-        {errorMsg && <div className="skill-error">{errorMsg}</div>}
-        {successMsg && <div className="skill-success">{successMsg}</div>}
-        {formLoading && !formContent ? (
-          <div className="agent-builder-loading">Loading skill...</div>
-        ) : (
-          <form className="skill-form" onSubmit={handleUpdate}>
-            <div className="skill-form-field">
-              <label className="agent-builder-label" htmlFor="skill-name-ro">
-                NAME <span className="skill-hint">(read-only)</span>
-              </label>
-              <input
-                id="skill-name-ro"
-                className="agent-builder-input"
-                type="text"
-                value={formName}
-                readOnly
-                disabled
-              />
-            </div>
-            <div className="skill-form-field">
-              <label className="agent-builder-label" htmlFor="skill-edit-description">
-                DESCRIPTION
-              </label>
-              <input
-                id="skill-edit-description"
-                className="agent-builder-input"
-                type="text"
-                value={formDescription}
-                onChange={(e) => setFormDescription(e.target.value)}
-                placeholder="Brief description"
-                maxLength={256}
-                disabled={formLoading}
-                required
-              />
-            </div>
-            <div className="skill-form-field">
-              <label className="agent-builder-label" htmlFor="skill-edit-content">
-                CONTENT (Markdown)
-              </label>
-              <div className="skill-ai-row">
-                <button
-                  className="skill-btn-ai"
-                  type="button"
-                  onClick={handleGenerateWithAI}
-                  disabled={aiLoading || formLoading || !formDescription.trim()}
-                  title="Regenerate Markdown content from the description above (replaces current content)"
-                >
-                  {aiLoading ? 'GENERATING…' : '✨ GENERATE WITH AI'}
-                </button>
-                <span className="skill-ai-hint">Replaces current content</span>
-              </div>
-              <textarea
-                id="skill-edit-content"
-                className="skill-textarea"
-                value={formContent}
-                onChange={(e) => setFormContent(e.target.value)}
-                placeholder="# Skill Instructions..."
-                maxLength={65536}
-                disabled={formLoading}
-                required
-                rows={16}
-              />
-            </div>
-            <div className="agent-builder-actions">
-              <button
-                className="agent-builder-save"
-                type="submit"
-                disabled={formLoading || !isEditFormValid}
-              >
-                {formLoading ? 'SAVING...' : 'SAVE CHANGES'}
-              </button>
-              <button
-                className="agent-builder-cancel"
-                type="button"
-                onClick={handleBack}
-                disabled={formLoading}
-              >
-                CANCEL
-              </button>
-            </div>
-          </form>
-        )}
-      </div>
-    );
-  }
-
-  // List view
   return (
-    <div className="skill-builder">
-      <div className="skill-builder-header">
-        <h3 className="skill-builder-title">SKILLS</h3>
-        <button className="skill-btn-primary" onClick={handleOpenCreate} type="button">
-          + NEW SKILL
-        </button>
+    <div className="agent-builder skill-builder">
+      <div className="agent-builder-header">
+        <h2 className="agent-builder-title">SKILL BUILDER</h2>
       </div>
 
-      {errorMsg && <div className="skill-error">{errorMsg}</div>}
-      {successMsg && <div className="skill-success">{successMsg}</div>}
+      <div className="agent-builder-layout skill-builder-layout">
+        <div className="agent-builder-lists">
+          <div className={`agent-builder-saved ${skillsCollapsed ? 'collapsed' : ''}`}>
+            <button
+              className="agent-builder-section-toggle"
+              type="button"
+              aria-expanded={!skillsCollapsed}
+              onClick={() => setSkillsCollapsed((collapsed) => !collapsed)}
+            >
+              <span className="agent-builder-section-title">SAVED SKILLS</span>
+              <span className="agent-builder-section-toggle-icon" aria-hidden="true">
+                {skillsCollapsed ? '+' : '-'}
+              </span>
+            </button>
 
-      {loading ? (
-        <div className="agent-builder-loading">Loading skills...</div>
-      ) : skills.length === 0 ? (
-        <div className="skill-empty">
-          No skills defined yet. Click <strong>+ NEW SKILL</strong> to create one.
-        </div>
-      ) : (
-        <div className="skill-list">
-          {skills.map((skill) => (
-            <div key={skill.name} className="skill-card">
-              <div className="skill-card-info">
-                <div className="skill-card-name">{skill.name}</div>
-                <div className="skill-card-description">{skill.description}</div>
-              </div>
-              <div className="skill-card-actions">
-                {deletingName === skill.name ? (
-                  <div className="skill-delete-confirm">
-                    <span>Delete "{skill.name}"?</span>
-                    <button
-                      className="skill-btn-danger"
-                      type="button"
-                      onClick={() => handleDeleteConfirm(skill.name)}
-                    >
-                      CONFIRM
-                    </button>
-                    <button
-                      className="skill-btn-secondary"
-                      type="button"
-                      onClick={() => setDeletingName(null)}
-                    >
-                      CANCEL
-                    </button>
-                  </div>
+            {!skillsCollapsed && (
+              <>
+                <div className="skill-list-actions">
+                  <button className="skill-list-new" onClick={handleOpenCreate} type="button">
+                    NEW SKILL
+                  </button>
+                </div>
+
+                {loading ? (
+                  <div className="agent-builder-loading">Loading skills...</div>
+                ) : skills.length === 0 ? (
+                  <div className="skill-empty">No skills defined yet.</div>
                 ) : (
-                  <>
-                    <button
-                      className="skill-btn-secondary"
-                      type="button"
-                      onClick={() => handleOpenEdit(skill.name)}
+                  skills.map((skill) => (
+                    <div
+                      key={skill.name}
+                      className={`agent-builder-saved-entry ${editingName === skill.name ? 'editing' : ''}`}
                     >
-                      EDIT
-                    </button>
-                    <button
-                      className="skill-btn-danger"
-                      type="button"
-                      onClick={() => setDeletingName(skill.name)}
-                    >
-                      DELETE
-                    </button>
-                  </>
+                      <div className="agent-builder-saved-info">
+                        <div className="agent-builder-saved-name">{skill.name}</div>
+                        <div className="agent-builder-saved-desc">{skill.description || 'No description'}</div>
+                      </div>
+                      <div className="agent-builder-saved-actions">
+                        {deletingName === skill.name ? (
+                          <div className="skill-delete-confirm">
+                            <span>Delete "{skill.name}"?</span>
+                            <button type="button" onClick={() => handleDeleteConfirm(skill.name)}>
+                              CONFIRM
+                            </button>
+                            <button type="button" onClick={() => setDeletingName(null)}>
+                              CANCEL
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <button type="button" onClick={() => handleOpenEdit(skill.name)}>
+                              EDIT
+                            </button>
+                            <button type="button" onClick={() => setDeletingName(skill.name)}>
+                              DELETE
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  ))
                 )}
-              </div>
-            </div>
-          ))}
+              </>
+            )}
+          </div>
         </div>
-      )}
+
+        <div className="agent-builder-form skill-builder-form-panel">
+          <h3 className="agent-builder-section-title">{formTitle}</h3>
+          {errorMsg && <div className="skill-error">{errorMsg}</div>}
+          {successMsg && <div className="skill-success">{successMsg}</div>}
+
+          {isEditing && formLoading && !formContent ? (
+            <div className="agent-builder-loading">Loading skill...</div>
+          ) : (
+            <form className="skill-form" onSubmit={isEditing ? handleUpdate : handleCreate}>
+              <label className="agent-builder-label" htmlFor={isEditing ? 'skill-name-ro' : 'skill-name'}>
+                NAME {isEditing ? <span className="skill-hint">(read-only)</span> : <span className="skill-hint">(lowercase letters, numbers, hyphens)</span>}
+                <input
+                  id={isEditing ? 'skill-name-ro' : 'skill-name'}
+                  className="agent-builder-input"
+                  type="text"
+                  value={formName}
+                  onChange={(e) => setFormName(e.target.value)}
+                  placeholder="e.g. my-skill"
+                  maxLength={64}
+                  disabled={formLoading || isEditing}
+                  readOnly={isEditing}
+                  required
+                />
+              </label>
+
+              <label className="agent-builder-label" htmlFor="skill-description">
+                DESCRIPTION
+                <input
+                  id="skill-description"
+                  className="agent-builder-input"
+                  type="text"
+                  value={formDescription}
+                  onChange={(e) => setFormDescription(e.target.value)}
+                  placeholder="Brief description of what this skill does"
+                  maxLength={256}
+                  disabled={formLoading}
+                  required
+                />
+              </label>
+
+              <label className="agent-builder-label" htmlFor="skill-content">
+                CONTENT (Markdown)
+                <div className="skill-ai-row">
+                  <button
+                    className="skill-btn-ai"
+                    type="button"
+                    onClick={handleGenerateWithAI}
+                    disabled={aiLoading || formLoading || !formDescription.trim()}
+                    title={isEditing ? 'Regenerate Markdown content from the description above' : 'Generate Markdown content from the description above'}
+                  >
+                    {aiLoading ? 'GENERATING...' : 'GENERATE WITH AI'}
+                  </button>
+                  <span className="agent-builder-tool-desc">
+                    {isEditing ? 'Replaces current content' : 'Uses the description above as the prompt'}
+                  </span>
+                </div>
+                <textarea
+                  id="skill-content"
+                  className="agent-builder-textarea skill-textarea"
+                  value={formContent}
+                  onChange={(e) => setFormContent(e.target.value)}
+                  placeholder={isEditing ? '# Skill Instructions...' : '# Skill Instructions\n\nWrite the skill instructions here in Markdown...'}
+                  maxLength={65536}
+                  disabled={formLoading}
+                  required
+                  rows={16}
+                />
+              </label>
+
+              <div className="agent-builder-actions">
+                <button
+                  className="agent-builder-save"
+                  type="submit"
+                  disabled={formLoading || (isEditing ? !isEditFormValid : !isCreateFormValid)}
+                >
+                  {formLoading ? loadingLabel : submitLabel}
+                </button>
+                <button
+                  className="agent-builder-cancel"
+                  type="button"
+                  onClick={handleBack}
+                  disabled={formLoading}
+                >
+                  CANCEL
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

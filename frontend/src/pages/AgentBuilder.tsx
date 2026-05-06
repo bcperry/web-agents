@@ -292,7 +292,7 @@ export function AgentBuilder({
     <div className="agent-builder">
       <div className="agent-builder-header">
         <button className="agent-builder-back" onClick={onBack} type="button">
-          ← BACK TO AGENTS
+          BACK TO AGENTS
         </button>
         <h2 className="agent-builder-title">CUSTOM AGENT BUILDER</h2>
       </div>

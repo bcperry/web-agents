@@ -110,13 +110,13 @@ export function Sidebar({
           <div className="sidebar-advanced-label">ADVANCED</div>
           {onOpenAdmin && (
             <button className="sidebar-advanced-btn" onClick={onOpenAdmin} type="button">
-              ⚙ ADMIN
+              ADMIN
             </button>
           )}
           {userEmail && <div className="sidebar-advanced-email" title={userEmail}>{userEmail}</div>}
           {onLogout && (
             <button className="sidebar-advanced-btn logout" onClick={onLogout} type="button">
-              ↪ LOGOUT
+              LOGOUT
             </button>
           )}
         </div>
