@@ -8,9 +8,12 @@ wheels/
 
 # Virtual environments
 .venv
+.venv/
+venv/
 
 .env
 .env*
+*.log
 
 .ruff*
 
@@ -34,6 +37,8 @@ terraform.rc
 
 .mypy_cache/
 .pytest_cache/
+coverage/
+frontend/coverage/
 # Certificates
 certs/
 .env.appsettings.json

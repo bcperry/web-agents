@@ -1,33 +1,39 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { SkillSummary, SkillDefinition, SkillCreatePayload } from '../types/api';
+import type { SkillSummary, SkillDefinition } from '../types/api';
 import { fetchSkills, fetchSkill, createSkill, updateSkill, deleteSkill, generateSkillContent } from '../api/client';
-
-type ViewMode = 'list' | 'create' | 'edit';
-
-const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
+import { SKILL_NAME_RE, useSkillForm } from '../hooks/useSkillForm';
 
 export function SkillBuilder() {
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<ViewMode>('list');
   const [skillsCollapsed, setSkillsCollapsed] = useState(false);
-
-  // Form state
-  const [formName, setFormName] = useState('');
-  const [formDescription, setFormDescription] = useState('');
-  const [formContent, setFormContent] = useState('');
-  const [editingName, setEditingName] = useState<string | null>(null);
-  const [formLoading, setFormLoading] = useState(false);
-
-  // Feedback
-  const [successMsg, setSuccessMsg] = useState('');
-  const [errorMsg, setErrorMsg] = useState('');
-
-  // Delete confirm
-  const [deletingName, setDeletingName] = useState<string | null>(null);
-
-  // AI generation
-  const [aiLoading, setAiLoading] = useState(false);
+  const {
+    aiLoading,
+    clearFeedback,
+    createPayload,
+    deletingName,
+    editingName,
+    errorMsg,
+    formContent,
+    formDescription,
+    formLoading,
+    formName,
+    isCreateFormValid,
+    isEditFormValid,
+    resetForm,
+    setAiLoading,
+    setDeletingName,
+    setEditingName,
+    setErrorMsg,
+    setFormContent,
+    setFormDescription,
+    setFormLoading,
+    setFormName,
+    setSuccessMsg,
+    setView,
+    successMsg,
+    view,
+  } = useSkillForm();
 
   const loadSkills = useCallback(async () => {
     setLoading(true);
@@ -40,23 +46,11 @@ export function SkillBuilder() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [setErrorMsg]);
 
   useEffect(() => {
     loadSkills();
   }, [loadSkills]);
-
-  const clearFeedback = () => {
-    setSuccessMsg('');
-    setErrorMsg('');
-  };
-
-  const resetForm = () => {
-    setFormName('');
-    setFormDescription('');
-    setFormContent('');
-    setEditingName(null);
-  };
 
   const handleOpenCreate = () => {
     clearFeedback();
@@ -104,12 +98,7 @@ export function SkillBuilder() {
     }
     setFormLoading(true);
     try {
-      const payload: SkillCreatePayload = {
-        name: formName,
-        description: formDescription,
-        content: formContent,
-      };
-      await createSkill(payload);
+      await createSkill(createPayload());
       setSuccessMsg(`Skill "${formName}" created successfully.`);
       resetForm();
       await loadSkills();
@@ -181,20 +170,6 @@ export function SkillBuilder() {
       setDeletingName(null);
     }
   };
-
-  const isCreateFormValid =
-    SKILL_NAME_RE.test(formName) &&
-    formName.length <= 64 &&
-    formDescription.trim().length > 0 &&
-    formDescription.length <= 256 &&
-    formContent.trim().length > 0 &&
-    formContent.length <= 65536;
-
-  const isEditFormValid =
-    formDescription.trim().length > 0 &&
-    formDescription.length <= 256 &&
-    formContent.trim().length > 0 &&
-    formContent.length <= 65536;
 
   const isEditing = view === 'edit';
   const formTitle = isEditing ? `EDIT SKILL${editingName ? ` - ${editingName}` : ''}` : 'CREATE NEW SKILL';

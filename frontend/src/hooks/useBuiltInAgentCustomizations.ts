@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import type { AgentCustomizationOverride } from '../types/api';
+import { readJson, writeJson } from '../utils/storage';
 
 const STORAGE_KEY = 'webagents_builtin_agent_customizations';
 
@@ -27,28 +28,14 @@ function isOverride(value: unknown): value is AgentCustomizationOverride {
   );
 }
 
-function loadOverrides(): AgentCustomizationOverride[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) {
-      localStorage.removeItem(STORAGE_KEY);
-      return [];
-    }
-    return parsed.filter(isOverride);
-  } catch {
-    try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
-    return [];
-  }
-}
-
 function persistOverrides(overrides: AgentCustomizationOverride[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(overrides));
+  writeJson(STORAGE_KEY, overrides);
 }
 
 export function useBuiltInAgentCustomizations() {
-  const [overrides, setOverrides] = useState<AgentCustomizationOverride[]>(loadOverrides);
+  const [overrides, setOverrides] = useState<AgentCustomizationOverride[]>(() =>
+    readJson<unknown[]>(STORAGE_KEY, [], Array.isArray).filter(isOverride),
+  );
 
   const save = useCallback((override: AgentCustomizationOverride) => {
     setOverrides((prev) => {

@@ -1,38 +1,9 @@
 """Tests for Skills CRUD API endpoints."""
 
 import os
-import pytest
 
 os.environ.setdefault("AUTH_DISABLED", "true")
 os.environ.setdefault("AZURE_SQL_CONNECTIONSTRING", "")
-
-from fastapi.testclient import TestClient
-
-
-@pytest.fixture
-def skills_client(tmp_path, monkeypatch):
-    """TestClient with skills_dir redirected to a temporary directory."""
-    import main as main_module
-
-    monkeypatch.setattr(main_module, "_get_skills_dir", lambda: tmp_path)
-
-    from main import _sessions, app
-    _sessions.clear()
-    with TestClient(app) as client:
-        yield client, tmp_path
-    _sessions.clear()
-
-
-def _make_skill(tmp_path, name: str, description: str = "A test skill", content: str = "# Content\nHello."):
-    """Helper: create a skill directory and SKILL.md in tmp_path."""
-    skill_dir = tmp_path / name
-    skill_dir.mkdir()
-    skill_file = skill_dir / "SKILL.md"
-    skill_file.write_text(
-        f'---\nname: {name}\ndescription: "{description}"\n---\n\n{content}\n',
-        encoding="utf-8",
-    )
-    return skill_dir
 
 
 # ---------------------------------------------------------------------------
@@ -46,10 +17,10 @@ def test_get_skills_list_empty(skills_client):
     assert resp.json() == {"skills": []}
 
 
-def test_get_skills_list_populated(skills_client):
+def test_get_skills_list_populated(skills_client, make_skill):
     client, tmp_path = skills_client
-    _make_skill(tmp_path, "alpha", "Alpha skill")
-    _make_skill(tmp_path, "beta", "Beta skill")
+    make_skill(tmp_path, "alpha", "Alpha skill")
+    make_skill(tmp_path, "beta", "Beta skill")
     resp = client.get("/api/skills")
     assert resp.status_code == 200
     names = {s["name"] for s in resp.json()["skills"]}
@@ -61,9 +32,9 @@ def test_get_skills_list_populated(skills_client):
 # GET /api/skills/{name} — single skill
 # ---------------------------------------------------------------------------
 
-def test_get_skill_success(skills_client):
+def test_get_skill_success(skills_client, make_skill):
     client, tmp_path = skills_client
-    _make_skill(tmp_path, "my-skill", "My description", "# Docs\nSome content.")
+    make_skill(tmp_path, "my-skill", "My description", "# Docs\nSome content.")
     resp = client.get("/api/skills/my-skill")
     assert resp.status_code == 200
     data = resp.json()
@@ -95,9 +66,9 @@ def test_create_skill_success(skills_client):
     assert skill_file.exists()
 
 
-def test_create_skill_duplicate_returns_409(skills_client):
+def test_create_skill_duplicate_returns_409(skills_client, make_skill):
     client, tmp_path = skills_client
-    _make_skill(tmp_path, "existing")
+    make_skill(tmp_path, "existing")
     payload = {"name": "existing", "description": "Another", "content": "# Content"}
     resp = client.post("/api/skills", json=payload)
     assert resp.status_code == 409
@@ -137,9 +108,9 @@ def test_create_skill_name_too_long_returns_422(skills_client):
 # PUT /api/skills/{name} — update
 # ---------------------------------------------------------------------------
 
-def test_update_skill_success(skills_client):
+def test_update_skill_success(skills_client, make_skill):
     client, tmp_path = skills_client
-    _make_skill(tmp_path, "editable", "Old description", "Old content.")
+    make_skill(tmp_path, "editable", "Old description", "Old content.")
     payload = {"description": "New description", "content": "New content."}
     resp = client.put("/api/skills/editable", json=payload)
     assert resp.status_code == 200
@@ -159,9 +130,9 @@ def test_update_skill_not_found_returns_404(skills_client):
 # DELETE /api/skills/{name} — delete
 # ---------------------------------------------------------------------------
 
-def test_delete_skill_success(skills_client):
+def test_delete_skill_success(skills_client, make_skill):
     client, tmp_path = skills_client
-    _make_skill(tmp_path, "to-delete")
+    make_skill(tmp_path, "to-delete")
     resp = client.delete("/api/skills/to-delete")
     assert resp.status_code == 204
     # Verify directory was removed

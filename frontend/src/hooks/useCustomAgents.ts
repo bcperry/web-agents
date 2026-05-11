@@ -1,23 +1,17 @@
 import { useState, useCallback } from 'react';
 import type { CustomAgentDefinition } from '../types/api';
+import { readJson, writeJson } from '../utils/storage';
 
 const STORAGE_KEY = 'webagents_custom_agents';
 
-function loadAgents(): CustomAgentDefinition[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
 function persistAgents(agents: CustomAgentDefinition[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(agents));
+  writeJson(STORAGE_KEY, agents);
 }
 
 export function useCustomAgents() {
-  const [agents, setAgents] = useState<CustomAgentDefinition[]>(loadAgents);
+  const [agents, setAgents] = useState<CustomAgentDefinition[]>(() =>
+    readJson<CustomAgentDefinition[]>(STORAGE_KEY, [], Array.isArray),
+  );
 
   const save = useCallback((agent: CustomAgentDefinition) => {
     setAgents((prev) => {

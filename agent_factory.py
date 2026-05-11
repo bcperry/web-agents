@@ -3,7 +3,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence, overload
+from typing import Any, Sequence
 
 from agent_framework import CompactionProvider, InMemoryHistoryProvider, SkillsProvider
 from agent_framework import Agent as RuntimeAgent
@@ -19,18 +19,8 @@ from agent_framework.openai import OpenAIChatClient
 from dotenv import load_dotenv
 
 
-from pydantic import BaseModel
-
 from prompt_config import load_agent_profile
 from mcp_servers import get_search_context_provider
-
-
-class AgentBase(BaseModel):
-    name: str
-    instructions: str
-    description: str
-    token_budget: int = 16_000
-    tools: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -151,113 +141,6 @@ def _build_context_providers(
     return providers
 
 
-def _create_agent(
-    *,
-    name: str,
-    instructions: str,
-    description: str,
-    token_budget: int,
-    temperature: float,
-    tools: Sequence[Any] | None = None,
-    client: OpenAIChatClient | None = None,
-    summarizer_client: OpenAIChatClient | None = None,
-    logical_profile: str | None = None,
-    enable_search_context: bool = False,
-    skill_names: list[str] | None = None,
-) -> RuntimeAgent:
-    runtime_client = client or OpenAIChatClient()
-
-    return runtime_client.as_agent(
-        name=_sanitize_agent_name(name),
-        instructions=instructions,
-        description=description,
-        tools=tools,
-        default_options={"temperature": temperature},
-        context_providers=_build_context_providers(
-            token_budget=token_budget,
-            summarizer_client=summarizer_client,
-            logical_profile=logical_profile,
-            enable_search_context=enable_search_context,
-            skill_names=skill_names,
-        ),
-    )
-
-
-@overload
-def spawn_agent(agent: AgentBase, /) -> RuntimeAgent: ...
-
-
-@overload
-def spawn_agent(
-    *,
-    name: str,
-    instructions: str,
-    description: str,
-    token_budget: int = 16_000,
-    temperature: float | None = None,
-    tools: Sequence[Any] | None = None,
-    client: OpenAIChatClient | None = None,
-    summarizer_client: OpenAIChatClient | None = None,
-    logical_profile: str | None = None,
-    enable_search_context: bool = False,
-    skill_names: list[str] | None = None,
-) -> RuntimeAgent: ...
-
-
-def spawn_agent(
-    agent: AgentBase | None = None,
-    /,
-    *,
-    name: str | None = None,
-    instructions: str | None = None,
-    description: str | None = None,
-    token_budget: int = 16_000,
-    temperature: float | None = None,
-    tools: Sequence[Any] | None = None,
-    client: OpenAIChatClient | None = None,
-    summarizer_client: OpenAIChatClient | None = None,
-    logical_profile: str | None = None,
-    enable_search_context: bool = False,
-    skill_names: list[str] | None = None,
-) -> RuntimeAgent:
-    if agent is not None:
-        if any(value is not None for value in (name, instructions, description)):
-            raise TypeError("Pass either an agent model or expanded agent fields, not both.")
-
-        return _create_agent(
-            name=agent.name,
-            instructions=agent.instructions,
-            description=agent.description,
-            token_budget=agent.token_budget,
-            temperature=temperature if temperature is not None else _get_default_temperature(),
-            tools=tools,
-            client=client,
-            summarizer_client=summarizer_client,
-            logical_profile=logical_profile,
-            enable_search_context=enable_search_context,
-            skill_names=skill_names,
-        )
-
-    if name is None or instructions is None or description is None:
-        raise TypeError(
-            "spawn_agent() requires either an agent model or name, instructions, and description keywords."
-        )
-
-    return _create_agent(
-        name=name,
-        instructions=instructions,
-        description=description,
-        token_budget=token_budget,
-        temperature=temperature if temperature is not None else _get_default_temperature(),
-        tools=tools,
-        client=client,
-        summarizer_client=summarizer_client,
-        logical_profile=logical_profile,
-        enable_search_context=enable_search_context,
-        skill_names=skill_names,
-    )
-
-
 def _build_openai_clients() -> tuple[OpenAIChatClient, OpenAIChatClient]:
     """Create primary and summarizer OpenAI clients from environment variables.
 
@@ -344,18 +227,19 @@ def create_chat_runtime(
 
     resolved_temperature = temperature if temperature is not None else _get_default_temperature()
 
-    agent = spawn_agent(
-        client=primary_client,
-        name=agent_name,
+    agent = primary_client.as_agent(
+        name=_sanitize_agent_name(agent_name),
         instructions=runtime_instructions,
         description=description,
-        token_budget=token_budget,
-        temperature=resolved_temperature,
         tools=all_tools,
-        summarizer_client=summarizer_client,
-        logical_profile=logical_profile,
-        enable_search_context=enable_search_context,
-        skill_names=skill_names,
+        default_options={"temperature": resolved_temperature},
+        context_providers=_build_context_providers(
+            token_budget=token_budget,
+            summarizer_client=summarizer_client,
+            logical_profile=logical_profile,
+            enable_search_context=enable_search_context,
+            skill_names=skill_names,
+        ),
     )
 
     logger.info(

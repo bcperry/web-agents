@@ -10,11 +10,13 @@ from types import SimpleNamespace
 from fastapi import UploadFile
 
 from main import (
-    _validate_image_magic_bytes,
-    _validate_uploaded_images,
     ALLOWED_IMAGE_MIMES,
     MAX_IMAGE_SIZE_BYTES,
     MAX_IMAGES_PER_MESSAGE,
+)
+from validators import (
+    validate_image_magic_bytes as _validate_image_magic_bytes,
+    validate_uploaded_images as _validate_uploaded_images,
 )
 
 
@@ -266,20 +268,20 @@ class TestMultiImageValidation:
 
 
 class TestStreamAgentResponseSignature:
-    """Verify _stream_agent_response accepts contents: list[Content]."""
+    """Verify stream_agent_response accepts contents: list[Content]."""
 
     def test_signature_has_contents_param(self) -> None:
         import inspect
-        from main import _stream_agent_response
+        from streaming import stream_agent_response
 
-        sig = inspect.signature(_stream_agent_response)
+        sig = inspect.signature(stream_agent_response)
         assert "contents" in sig.parameters
 
     def test_is_async_generator(self) -> None:
         import inspect
-        from main import _stream_agent_response
+        from streaming import stream_agent_response
 
-        assert inspect.isasyncgenfunction(_stream_agent_response)
+        assert inspect.isasyncgenfunction(stream_agent_response)
 
 
 class TestSendMessageEndpoint:
@@ -290,7 +292,7 @@ class TestSendMessageEndpoint:
         import main
 
         source = inspect.getsource(main.send_message)
-        assert "_validate_uploaded_images" in source
+        assert "validate_uploaded_images" in source
 
     def test_send_message_builds_contents_list(self) -> None:
         import inspect

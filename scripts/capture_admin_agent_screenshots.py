@@ -23,6 +23,84 @@ DEFAULT_CUSTOM_AGENT = {
     "updatedAt": "2026-05-06T12:00:00.000Z",
 }
 
+DEFAULT_PROFILE = {
+    "id": "visual-agent",
+    "name": "Visual Agent",
+    "description": "Screenshot verification profile",
+    "icon": "/favicon.png",
+    "starters": [
+        {"label": "Summarize", "message": "Summarize the latest status."},
+        {"label": "Plan", "message": "Make a concise plan."},
+    ],
+}
+
+
+def setup_mock_api(page: Page) -> None:
+    def handler(route) -> None:
+        request = route.request
+        url = request.url
+        method = request.method
+
+        if url.endswith("/api/auth/config"):
+            route.fulfill(json={
+                "authDisabled": True,
+                "tenantId": "",
+                "clientId": "",
+                "authority": "https://login.microsoftonline.us",
+                "classificationBanner": "UNCLASSIFIED",
+                "appName": "Web-Agents",
+                "appTagline": "AI Agent Framework",
+                "appLogo": "/Microsoft.png",
+            })
+        elif url.endswith("/api/profiles"):
+            route.fulfill(json={"profiles": [DEFAULT_PROFILE], "unavailable": []})
+        elif url.endswith("/api/tools"):
+            route.fulfill(json={"tools": [], "unavailable": [], "search_context_available": True, "search_context_reason": None})
+        elif url.endswith("/api/skills") and method == "GET":
+            route.fulfill(json={"skills": [{"name": "visual-skill", "description": "Screenshot skill"}]})
+        elif "/api/skills/visual-skill" in url and method == "GET":
+            route.fulfill(json={"name": "visual-skill", "description": "Screenshot skill", "content": "# Visual Skill\n\nScreenshot skill instructions."})
+        elif "/api/profiles/" in url and url.endswith("/definition"):
+            route.fulfill(json={
+                **DEFAULT_PROFILE,
+                "systemPrompt": "You are a visual verification agent.",
+                "tools": [],
+                "skills": [],
+                "mcpServers": [],
+                "useSearchContext": False,
+                "temperature": 0.2,
+            })
+        elif url.endswith("/api/sessions") and method == "POST":
+            route.fulfill(json={
+                "session_id": "visual-session",
+                "profile_id": "visual-agent",
+                "profile_name": "Visual Agent",
+                "tools_loaded": [],
+                "skills_loaded": [],
+                "search_context": False,
+                "mcp_results": [],
+            })
+        elif url.endswith("/api/sessions/visual-session/messages") and method == "POST":
+            route.fulfill(
+                status=200,
+                headers={"content-type": "text/event-stream"},
+                body=(
+                    'event: text\ndata: {"content":"Visual verification response."}\n\n'
+                    'event: usage\ndata: {"input_token_count":4,"output_token_count":5,"total_token_count":9}\n\n'
+                    'event: done\ndata: {}\n\n'
+                ),
+            )
+        elif url.endswith("/api/sessions/visual-session/history"):
+            route.fulfill(json={"session_id": "visual-session", "profile_id": "visual-agent", "profile_name": "Visual Agent", "session_data": {}})
+        elif url.endswith("/api/mcp/test"):
+            route.fulfill(json={"results": []})
+        elif url.endswith("/api/skills/generate"):
+            route.fulfill(json={"content": "# Visual Skill\n\nGenerated screenshot content."})
+        else:
+            route.continue_()
+
+    page.route("**/api/**", handler)
+
 
 def accept_disclaimer(page: Page) -> None:
     button = page.get_by_role("button", name="I UNDERSTAND AND AGREE")
@@ -30,15 +108,38 @@ def accept_disclaimer(page: Page) -> None:
         button.click()
 
 
+def capture_disclaimer_states(page: Page, output_dir: Path) -> None:
+    content = page.locator(".disclaimer-content")
+    if content.count() == 0:
+        return
+    page.screenshot(path=str(output_dir / "007-disclaimer-top.png"), full_page=True)
+    content.evaluate("element => { element.scrollTop = element.scrollHeight; }")
+    page.screenshot(path=str(output_dir / "007-disclaimer-bottom.png"), full_page=True)
+
+
 def open_admin(page: Page) -> None:
     admin_button = page.locator("button.sidebar-advanced-btn").filter(has_text="ADMIN")
     admin_button.click(timeout=5_000)
-    page.get_by_text("BUILT-IN AGENTS").wait_for(timeout=5_000)
+    page.get_by_role("button", name="BUILT-IN AGENTS").wait_for(timeout=5_000)
 
 
 def open_skills(page: Page) -> None:
     page.get_by_role("button", name="SKILLS").click(timeout=5_000)
     page.get_by_text("SAVED SKILLS").wait_for(timeout=5_000)
+
+
+def capture_profile_and_chat_states(page: Page, output_dir: Path) -> None:
+    page.get_by_text("SELECT YOUR AGENT").wait_for(timeout=5_000)
+    page.screenshot(path=str(output_dir / "007-profile-selection.png"), full_page=True)
+
+    page.locator(".profile-card").first.click(timeout=5_000)
+    page.locator(".chat-input-textarea").wait_for(timeout=5_000)
+    page.screenshot(path=str(output_dir / "007-empty-chat-starters.png"), full_page=True)
+
+    page.locator(".chat-input-textarea").fill("Hello from visual verification")
+    page.get_by_role("button", name="TRANSMIT").click(timeout=5_000)
+    page.get_by_text("Visual verification response.").wait_for(timeout=5_000)
+    page.screenshot(path=str(output_dir / "007-chat-one-turn.png"), full_page=True)
 
 
 def ensure_expanded(page: Page, section_index: int) -> None:
@@ -122,13 +223,17 @@ def capture(args: argparse.Namespace) -> None:
             executable_path=args.chrome_path,
         )
         page = browser.new_page(viewport={"width": args.width, "height": args.height})
+        if args.mock_api:
+            setup_mock_api(page)
         page.goto(args.base_url, wait_until="networkidle")
+        capture_disclaimer_states(page, output_dir)
         page.evaluate(
             "value => localStorage.setItem('webagents_custom_agents', value)",
             custom_agents,
         )
         page.reload(wait_until="networkidle")
         accept_disclaimer(page)
+        capture_profile_and_chat_states(page, output_dir)
         open_admin(page)
 
         ensure_expanded(page, 0)
@@ -158,6 +263,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--chrome-path", default="/usr/bin/google-chrome")
     parser.add_argument("--width", type=int, default=1440)
     parser.add_argument("--height", type=int, default=900)
+    parser.add_argument("--mock-api", action="store_true", help="Mock API responses for deterministic visual captures.")
     return parser.parse_args()
 
 

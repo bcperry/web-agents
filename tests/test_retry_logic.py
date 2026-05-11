@@ -1,9 +1,9 @@
 """Tests for request retry classification and session behavior."""
 
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 from openai.lib.azure import AsyncAzureOpenAI
-from main import _is_retryable_error
+from streaming import is_retryable_error
 from agent_framework._types import UsageDetails
 
 
@@ -11,6 +11,21 @@ def _usage_value(usage: UsageDetails, key: str):
     if isinstance(usage, dict):
         return usage.get(key)
     return getattr(usage, key)
+
+
+def _make_session(main_module, session_id: str = "test-session"):
+    return main_module.SessionData(
+        session_id=session_id,
+        user_id="test-user",
+        profile_id="test-profile",
+        profile_name="Test Profile",
+        agent=MagicMock(),
+        agent_session=MagicMock(),
+        tools=[],
+        eval_trace_logger=MagicMock(),
+        prompt_manifest={},
+        prompt_logical_profile="test-profile",
+    )
 
 
 class TestAzureClientRetryConfiguration:
@@ -55,11 +70,11 @@ class TestContextHandling:
     """Test stream helper inputs used for session-backed context handling."""
 
     def test_stream_agent_response_accepts_contents(self) -> None:
-        """_stream_agent_response should accept contents: list[Content] parameter."""
-        from main import _stream_agent_response
+        """stream_agent_response should accept contents: list[Content] parameter."""
+        from streaming import stream_agent_response
         import inspect
 
-        sig = inspect.signature(_stream_agent_response)
+        sig = inspect.signature(stream_agent_response)
         contents_param = sig.parameters.get("contents")
         assert contents_param is not None
         annotation_str = str(contents_param.annotation)
@@ -67,52 +82,52 @@ class TestContextHandling:
 
 
 class TestIsRetryableError:
-    """Test the _is_retryable_error helper function."""
+    """Test the is_retryable_error helper function."""
 
     def test_detects_429_in_message(self) -> None:
         """Should detect 429 status code in error message."""
         error = Exception("Error: 429 Too Many Requests")
-        assert _is_retryable_error(error) is True
+        assert is_retryable_error(error) is True
 
     def test_detects_too_many_requests_message(self) -> None:
         """Should detect 'Too Many Requests' in error message."""
         error = Exception("Server returned Too Many Requests")
-        assert _is_retryable_error(error) is True
+        assert is_retryable_error(error) is True
 
     def test_detects_rate_limit_in_message(self) -> None:
         """Should detect 'rate_limit' in error message (case insensitive)."""
         error = Exception("Request failed due to rate_limit exceeded")
-        assert _is_retryable_error(error) is True
+        assert is_retryable_error(error) is True
 
     def test_detects_rate_limit_uppercase(self) -> None:
         """Should detect 'RATE_LIMIT' in error message (case insensitive)."""
         error = Exception("RATE_LIMIT error occurred")
-        assert _is_retryable_error(error) is True
+        assert is_retryable_error(error) is True
 
     def test_detects_capacity_in_message(self) -> None:
         """Should detect 'capacity' in error message (case insensitive)."""
         error = Exception("Service at capacity, please retry later")
-        assert _is_retryable_error(error) is True
+        assert is_retryable_error(error) is True
 
     def test_detects_capacity_uppercase(self) -> None:
         """Should detect 'CAPACITY' in error message (case insensitive)."""
         error = Exception("CAPACITY exceeded")
-        assert _is_retryable_error(error) is True
+        assert is_retryable_error(error) is True
 
     def test_does_not_match_other_errors(self) -> None:
         """Should not match unrelated errors."""
         error = Exception("Connection timeout")
-        assert _is_retryable_error(error) is False
+        assert is_retryable_error(error) is False
 
     def test_does_not_match_500_error(self) -> None:
         """Should not match 500 internal server error."""
         error = Exception("Error: 500 Internal Server Error")
-        assert _is_retryable_error(error) is False
+        assert is_retryable_error(error) is False
 
     def test_does_not_match_empty_message(self) -> None:
         """Should not match empty error message."""
         error = Exception("")
-        assert _is_retryable_error(error) is False
+        assert is_retryable_error(error) is False
 
 
 class TestRetryLogicBehavior:
@@ -121,12 +136,12 @@ class TestRetryLogicBehavior:
     def test_retryable_error_is_classified(self) -> None:
         """429 errors should be classified as retryable."""
         rate_limit_error = Exception("429 Too Many Requests")
-        assert _is_retryable_error(rate_limit_error) is True
+        assert is_retryable_error(rate_limit_error) is True
 
     def test_non_retryable_error_is_not_classified(self) -> None:
         """Non-429 errors should not be classified as retryable."""
         regular_error = Exception("Connection timeout")
-        assert _is_retryable_error(regular_error) is False
+        assert is_retryable_error(regular_error) is False
 
     def test_rate_limit_error_type_detection(self) -> None:
         """Should detect RateLimitError type in exception."""
@@ -135,17 +150,17 @@ class TestRetryLogicBehavior:
             pass
         
         error = RateLimitError("Rate limit exceeded")
-        assert _is_retryable_error(error) is True
+        assert is_retryable_error(error) is True
 
     def test_azure_openai_capacity_error(self) -> None:
         """Should detect Azure OpenAI capacity errors."""
         error = Exception("The server is currently at capacity. Please try again later.")
-        assert _is_retryable_error(error) is True
+        assert is_retryable_error(error) is True
 
     def test_openai_rate_limit_header_error(self) -> None:
         """Should detect OpenAI rate limit errors with header info."""
         error = Exception("Rate limit reached for requests. Please retry after 60 seconds.")
-        assert _is_retryable_error(error) is True
+        assert is_retryable_error(error) is True
 
 
 class TestSessionManagement:
@@ -163,13 +178,17 @@ class TestSessionManagement:
         assert hasattr(main, 'delete_session')
         assert callable(main.delete_session)
 
-    def test_delete_session_cleans_up(self) -> None:
+    def test_delete_session_cleans_up(self, client) -> None:
         """delete_session should remove session from store."""
-        import inspect
         import main
 
-        source = inspect.getsource(main.delete_session)
-        assert '_sessions.pop' in source
+        main._sessions.clear()
+        main._sessions["cleanup-test"] = _make_session(main, "cleanup-test")
+
+        response = client.delete("/api/sessions/cleanup-test")
+
+        assert response.status_code == 204
+        assert "cleanup-test" not in main._sessions
 
     def test_new_session_created_each_chat_start(self) -> None:
         """Verify that agent.create_session() returns unique sessions."""
@@ -271,11 +290,11 @@ class TestTokenUsage:
         assert _usage_value(usage, "total_token_count") is None
 
     def test_stream_agent_response_is_async_generator(self) -> None:
-        """_stream_agent_response should be an async generator."""
-        from main import _stream_agent_response
+        """stream_agent_response should be an async generator."""
+        from streaming import stream_agent_response
         import inspect
 
-        assert inspect.isasyncgenfunction(_stream_agent_response)
+        assert inspect.isasyncgenfunction(stream_agent_response)
 
     def test_session_data_initializes_usage(self) -> None:
         """SessionData should initialize usage tracking."""
@@ -283,21 +302,31 @@ class TestTokenUsage:
 
         assert hasattr(main, 'SessionData')
 
-    def test_delete_session_logs_usage(self) -> None:
+    def test_delete_session_logs_usage(self, client, caplog) -> None:
         """delete_session should log token usage on cleanup."""
-        import inspect
         import main
 
-        source = inspect.getsource(main.delete_session)
-        assert 'Token usage' in source
+        main._sessions.clear()
+        main._sessions["usage-test"] = _make_session(main, "usage-test")
 
-    def test_send_message_logs_token_usage(self) -> None:
-        """send_message should log token usage."""
-        import inspect
-        import main
+        with caplog.at_level("INFO", logger="main"):
+            response = client.delete("/api/sessions/usage-test")
 
-        source = inspect.getsource(main.send_message)
-        assert 'Request token usage' in source
+        assert response.status_code == 204
+        assert any("Token usage" in record.message for record in caplog.records)
+
+    def test_usage_accumulation_tracks_request_tokens(self) -> None:
+        """merge helper should accumulate request token usage."""
+        from streaming import merge_usage
+
+        base = UsageDetails(input_token_count=1, output_token_count=2, total_token_count=3)
+        increment = UsageDetails(input_token_count=4, output_token_count=5, total_token_count=9)
+
+        merged = merge_usage(base, increment)
+
+        assert _usage_value(merged, "input_token_count") == 5
+        assert _usage_value(merged, "output_token_count") == 7
+        assert _usage_value(merged, "total_token_count") == 12
 
 
 class TestInputValidation:
@@ -311,11 +340,17 @@ class TestInputValidation:
         assert isinstance(main.DEFAULT_MAX_USER_INPUT_CHARS, int)
         assert main.DEFAULT_MAX_USER_INPUT_CHARS == 25000
 
-    def test_send_message_validates_input_length(self) -> None:
+    def test_send_message_validates_input_length(self, client) -> None:
         """send_message should reject messages exceeding the configured max length."""
-        import inspect
         import main
 
-        source = inspect.getsource(main.send_message)
-        assert "DEFAULT_MAX_USER_INPUT_CHARS" in source
-        assert "exceeds maximum length" in source
+        main._sessions.clear()
+        main._sessions["long-input-test"] = _make_session(main, "long-input-test")
+
+        response = client.post(
+            "/api/sessions/long-input-test/messages",
+            json={"content": "x" * (main.DEFAULT_MAX_USER_INPUT_CHARS + 1)},
+        )
+
+        assert response.status_code == 400
+        assert "exceeds maximum length" in response.json()["detail"]

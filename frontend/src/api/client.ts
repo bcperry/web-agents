@@ -1,6 +1,5 @@
 import type {
   AgentProfile,
-  AgentCustomizationOverride,
   BuiltInAgentDefinition,
   McpConnectionResult,
   McpServerEntry,
@@ -11,7 +10,6 @@ import type {
   ToolInfo,
   ToolsResponse,
   UnavailableAgent,
-  UserMemoryProfile,
   SSEEventType,
   SSETextEvent,
   SSEFunctionCallEvent,
@@ -20,68 +18,17 @@ import type {
   SSEErrorEvent,
 } from '../types/api';
 import { emitToast } from '../hooks/useToast';
+import {
+  API_BASE,
+  assertNotUnauthorized,
+  classifyError,
+  getAuthHeaders,
+  handleHttpError,
+  jsonHeaders,
+  requestJson,
+} from './helpers';
 
-const API_BASE = '/api';
-
-/** Thrown when the backend returns 401 Unauthorized. */
-export class AuthError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'AuthError';
-  }
-}
-
-function getAuthHeaders(): Record<string, string> {
-  const token = localStorage.getItem('auth_token');
-  if (token) {
-    return { Authorization: `Bearer ${token}` };
-  }
-  return {};
-}
-
-/** Check response for 401 and throw AuthError so callers can trigger re-auth. */
-function assertNotUnauthorized(resp: Response, context: string): void {
-  if (resp.status === 401) {
-    throw new AuthError(`Unauthorized: ${context}`);
-  }
-}
-
-/** Try to extract a user-friendly detail string from an error response body. */
-async function extractErrorDetail(resp: Response, fallback: string): Promise<string> {
-  try {
-    const body = await resp.json();
-    if (body.detail && typeof body.detail === 'string') return body.detail;
-  } catch { /* not JSON or no detail field */ }
-  return fallback;
-}
-
-/** Classify an HTTP error into user-friendly message and severity. */
-function classifyError(status: number, detail: string): {
-  userMessage: string;
-  type: 'error' | 'warning';
-  retryable: boolean;
-} {
-  const lowerDetail = detail.toLowerCase();
-
-  if (status === 429 || lowerDetail.includes('rate limit') || lowerDetail.includes('too many requests')) {
-    return { userMessage: detail || 'Rate limit exceeded. Please wait and try again.', type: 'warning', retryable: true };
-  }
-  if (status === 400) {
-    return { userMessage: detail || 'Invalid request.', type: 'error', retryable: false };
-  }
-  if (status >= 500) {
-    return { userMessage: detail || 'A server error occurred. Please try again later.', type: 'error', retryable: false };
-  }
-  return { userMessage: detail || `Request failed (${status})`, type: 'error', retryable: false };
-}
-
-/** Extract detail, classify, emit toast, and throw — shared by all API functions. */
-async function handleHttpError(resp: Response, context: string): Promise<never> {
-  const detail = await extractErrorDetail(resp, `${context}: ${resp.status}`);
-  const classified = classifyError(resp.status, detail);
-  emitToast({ message: classified.userMessage, type: classified.type });
-  throw new Error(detail);
-}
+export { AuthError } from './helpers';
 
 export interface HistoryResponse {
   session_id: string;
@@ -116,21 +63,15 @@ export async function fetchSkills(): Promise<ToolInfo[]> {
 }
 
 export async function fetchSkill(name: string): Promise<SkillDefinition> {
-  const resp = await fetch(`${API_BASE}/skills/${encodeURIComponent(name)}`, {
+  return requestJson<SkillDefinition>(`${API_BASE}/skills/${encodeURIComponent(name)}`, {
     headers: getAuthHeaders(),
-  });
-  assertNotUnauthorized(resp, 'Failed to fetch skill');
-  if (!resp.ok) await handleHttpError(resp, 'Failed to fetch skill');
-  return resp.json();
+  }, 'Failed to fetch skill');
 }
 
 export async function createSkill(skill: SkillCreatePayload): Promise<SkillDefinition> {
   const resp = await fetch(`${API_BASE}/skills`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...getAuthHeaders(),
-    },
+    headers: jsonHeaders(),
     body: JSON.stringify(skill),
   });
   assertNotUnauthorized(resp, 'Failed to create skill');
@@ -141,10 +82,7 @@ export async function createSkill(skill: SkillCreatePayload): Promise<SkillDefin
 export async function updateSkill(name: string, payload: SkillUpdatePayload): Promise<SkillDefinition> {
   const resp = await fetch(`${API_BASE}/skills/${encodeURIComponent(name)}`, {
     method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-      ...getAuthHeaders(),
-    },
+    headers: jsonHeaders(),
     body: JSON.stringify(payload),
   });
   assertNotUnauthorized(resp, 'Failed to update skill');
@@ -167,10 +105,7 @@ export async function generateSkillContent(
 ): Promise<string> {
   const resp = await fetch(`${API_BASE}/skills/generate`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...getAuthHeaders(),
-    },
+    headers: jsonHeaders(),
     body: JSON.stringify({ description, ...(name ? { name } : {}) }),
   });
   assertNotUnauthorized(resp, 'Failed to generate skill content');
@@ -182,10 +117,7 @@ export async function generateSkillContent(
 export async function testMcpConnections(servers: McpServerEntry[]): Promise<McpConnectionResult[]> {
   const resp = await fetch(`${API_BASE}/mcp/test`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...getAuthHeaders(),
-    },
+    headers: jsonHeaders(),
     body: JSON.stringify({ mcp_servers: servers }),
   });
   assertNotUnauthorized(resp, 'Failed to test MCP connections');
@@ -194,40 +126,48 @@ export async function testMcpConnections(servers: McpServerEntry[]): Promise<Mcp
   return data.results;
 }
 
-export async function createCustomSession(params: {
-  custom_name: string;
+export interface SessionUserProfilePayload {
+  name: string;
+  preferences: string;
+  notes: string;
+}
+
+export interface SessionProfileOverridePayload {
+  description: string;
   custom_prompt: string;
   custom_tools: string[];
   custom_search_context: boolean;
   custom_temperature?: number;
   custom_skills?: string[];
   mcp_servers?: McpServerEntry[];
+  override_updated_at: string;
+}
+
+export interface SessionRequestPayload {
+  profile_id: string;
+  custom_name?: string;
+  custom_prompt?: string;
+  custom_tools?: string[];
+  custom_search_context?: boolean;
+  custom_temperature?: number;
+  custom_skills?: string[];
+  mcp_servers?: McpServerEntry[];
+  profile_override?: SessionProfileOverridePayload;
   history?: Record<string, unknown>;
-  user_profile?: { name: string; preferences: string; notes: string };
-  [key: string]: unknown;
-}): Promise<SessionCreateResponse> {
-  const { custom_name, custom_prompt, custom_tools, custom_search_context, custom_temperature, custom_skills, mcp_servers, history, user_profile } = params;
+  user_profile?: SessionUserProfilePayload;
+}
+
+export async function createSessionRequest(
+  payload: SessionRequestPayload,
+  failureMessage = 'Failed to create session',
+): Promise<SessionCreateResponse> {
   const resp = await fetch(`${API_BASE}/sessions`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...getAuthHeaders(),
-    },
-    body: JSON.stringify({
-      profile_id: 'custom',
-      custom_name,
-      custom_prompt,
-      custom_tools,
-      custom_search_context,
-      ...(custom_temperature !== undefined ? { custom_temperature } : {}),
-      ...(custom_skills && custom_skills.length > 0 ? { custom_skills } : {}),
-      ...(mcp_servers && mcp_servers.length > 0 ? { mcp_servers } : {}),
-      ...(history ? { history } : {}),
-      ...(user_profile ? { user_profile } : {}),
-    }),
+    headers: jsonHeaders(),
+    body: JSON.stringify(payload),
   });
-  assertNotUnauthorized(resp, 'Failed to create custom session');
-  if (!resp.ok) await handleHttpError(resp, 'Failed to create custom session');
+  assertNotUnauthorized(resp, failureMessage);
+  if (!resp.ok) await handleHttpError(resp, failureMessage);
   return resp.json();
 }
 
@@ -237,39 +177,6 @@ export async function fetchBuiltInProfileDefinition(profileId: string): Promise<
   });
   assertNotUnauthorized(resp, 'Failed to fetch profile definition');
   if (!resp.ok) await handleHttpError(resp, 'Failed to fetch profile definition');
-  return resp.json();
-}
-
-export async function createSessionWithProfileOverride(
-  profileId: string,
-  override: AgentCustomizationOverride,
-  userProfile?: UserMemoryProfile | null,
-  history?: Record<string, unknown>,
-): Promise<SessionCreateResponse> {
-  const resp = await fetch(`${API_BASE}/sessions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...getAuthHeaders(),
-    },
-    body: JSON.stringify({
-      profile_id: profileId,
-      profile_override: {
-        description: override.description,
-        custom_prompt: override.systemPrompt,
-        custom_tools: override.tools,
-        custom_search_context: override.useSearchContext,
-        ...(override.temperature !== undefined ? { custom_temperature: override.temperature } : {}),
-        ...(override.skills.length > 0 ? { custom_skills: override.skills } : {}),
-        ...(override.mcpServers.length > 0 ? { mcp_servers: override.mcpServers } : {}),
-        override_updated_at: override.updatedAt,
-      },
-      ...(history ? { history } : {}),
-      ...(userProfile ? { user_profile: { name: userProfile.name, preferences: userProfile.preferences, notes: userProfile.notes } } : {}),
-    }),
-  });
-  assertNotUnauthorized(resp, 'Failed to create customized built-in session');
-  if (!resp.ok) await handleHttpError(resp, 'Failed to create customized built-in session');
   return resp.json();
 }
 
@@ -288,23 +195,6 @@ export async function fetchProfiles(): Promise<ProfilesResponse> {
   return { profiles: data.profiles, unavailable: data.unavailable || [] };
 }
 
-export async function createSession(profileId: string, userProfile?: UserMemoryProfile | null): Promise<SessionCreateResponse> {
-  const resp = await fetch(`${API_BASE}/sessions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...getAuthHeaders(),
-    },
-    body: JSON.stringify({
-      profile_id: profileId,
-      ...(userProfile ? { user_profile: { name: userProfile.name, preferences: userProfile.preferences, notes: userProfile.notes } } : {}),
-    }),
-  });
-  assertNotUnauthorized(resp, 'Failed to create session');
-  if (!resp.ok) await handleHttpError(resp, 'Failed to create session');
-  return resp.json();
-}
-
 export async function deleteSession(sessionId: string): Promise<void> {
   const resp = await fetch(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}`, {
     method: 'DELETE',
@@ -320,28 +210,6 @@ export async function fetchHistory(sessionId: string): Promise<HistoryResponse> 
   });
   assertNotUnauthorized(resp, 'Failed to fetch history');
   if (!resp.ok) await handleHttpError(resp, 'Failed to fetch history');
-  return resp.json();
-}
-
-export async function createSessionWithHistory(
-  profileId: string,
-  history: Record<string, unknown>,
-  userProfile?: UserMemoryProfile | null,
-): Promise<SessionCreateResponse> {
-  const resp = await fetch(`${API_BASE}/sessions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...getAuthHeaders(),
-    },
-    body: JSON.stringify({
-      profile_id: profileId,
-      history,
-      ...(userProfile ? { user_profile: { name: userProfile.name, preferences: userProfile.preferences, notes: userProfile.notes } } : {}),
-    }),
-  });
-  assertNotUnauthorized(resp, 'Failed to create session with history');
-  if (!resp.ok) await handleHttpError(resp, 'Failed to create session with history');
   return resp.json();
 }
 
