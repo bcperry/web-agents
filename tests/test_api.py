@@ -2,26 +2,16 @@
 
 import os
 from types import SimpleNamespace
-import pytest
 
 os.environ.setdefault("AUTH_DISABLED", "true")
 os.environ.setdefault("AZURE_SQL_CONNECTIONSTRING", "")
 
-from fastapi.testclient import TestClient
-from main import _sessions, app
+from main import _sessions
 from prompt_config import load_agents_yaml
 
 
 def faa_profile_name() -> str:
     return str(load_agents_yaml()["profiles"]["faa"].get("name", "faa"))
-
-
-@pytest.fixture
-def client():
-    _sessions.clear()
-    with TestClient(app) as test_client:
-        yield test_client
-    _sessions.clear()
 
 
 def test_health_endpoint(client):
@@ -115,8 +105,119 @@ def test_create_session_invalid_profile(client):
     assert resp.status_code in (400, 500)
 
 
+def test_standard_profile_session_preserves_runtime_request_and_response(client, monkeypatch):
+    import session_orchestration
+
+    calls: dict[str, object] = {}
+
+    class DummySession:
+        def to_dict(self):
+            return {"items": []}
+
+    def fake_create_chat_runtime(**kwargs):
+        calls["runtime"] = kwargs
+        return SimpleNamespace(
+            agent=object(),
+            session=DummySession(),
+            tools=kwargs.get("function_tools", []),
+            prompt_manifest={},
+            prompt_logical_profile="search",
+        )
+
+    async def fake_connect_mcp_servers(configs, *, user_token=None):
+        calls["mcp_configs"] = configs
+        calls["user_token"] = user_token
+        return [], []
+
+    monkeypatch.setattr(session_orchestration, "create_chat_runtime", fake_create_chat_runtime)
+    monkeypatch.setattr(session_orchestration, "connect_mcp_servers", fake_connect_mcp_servers)
+
+    resp = client.post(
+        "/api/sessions",
+        json={
+            "profile_id": "search",
+            "user_profile": {"name": "Avery", "preferences": "brief", "notes": "pilot"},
+        },
+    )
+
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["profile_id"] == "search"
+    assert data["profile_name"] == "Search Agent"
+    assert data["tools_loaded"] == ["get_user_profile", "save_user_profile"]
+    assert data["skills_loaded"] == []
+    assert data["search_context"] is True
+    assert data["mcp_results"] == []
+    assert data["used_profile_override"] is False
+    assert data["override_updated_at"] is None
+
+    runtime_kwargs = calls["runtime"]
+    assert runtime_kwargs["chat_profile"] == "Search Agent"
+    assert "Known User Profile" in runtime_kwargs["extra_instructions"]
+    assert runtime_kwargs["mcp_servers"] == []
+    assert data["session_id"] in _sessions
+
+
+def test_custom_session_preserves_runtime_request_and_response(client, monkeypatch):
+    import session_orchestration
+
+    calls: dict[str, object] = {}
+
+    class DummySession:
+        def to_dict(self):
+            return {"items": []}
+
+    def fake_create_chat_runtime(**kwargs):
+        calls["runtime"] = kwargs
+        return SimpleNamespace(
+            agent=object(),
+            session=DummySession(),
+            tools=kwargs.get("function_tools", []),
+            prompt_manifest={},
+            prompt_logical_profile="custom",
+        )
+
+    async def fake_connect_mcp_servers(configs, *, user_token=None):
+        return [], []
+
+    monkeypatch.setattr(session_orchestration, "create_chat_runtime", fake_create_chat_runtime)
+    monkeypatch.setattr(session_orchestration, "connect_mcp_servers", fake_connect_mcp_servers)
+
+    resp = client.post(
+        "/api/sessions",
+        json={
+            "profile_id": "custom",
+            "custom_name": "Planner",
+            "custom_prompt": "Plan carefully.",
+            "custom_tools": ["get_user_profile"],
+            "custom_search_context": True,
+            "custom_temperature": 0.7,
+            "custom_skills": [],
+            "mcp_servers": [],
+            "user_profile": {"name": "Avery", "preferences": "brief", "notes": "pilot"},
+        },
+    )
+
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["profile_id"] == "custom"
+    assert data["profile_name"] == "Planner"
+    assert data["tools_loaded"] == ["get_user_profile"]
+    assert data["skills_loaded"] == []
+    assert data["search_context"] is True
+    assert data["mcp_results"] == []
+
+    runtime_kwargs = calls["runtime"]
+    assert runtime_kwargs["custom_name"] == "Planner"
+    assert runtime_kwargs["custom_instructions"] == "Plan carefully."
+    assert runtime_kwargs["temperature"] == 0.7
+    assert runtime_kwargs["enable_search_context"] is True
+    assert runtime_kwargs["custom_skills"] is None
+    assert "Known User Profile" in runtime_kwargs["extra_instructions"]
+
+
 def test_builtin_profile_override_session_preserves_canonical_name(client, monkeypatch):
-    import main as main_module
+    import session_orchestration
 
     class DummySession:
         def to_dict(self):
@@ -136,8 +237,8 @@ def test_builtin_profile_override_session_preserves_canonical_name(client, monke
     async def fake_connect_mcp_servers(configs, *, user_token=None):
         return [], []
 
-    monkeypatch.setattr(main_module, "create_chat_runtime", fake_create_chat_runtime)
-    monkeypatch.setattr(main_module, "connect_mcp_servers", fake_connect_mcp_servers)
+    monkeypatch.setattr(session_orchestration, "create_chat_runtime", fake_create_chat_runtime)
+    monkeypatch.setattr(session_orchestration, "connect_mcp_servers", fake_connect_mcp_servers)
 
     resp = client.post(
         "/api/sessions",
@@ -187,6 +288,107 @@ def test_builtin_profile_override_rejects_name_change(client):
     assert "cannot change the agent name" in resp.json()["detail"]
 
 
+def test_custom_session_drops_unknown_skills(client, monkeypatch, caplog):
+    """Regression: deleting a skill referenced by a saved custom agent must not
+    block the session from loading. Unknown skills are silently dropped with a
+    warning so the agent remains usable."""
+    import logging
+
+    import session_orchestration
+
+    calls: dict[str, object] = {}
+
+    class DummySession:
+        def to_dict(self):
+            return {"items": []}
+
+    def fake_create_chat_runtime(**kwargs):
+        calls["runtime"] = kwargs
+        return SimpleNamespace(
+            agent=object(),
+            session=DummySession(),
+            tools=kwargs.get("function_tools", []),
+            prompt_manifest={},
+            prompt_logical_profile="custom",
+        )
+
+    async def fake_connect_mcp_servers(configs, *, user_token=None):
+        return [], []
+
+    monkeypatch.setattr(session_orchestration, "create_chat_runtime", fake_create_chat_runtime)
+    monkeypatch.setattr(session_orchestration, "connect_mcp_servers", fake_connect_mcp_servers)
+
+    with caplog.at_level(logging.WARNING):
+        resp = client.post(
+            "/api/sessions",
+            json={
+                "profile_id": "custom",
+                "custom_name": "Planner",
+                "custom_prompt": "Plan carefully.",
+                "custom_tools": [],
+                "custom_search_context": False,
+                "custom_skills": ["__deleted_skill__"],
+                "mcp_servers": [],
+            },
+        )
+
+    assert resp.status_code == 201
+    assert resp.json()["skills_loaded"] == []
+    assert calls["runtime"]["custom_skills"] is None
+    assert any("__deleted_skill__" in record.message for record in caplog.records)
+
+
+def test_builtin_profile_override_drops_unknown_skills(client, monkeypatch, caplog):
+    """Regression: a built-in override that still references a deleted skill
+    must load — the unknown skill is dropped with a warning."""
+    import logging
+
+    import session_orchestration
+
+    calls: dict[str, object] = {}
+
+    class DummySession:
+        def to_dict(self):
+            return {"items": []}
+
+    def fake_create_chat_runtime(**kwargs):
+        calls["runtime"] = kwargs
+        return SimpleNamespace(
+            agent=object(),
+            session=DummySession(),
+            tools=kwargs.get("function_tools", []),
+            prompt_manifest={},
+            prompt_logical_profile="custom",
+        )
+
+    async def fake_connect_mcp_servers(configs, *, user_token=None):
+        return [], []
+
+    monkeypatch.setattr(session_orchestration, "create_chat_runtime", fake_create_chat_runtime)
+    monkeypatch.setattr(session_orchestration, "connect_mcp_servers", fake_connect_mcp_servers)
+
+    with caplog.at_level(logging.WARNING):
+        resp = client.post(
+            "/api/sessions",
+            json={
+                "profile_id": "faa",
+                "profile_override": {
+                    "description": "Local FAA tuning",
+                    "custom_prompt": "Override prompt",
+                    "custom_tools": [],
+                    "custom_search_context": False,
+                    "custom_skills": ["__deleted_skill__"],
+                    "mcp_servers": [],
+                    "override_updated_at": "2026-05-06T12:00:00.000Z",
+                },
+            },
+        )
+
+    assert resp.status_code == 201
+    assert calls["runtime"]["custom_skills"] is None
+    assert any("__deleted_skill__" in record.message for record in caplog.records)
+
+
 def test_delete_session_not_found(client):
     resp = client.delete("/api/sessions/nonexistent-session-id")
     assert resp.status_code == 404
@@ -224,7 +426,23 @@ def test_custom_session_binds_all_selected_tools(client):
     )
 
     assert resp.status_code == 201
-    session_id = resp.json()["session_id"]
+    response_data = resp.json()
+    assert {
+        "session_id",
+        "profile_id",
+        "profile_name",
+        "tools_loaded",
+        "skills_loaded",
+        "search_context",
+        "mcp_results",
+    }.issubset(response_data)
+    assert response_data["profile_id"] == "custom"
+    assert response_data["profile_name"] == "All Tools Custom"
+    assert response_data["tools_loaded"] == ["get_user_profile", "save_user_profile"]
+    assert response_data["skills_loaded"] == []
+    assert response_data["search_context"] is False
+    assert response_data["mcp_results"] == []
+    session_id = response_data["session_id"]
     session_data = _sessions[session_id]
     tool_names = {getattr(tool, "name", None) or getattr(tool, "__name__", None) for tool in session_data.tools}
     assert {"get_user_profile", "save_user_profile"}.issubset(tool_names)

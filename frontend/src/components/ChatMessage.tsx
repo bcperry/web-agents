@@ -1,10 +1,9 @@
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { ChatMessage as ChatMessageType, ContentItem } from '../types/api';
+import type { ChatMessage as ChatMessageType } from '../types/api';
 import { ToolStep } from './ToolStep';
 import { getRuntimeConfigSnapshot } from '../config/runtimeConfig';
-
-const ALLOWED_IMAGE_MIMES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+import { hasToolImages, imageDataUri, toolImages } from '../utils/content';
 
 interface Props {
   message: ChatMessageType;
@@ -32,18 +31,15 @@ export function ChatMessage({ message }: Props) {
           </div>
         )}
         {/* Inline images from tool results — shown outside collapsed accordions */}
-        {message.tool_invocations && message.tool_invocations.some((t) => t.content_items?.some((item: ContentItem) => item.type === 'image')) && (
+        {hasToolImages(message.tool_invocations) && (
           <div className="message-tool-images">
-            {message.tool_invocations.flatMap((t) =>
-              (t.content_items ?? [])
-                .filter((item: ContentItem): item is ContentItem & { type: 'image' } =>
-                  item.type === 'image' && ALLOWED_IMAGE_MIMES.has((item as { mimeType?: string }).mimeType ?? '')
-                )
+            {(message.tool_invocations ?? []).flatMap((t) =>
+              toolImages(t)
                 .map((item, idx) => (
                   <img
                     key={`${t.call_id}-${idx}`}
                     className="message-tool-image"
-                    src={`data:${item.mimeType};base64,${item.data}`}
+                    src={imageDataUri(item)}
                     alt={`Result from ${t.name}`}
                   />
                 ))

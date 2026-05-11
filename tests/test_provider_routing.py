@@ -1,6 +1,7 @@
 """Tests for dynamic LLM provider routing via OpenAIChatCompletionClient."""
 
 import pytest
+from types import SimpleNamespace
 from unittest.mock import patch
 from agent_framework.openai import OpenAIChatCompletionClient
 
@@ -36,3 +37,51 @@ class TestProviderRouting:
         """Client instantiates with only AZURE_OPENAI_* env vars."""
         client = OpenAIChatCompletionClient()
         assert client is not None
+
+
+def test_create_chat_runtime_binds_profile_tools_and_creates_session(monkeypatch) -> None:
+    """Runtime creation should preserve profile tool filtering and agent session creation."""
+    import agent_factory
+
+    calls: dict[str, object] = {}
+
+    class FakeAgent:
+        context_providers: list[object] = []
+
+        def create_session(self):
+            return {"session": "created"}
+
+    class FakeClient:
+        def as_agent(self, **kwargs):
+            calls["as_agent"] = kwargs
+            return FakeAgent()
+
+    allowed_tool = SimpleNamespace(name="allowed_tool")
+    denied_tool = SimpleNamespace(name="denied_tool")
+
+    monkeypatch.setattr(agent_factory, "_build_openai_clients", lambda: (FakeClient(), FakeClient()))
+    monkeypatch.setattr(agent_factory, "load_agent_profile", lambda chat_profile=None: SimpleNamespace(
+        name="Profile Name",
+        description="Profile description",
+        system_prompt="System prompt",
+        tool_names=["allowed_tool"],
+        logical_profile="profile-key",
+        search_context=False,
+        temperature=0.4,
+        skills=[],
+    ))
+
+    runtime = agent_factory.create_chat_runtime(
+        chat_profile="Profile Name",
+        function_tools=[allowed_tool, denied_tool],
+    )
+
+    assert runtime.session == {"session": "created"}
+    assert runtime.tools == [allowed_tool]
+    assert runtime.prompt_logical_profile == "profile-key"
+    agent_kwargs = calls["as_agent"]
+    assert agent_kwargs["name"] == "Profile_Name"
+    assert agent_kwargs["instructions"] == "System prompt"
+    assert agent_kwargs["description"] == "Profile description"
+    assert agent_kwargs["tools"] == [allowed_tool]
+    assert agent_kwargs["default_options"] == {"temperature": 0.4}

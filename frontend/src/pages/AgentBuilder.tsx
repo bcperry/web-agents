@@ -2,16 +2,16 @@ import { useState, useEffect } from 'react';
 import type {
   AgentCustomizationOverride,
   AgentProfile,
-  BuiltInAgentDefinition,
   ToolInfo,
   CustomAgentDefinition,
-  StarterQuestion,
-  McpServerEntry,
-  McpConnectionResult,
   StandardAgentCandidate,
 } from '../types/api';
-import { fetchBuiltInProfileDefinition, fetchProfiles, fetchSkills, fetchTools, testMcpConnections } from '../api/client';
+import { fetchBuiltInProfileDefinition, fetchProfiles, fetchSkills, fetchTools } from '../api/client';
 import { generateStandardAgentCandidate } from '../utils/standardAgentCandidate';
+import { AgentCapabilityPicker } from '../components/AgentCapabilityPicker';
+import { StarterQuestionEditor } from '../components/StarterQuestionEditor';
+import { useAgentMcpEditor } from '../hooks/useAgentMcpEditor';
+import { prepareBuiltInOverride, prepareCustomAgent, useAgentBuilderForm } from '../hooks/useAgentBuilderForm';
 
 interface AgentBuilderProps {
   agents: CustomAgentDefinition[];
@@ -22,23 +22,6 @@ interface AgentBuilderProps {
   onResetBuiltInOverride: (baseProfileId: string) => void;
   onBack: () => void;
 }
-
-function generateId(): string {
-  return `custom_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-const EMPTY_FORM = {
-  name: '',
-  description: '',
-  systemPrompt: '',
-  tools: [] as string[],
-  skills: [] as string[],
-  mcpServers: [] as McpServerEntry[],
-  useSearchContext: false,
-  icon: '/icons/custom.svg',
-  starters: [] as StarterQuestion[],
-  temperature: '' as string,
-};
 
 export function AgentBuilder({
   agents,
@@ -56,22 +39,44 @@ export function AgentBuilder({
   const [loadingTools, setLoadingTools] = useState(true);
   const [loadingSkills, setLoadingSkills] = useState(true);
   const [loadingBuiltIns, setLoadingBuiltIns] = useState(true);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editingBuiltInDefinition, setEditingBuiltInDefinition] = useState<BuiltInAgentDefinition | null>(null);
-  const [form, setForm] = useState(EMPTY_FORM);
+  const {
+    editingBuiltInDefinition,
+    editingId,
+    form,
+    isValid,
+    markTouched,
+    parsedTemperature,
+    resetForm: resetAgentForm,
+    saveSuccess,
+    setEditingBuiltInDefinition,
+    setEditingId,
+    setForm,
+    setSaveSuccess,
+    setTouched,
+    temperatureValid,
+    touched,
+  } = useAgentBuilderForm();
   const [newStarterLabel, setNewStarterLabel] = useState('');
   const [newStarterMessage, setNewStarterMessage] = useState('');
-  const [newMcpName, setNewMcpName] = useState('');
-  const [newMcpUrl, setNewMcpUrl] = useState('');
-  const [newMcpAuth, setNewMcpAuth] = useState(false);
-  const [newMcpAuthScope, setNewMcpAuthScope] = useState('');
-  const [mcpTestResults, setMcpTestResults] = useState<Record<string, McpConnectionResult>>({});
-  const [mcpTesting, setMcpTesting] = useState(false);
-  const [saveSuccess, setSaveSuccess] = useState(false);
+  const {
+    addMcpServer,
+    mcpTesting,
+    mcpTestResults,
+    newMcpAuth,
+    newMcpAuthScope,
+    newMcpName,
+    newMcpUrl,
+    removeMcpServer,
+    resetMcpEditor,
+    setNewMcpAuth,
+    setNewMcpAuthScope,
+    setNewMcpName,
+    setNewMcpUrl,
+    testConnections,
+  } = useAgentMcpEditor(setForm);
   const [candidate, setCandidate] = useState<StandardAgentCandidate | null>(null);
   const [builtInsCollapsed, setBuiltInsCollapsed] = useState(false);
   const [customAgentsCollapsed, setCustomAgentsCollapsed] = useState(false);
-  const [touched, setTouched] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     fetchTools()
@@ -92,17 +97,10 @@ export function AgentBuilder({
   }, []);
 
   const resetForm = () => {
-    setForm(EMPTY_FORM);
-    setEditingId(null);
-    setEditingBuiltInDefinition(null);
-    setTouched({});
+    resetAgentForm();
     setNewStarterLabel('');
     setNewStarterMessage('');
-    setNewMcpName('');
-    setNewMcpUrl('');
-    setNewMcpAuth(false);
-    setNewMcpAuthScope('');
-    setMcpTestResults({});
+    resetMcpEditor();
   };
 
   const handleEdit = (agent: CustomAgentDefinition) => {
@@ -110,12 +108,13 @@ export function AgentBuilder({
     setEditingBuiltInDefinition(null);
     setTouched({});
     const availableToolNames = new Set(availableTools.map((tool) => tool.name));
+    const availableSkillNames = new Set(availableSkills.map((skill) => skill.name));
     setForm({
       name: agent.name,
       description: agent.description,
       systemPrompt: agent.systemPrompt,
       tools: agent.tools.filter((tool) => availableToolNames.has(tool)),
-      skills: [...(agent.skills || [])],
+      skills: (agent.skills || []).filter((skill) => availableSkillNames.has(skill)),
       mcpServers: [...(agent.mcpServers || [])],
       useSearchContext: searchContextAvailable ? agent.useSearchContext : false,
       icon: agent.icon,
@@ -130,6 +129,7 @@ export function AgentBuilder({
       const override = builtInOverrides.find((item) => item.baseProfileId === definition.id);
       const source = override ?? definition;
       const availableToolNames = new Set(availableTools.map((tool) => tool.name));
+      const availableSkillNames = new Set(availableSkills.map((skill) => skill.name));
       setEditingId(null);
       setEditingBuiltInDefinition(definition);
       setTouched({});
@@ -138,7 +138,7 @@ export function AgentBuilder({
         description: source.description,
         systemPrompt: source.systemPrompt,
         tools: source.tools.filter((tool) => availableToolNames.has(tool)),
-        skills: [...source.skills],
+        skills: source.skills.filter((skill) => availableSkillNames.has(skill)),
         mcpServers: [...source.mcpServers],
         useSearchContext: searchContextAvailable ? source.useSearchContext : false,
         icon: source.icon,
@@ -185,51 +185,11 @@ export function AgentBuilder({
     }));
   };
 
-  const handleTestMcpConnections = async () => {
-    if (form.mcpServers.length === 0) return;
-    setMcpTesting(true);
-    setMcpTestResults({});
-    try {
-      const results = await testMcpConnections(form.mcpServers);
-      const map: Record<string, McpConnectionResult> = {};
-      for (const r of results) {
-        map[r.name] = r;
-      }
-      setMcpTestResults(map);
-    } catch {
-      // Error already shown via toast by client.ts
-    } finally {
-      setMcpTesting(false);
-    }
-  };
-
-  const parsedTemp = form.temperature !== '' ? parseFloat(form.temperature) : undefined;
-  const tempValid = parsedTemp === undefined || (!isNaN(parsedTemp) && parsedTemp >= 0 && parsedTemp <= 2);
-
   const handleSave = () => {
-    if ((!editingBuiltInDefinition && !form.name.trim()) || !form.systemPrompt.trim() || !tempValid) return;
-
-    const now = new Date().toISOString();
+    if (!isValid) return;
     if (editingBuiltInDefinition) {
       const existingOverride = builtInOverrides.find((item) => item.baseProfileId === editingBuiltInDefinition.id);
-      const override: AgentCustomizationOverride = {
-        id: existingOverride?.id ?? `builtin_override_${editingBuiltInDefinition.id}`,
-        baseProfileId: editingBuiltInDefinition.id,
-        baseProfileName: editingBuiltInDefinition.name,
-        description: form.description.trim(),
-        systemPrompt: form.systemPrompt,
-        tools: form.tools,
-        skills: form.skills,
-        mcpServers: form.mcpServers,
-        useSearchContext: form.useSearchContext,
-        icon: editingBuiltInDefinition.icon,
-        starters: form.starters,
-        ...(parsedTemp !== undefined ? { temperature: parsedTemp } : {}),
-        source: 'builtin-override',
-        createdAt: existingOverride?.createdAt ?? now,
-        updatedAt: now,
-      };
-
+      const override = prepareBuiltInOverride(form, editingBuiltInDefinition, existingOverride, parsedTemperature);
       onSaveBuiltInOverride(override);
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2000);
@@ -237,24 +197,7 @@ export function AgentBuilder({
       return;
     }
 
-    const agent: CustomAgentDefinition = {
-      id: editingId || generateId(),
-      name: form.name.trim(),
-      description: form.description.trim(),
-      systemPrompt: form.systemPrompt,
-      tools: form.tools,
-      skills: form.skills,
-      mcpServers: form.mcpServers,
-      useSearchContext: form.useSearchContext,
-      icon: form.icon,
-      starters: form.starters,
-      ...(parsedTemp !== undefined ? { temperature: parsedTemp } : {}),
-      createdAt: editingId
-        ? agents.find((a) => a.id === editingId)?.createdAt || now
-        : now,
-      updatedAt: now,
-    };
-
+    const agent = prepareCustomAgent(form, editingId, agents, parsedTemperature);
     onSave(agent);
     setSaveSuccess(true);
     setTimeout(() => setSaveSuccess(false), 2000);
@@ -285,8 +228,6 @@ export function AgentBuilder({
     anchor.click();
     URL.revokeObjectURL(url);
   };
-
-  const isValid = (editingBuiltInDefinition || form.name.trim()) && form.systemPrompt.trim() && tempValid;
 
   return (
     <div className="agent-builder">
@@ -390,7 +331,7 @@ export function AgentBuilder({
               type="text"
               value={form.name}
               onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
-              onBlur={() => setTouched((prev) => ({ ...prev, name: true }))}
+              onBlur={() => markTouched('name')}
               placeholder="e.g. Data Analyst"
               maxLength={100}
               readOnly={Boolean(editingBuiltInDefinition)}
@@ -418,7 +359,7 @@ export function AgentBuilder({
               className={`agent-builder-textarea${touched.systemPrompt && !form.systemPrompt.trim() ? ' agent-builder-input-error' : ''}`}
               value={form.systemPrompt}
               onChange={(e) => setForm((prev) => ({ ...prev, systemPrompt: e.target.value }))}
-              onBlur={() => setTouched((prev) => ({ ...prev, systemPrompt: true }))}
+              onBlur={() => markTouched('systemPrompt')}
               placeholder="You are a specialized agent that..."
               rows={8}
             />
@@ -433,7 +374,7 @@ export function AgentBuilder({
               Controls the Agent's Creativity (0.0 = deterministic, 2.0 = creative).
             </span>
             <input
-              className={`agent-builder-input${!tempValid ? ' agent-builder-input-error' : ''}`}
+              className={`agent-builder-input${!temperatureValid ? ' agent-builder-input-error' : ''}`}
               type="number"
               value={form.temperature}
               onChange={(e) => setForm((prev) => ({ ...prev, temperature: e.target.value }))}
@@ -442,35 +383,20 @@ export function AgentBuilder({
               max={2}
               step={0.1}
             />
-            {!tempValid && (
+            {!temperatureValid && (
               <span className="agent-builder-error-text">Temperature must be between 0.0 and 2.0</span>
             )}
           </label>
 
-          {/* Tools */}
-          <div className="agent-builder-label">
-            TOOLS
-            <span className="agent-builder-tool-desc" style={{ display: 'block', marginBottom: '0.5rem' }}>
-              Backend capabilities the agent can invoke during a conversation
-            </span>
-            {loadingTools ? (
-              <div className="agent-builder-loading">Loading available tools...</div>
-            ) : (
-              <div className="agent-builder-tools">
-                {availableTools.map((tool) => (
-                  <label key={tool.name} className="agent-builder-tool-item">
-                    <input
-                      type="checkbox"
-                      checked={form.tools.includes(tool.name)}
-                      onChange={() => handleToolToggle(tool.name)}
-                    />
-                    <span className="agent-builder-tool-name">{tool.name.replace(/_/g, ' ')}</span>
-                    <span className="agent-builder-tool-desc">{tool.description}</span>
-                  </label>
-                ))}
-              </div>
-            )}
-          </div>
+          <AgentCapabilityPicker
+            title="TOOLS"
+            description="Backend capabilities the agent can invoke during a conversation"
+            items={availableTools}
+            selected={form.tools}
+            loading={loadingTools}
+            nameFormatter={(name) => name.replace(/_/g, ' ')}
+            onToggle={handleToolToggle}
+          />
 
           {/* AI Search context provider — hidden when not configured */}
           {searchContextAvailable && (
@@ -485,32 +411,16 @@ export function AgentBuilder({
             </label>
           )}
 
-          {/* Skills */}
-          <div className="agent-builder-label">
-            SKILLS
-            <span className="agent-builder-tool-desc" style={{ display: 'block', marginBottom: '0.5rem' }}>
-              Domain-specific knowledge packages that give the agent specialized expertise
-            </span>
-            {loadingSkills ? (
-              <div className="agent-builder-loading">Loading available skills...</div>
-            ) : availableSkills.length > 0 ? (
-              <div className="agent-builder-tools">
-                {availableSkills.map((skill) => (
-                  <label key={skill.name} className="agent-builder-tool-item">
-                    <input
-                      type="checkbox"
-                      checked={form.skills.includes(skill.name)}
-                      onChange={() => handleSkillToggle(skill.name)}
-                    />
-                    <span className="agent-builder-tool-name">{skill.name.replace(/-/g, ' ')}</span>
-                    <span className="agent-builder-tool-desc">{skill.description}</span>
-                  </label>
-                ))}
-              </div>
-            ) : (
-              <div className="agent-builder-tool-desc">No skills available</div>
-            )}
-          </div>
+          <AgentCapabilityPicker
+            title="SKILLS"
+            description="Domain-specific knowledge packages that give the agent specialized expertise"
+            items={availableSkills}
+            selected={form.skills}
+            loading={loadingSkills}
+            emptyText="No skills available"
+            nameFormatter={(name) => name.replace(/-/g, ' ')}
+            onToggle={handleSkillToggle}
+          />
 
           {/* MCP Servers */}
           <div className="agent-builder-label">
@@ -538,17 +448,7 @@ export function AgentBuilder({
                           {server.authScope ? ` [OBO: ${server.authScope}]` : server.authenticated ? ' [Auth]' : ''}
                         </span>
                         <button
-                          onClick={() => {
-                            setForm((prev) => ({
-                              ...prev,
-                              mcpServers: prev.mcpServers.filter((_, idx) => idx !== i),
-                            }));
-                            setMcpTestResults((prev) => {
-                              const next = { ...prev };
-                              delete next[server.name];
-                              return next;
-                            });
-                          }}
+                          onClick={() => removeMcpServer(server, i)}
                           type="button"
                           title="Remove"
                         >
@@ -560,7 +460,7 @@ export function AgentBuilder({
                 </div>
                 <button
                   className="agent-builder-test-mcp-btn"
-                  onClick={handleTestMcpConnections}
+                  onClick={() => testConnections(form.mcpServers)}
                   type="button"
                   disabled={mcpTesting}
                 >
@@ -605,23 +505,7 @@ export function AgentBuilder({
               )}
               <button
                 className="agent-builder-starter-add-btn"
-                onClick={() => {
-                  if (!newMcpName.trim() || !newMcpUrl.trim()) return;
-                  setForm((prev) => ({
-                    ...prev,
-                    mcpServers: [...prev.mcpServers, {
-                      name: newMcpName.trim(),
-                      transport: 'http' as const,
-                      url: newMcpUrl.trim(),
-                      ...(newMcpAuth ? { authenticated: true } : {}),
-                      ...(newMcpAuthScope.trim() ? { authScope: newMcpAuthScope.trim() } : {}),
-                    }],
-                  }));
-                  setNewMcpName('');
-                  setNewMcpUrl('');
-                  setNewMcpAuth(false);
-                  setNewMcpAuthScope('');
-                }}
+                onClick={addMcpServer}
                 type="button"
                 disabled={!newMcpName.trim() || !newMcpUrl.trim()}
               >
@@ -630,46 +514,15 @@ export function AgentBuilder({
             </div>
           </div>
 
-          {/* Starter questions */}
-          <div className="agent-builder-label">
-            STARTER QUESTIONS
-            {form.starters.length > 0 && (
-              <div className="agent-builder-starters-list">
-                {form.starters.map((s, i) => (
-                  <div key={i} className="agent-builder-starter-item">
-                    <span className="agent-builder-starter-label">{s.label}</span>
-                    <button onClick={() => handleRemoveStarter(i)} type="button" title="Remove">✕</button>
-                  </div>
-                ))}
-              </div>
-            )}
-            <div className="agent-builder-starter-add">
-              <input
-                className="agent-builder-input"
-                type="text"
-                value={newStarterLabel}
-                onChange={(e) => setNewStarterLabel(e.target.value)}
-                placeholder="Button label"
-                maxLength={80}
-              />
-              <input
-                className="agent-builder-input"
-                type="text"
-                value={newStarterMessage}
-                onChange={(e) => setNewStarterMessage(e.target.value)}
-                placeholder="Message to send"
-                maxLength={500}
-              />
-              <button
-                className="agent-builder-starter-add-btn"
-                onClick={handleAddStarter}
-                type="button"
-                disabled={!newStarterLabel.trim() || !newStarterMessage.trim()}
-              >
-                + ADD
-              </button>
-            </div>
-          </div>
+          <StarterQuestionEditor
+            starters={form.starters}
+            newStarterLabel={newStarterLabel}
+            newStarterMessage={newStarterMessage}
+            onAdd={handleAddStarter}
+            onRemove={handleRemoveStarter}
+            onLabelChange={setNewStarterLabel}
+            onMessageChange={setNewStarterMessage}
+          />
 
           {/* Actions */}
           <div className="agent-builder-actions">

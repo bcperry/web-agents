@@ -1,6 +1,4 @@
-/* Web-Agents Theme */
 
-/* T002: Design Tokens — Dark theme (default/fallback) */
 :root {
   --bg-primary: #0a0e0a;
   --bg-panel: #1a1e1a;
@@ -21,7 +19,6 @@
   --radius: 2px;
 }
 
-/* Light theme overrides */
 [data-theme="light"] {
   --bg-primary: #f0efe8;
   --bg-panel: #e8e7e0;
@@ -39,7 +36,6 @@
   --alert-red: #b30000;
 }
 
-/* T003: Global reset + base */
 * {
   margin: 0;
   padding: 0;
@@ -62,7 +58,6 @@ body {
   flex-direction: column;
 }
 
-/* T004: Scrollbar styling */
 * {
   scrollbar-color: #2a2e2a var(--bg-primary);
   scrollbar-width: thin;
@@ -85,7 +80,6 @@ body {
   background: var(--accent-olive);
 }
 
-/* T005: Header */
 .chat-page {
   display: flex;
   flex-direction: column;
@@ -205,7 +199,6 @@ body {
   justify-content: center;
 }
 
-/* T006: Messages */
 .chat-messages {
   flex: 1;
   overflow-y: auto;
@@ -385,6 +378,14 @@ body {
   max-width: 240px;
 }
 
+.message-image-thumb img,
+.tool-result-image,
+.message-tool-image {
+  object-fit: contain;
+  border: 1px solid var(--border-olive);
+  border-radius: var(--radius);
+}
+
 .message-image-thumb img {
   display: block;
   width: 100%;
@@ -393,7 +394,6 @@ body {
   object-fit: cover;
 }
 
-/* T007: Chat input */
 .chat-input-form {
   padding: 12px 32px;
   background-color: var(--bg-header);
@@ -467,7 +467,6 @@ body {
   margin-top: 4px;
 }
 
-/* T008: Profile cards */
 .profile-selector {
   display: flex;
   flex-direction: column;
@@ -559,7 +558,6 @@ body {
   background: color-mix(in srgb, var(--text-gold) 12%, var(--bg-input));
 }
 
-/* T009: Starter questions */
 .starter-questions {
   display: flex;
   flex-direction: column;
@@ -604,7 +602,6 @@ body {
   box-shadow: 0 0 8px rgba(200, 160, 0, 0.15);
 }
 
-/* T010: Tool steps */
 .tool-step {
   margin: 8px 0;
   border: 1px solid var(--border-olive);
@@ -627,17 +624,6 @@ body {
 
 .tool-step-header:hover {
   background-color: var(--bg-hover);
-}
-
-.tool-step-body {
-  padding: 12px;
-  font-size: 0.8rem;
-  font-family: var(--font-mono);
-  background-color: var(--bg-primary);
-  border-top: 1px solid var(--border-olive);
-  white-space: pre-wrap;
-  overflow-x: auto;
-  color: var(--text-primary);
 }
 
 .tool-step-details {
@@ -691,28 +677,7 @@ body {
   color: var(--accent-gold);
 }
 
-/* Tool result images */
-.tool-result-images {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.tool-result-image {
-  max-width: 100%;
-  max-height: 400px;
-  border-radius: var(--radius);
-  border: 1px solid var(--border-olive);
-  cursor: pointer;
-  object-fit: contain;
-}
-
-.tool-result-image:hover {
-  border-color: var(--accent-gold);
-}
-
-/* Inline images in chat messages (from tool results) */
+.tool-result-images,
 .message-tool-images {
   display: flex;
   flex-wrap: wrap;
@@ -720,15 +685,24 @@ body {
   margin-top: 8px;
 }
 
+.tool-result-image,
 .message-tool-image {
   max-width: 100%;
-  max-height: 500px;
-  border-radius: var(--radius);
-  border: 1px solid var(--border-olive);
-  object-fit: contain;
 }
 
-/* T011: Disclaimer */
+.tool-result-image {
+  max-height: 400px;
+  cursor: pointer;
+}
+
+.message-tool-image {
+  max-height: 500px;
+}
+
+.tool-result-image:hover {
+  border-color: var(--accent-gold);
+}
+
 .disclaimer-overlay {
   position: fixed;
   top: 0;
@@ -834,7 +808,6 @@ body {
   box-shadow: 0 0 15px rgba(200, 160, 0, 0.3);
 }
 
-/* T012: Login */
 .app-loading,
 .app-login {
   display: flex;
@@ -924,7 +897,6 @@ body {
   50% { opacity: 1; }
 }
 
-/* T013: Classification footer */
 .classification-footer {
   font-family: var(--font-mono);
   font-size: 0.65rem;
@@ -937,7 +909,6 @@ body {
   border-top: 1px solid var(--border-olive);
 }
 
-/* T014: Token usage */
 .token-usage {
   font-family: var(--font-mono);
   font-size: 0.7rem;
@@ -947,20 +918,10 @@ body {
   letter-spacing: 1px;
 }
 
-.token-usage-label {
-  font-weight: 400;
-  margin-right: 2px;
-}
-
-.token-usage-value {
-  margin-right: 4px;
-}
-
 .token-usage-detail {
   color: var(--text-muted);
 }
 
-/* T015: Image upload */
 .image-upload {
   display: flex;
   gap: 8px;
@@ -1098,7 +1059,6 @@ body {
   justify-content: center;
 }
 
-/* T016: Chat error */
 .chat-error {
   display: flex;
   align-items: center;
@@ -1130,7 +1090,6 @@ body {
   font-size: 1rem;
 }
 
-/* Auth error panel shown on profile selection screen */
 .auth-error-panel {
   display: flex;
   flex-direction: column;
@@ -1156,31 +1115,6 @@ body {
   max-width: 400px;
 }
 
-/* Error message */
-.error-message {
-  padding: 12px 16px;
-  margin: 8px 0;
-  background-color: rgba(139, 0, 0, 0.15);
-  border: 1px solid var(--alert-red);
-  border-radius: var(--radius);
-  color: var(--text-primary);
-  font-size: 0.85rem;
-}
-
-/* Loading animation */
-.loading-dots::after {
-  content: '...';
-  animation: dots 1.5s steps(4, end) infinite;
-}
-
-@keyframes dots {
-  0%, 20% { content: ''; }
-  40% { content: '.'; }
-  60% { content: '..'; }
-  80%, 100% { content: '...'; }
-}
-
-/* T017: Responsive */
 @media (max-width: 768px) {
   .chat-header {
     flex-direction: column;
@@ -1230,14 +1164,10 @@ body {
   }
 }
 
-/* Tool steps container */
 .tool-steps {
   margin-bottom: 8px;
 }
 
-/* ========================================
-   Sidebar — Conversation History
-   ======================================== */
 
 .sidebar {
   width: 260px;
@@ -1386,7 +1316,6 @@ body {
   color: var(--alert-red);
 }
 
-/* Layout: sidebar + main content */
 .app-layout {
   display: flex;
   height: 100vh;
@@ -1398,7 +1327,6 @@ body {
   min-width: 0;
 }
 
-/* Mobile sidebar */
 @media (max-width: 768px) {
   .sidebar {
     position: fixed;
@@ -1453,9 +1381,6 @@ body {
   background-color: var(--bg-hover);
 }
 
-/* ========================================
-   Agent Builder
-   ======================================== */
 
 .agent-builder {
   display: flex;
@@ -1583,7 +1508,6 @@ body {
   outline-offset: 4px;
 }
 
-/* Saved agents list */
 .agent-builder-saved {
   border: 1px solid var(--border-olive);
   border-radius: var(--radius);
@@ -1652,7 +1576,9 @@ body {
   flex-shrink: 0;
 }
 
-.agent-builder-saved-actions button {
+.agent-builder-saved-actions button,
+.skill-list-new,
+.skill-btn-ai {
   background: none;
   border: 1px solid var(--border-olive);
   color: var(--text-muted);
@@ -1664,12 +1590,13 @@ body {
   letter-spacing: 0;
 }
 
-.agent-builder-saved-actions button:hover {
+.agent-builder-saved-actions button:hover,
+.skill-list-new:hover:not(:disabled),
+.skill-btn-ai:hover:not(:disabled) {
   border-color: var(--accent-gold);
   color: var(--text-gold);
 }
 
-/* Form */
 .agent-builder-form {
   border: 1px solid var(--border-olive);
   border-radius: var(--radius);
@@ -1690,7 +1617,8 @@ body {
   letter-spacing: 1px;
 }
 
-.agent-builder-input {
+.agent-builder-input,
+.agent-builder-textarea {
   padding: 8px 12px;
   border: 1px solid var(--border-olive);
   border-radius: var(--radius);
@@ -1700,12 +1628,14 @@ body {
   font-size: 0.95rem;
 }
 
-.agent-builder-input:focus {
+.agent-builder-input:focus,
+.agent-builder-textarea:focus {
   outline: none;
   border-color: var(--accent-gold);
 }
 
-.agent-builder-input::placeholder {
+.agent-builder-input::placeholder,
+.agent-builder-textarea::placeholder {
   color: var(--text-muted);
 }
 
@@ -1721,24 +1651,8 @@ body {
 }
 
 .agent-builder-textarea {
-  padding: 10px 12px;
-  border: 1px solid var(--border-olive);
-  border-radius: var(--radius);
-  background-color: var(--bg-input);
-  color: var(--text-primary);
-  font-family: var(--font-mono);
-  font-size: 0.95rem;
   resize: vertical;
   min-height: 120px;
-}
-
-.agent-builder-textarea:focus {
-  outline: none;
-  border-color: var(--accent-gold);
-}
-
-.agent-builder-textarea::placeholder {
-  color: var(--text-muted);
 }
 
 .agent-builder-loading {
@@ -1748,7 +1662,6 @@ body {
   padding: 8px 0;
 }
 
-/* Tool checkboxes */
 .agent-builder-tools {
   display: flex;
   flex-direction: column;
@@ -1797,7 +1710,6 @@ body {
   border-color: var(--accent-olive);
 }
 
-/* Starters */
 .agent-builder-starters-list {
   display: flex;
   flex-direction: column;
@@ -1865,7 +1777,6 @@ body {
   border-color: var(--accent-gold);
 }
 
-/* MCP server add form — single row, wraps on small screens */
 .agent-builder-mcp-add {
   display: flex;
   flex-wrap: wrap;
@@ -1878,7 +1789,6 @@ body {
   min-width: 180px;
 }
 
-/* Actions */
 .agent-builder-actions {
   display: flex;
   gap: 12px;
@@ -1937,7 +1847,6 @@ body {
   text-align: center;
 }
 
-/* Responsive */
 @media (max-width: 768px) {
   .agent-builder-layout {
     padding: 16px;
@@ -1950,9 +1859,6 @@ body {
   }
 }
 
-/* ========================================
-   Profile Card — Custom Badge
-   ======================================== */
 
 .profile-card-badge {
   font-family: var(--font-mono);
@@ -1966,9 +1872,6 @@ body {
   display: inline-block;
 }
 
-/* ========================================
-   Sidebar — Advanced Section
-   ======================================== */
 
 .sidebar-advanced {
   border-top: 1px solid var(--border-olive);
@@ -2026,9 +1929,6 @@ body {
   background-color: rgba(139, 0, 0, 0.2);
 }
 
-/* ========================================
-   Sidebar — Theme Selector
-   ======================================== */
 
 .sidebar-theme-selector {
   border-top: 1px solid var(--border-olive);
@@ -2078,9 +1978,6 @@ body {
   color: #f0efe8;
 }
 
-/* ========================================
-   Light Mode — Semi-Transparent Overrides
-   ======================================== */
 
 [data-theme="light"] .user-message {
   background-color: var(--bg-header);
@@ -2126,7 +2023,6 @@ body {
   background-color: rgba(138, 109, 0, 0.1);
 }
 
-/* Light mode scrollbar */
 [data-theme="light"] * {
   scrollbar-color: #c0c0b0 var(--bg-primary);
 }
@@ -2143,9 +2039,6 @@ body {
   background: var(--accent-olive);
 }
 
-/* ------------------------------------------------------------------ */
-/*  Toast notifications                                                */
-/* ------------------------------------------------------------------ */
 
 .toast-container {
   position: fixed;
@@ -2234,7 +2127,6 @@ body {
   }
 }
 
-/* Light theme overrides */
 [data-theme="light"] .toast {
   background: rgba(255, 255, 255, 0.97);
   color: #333;
@@ -2249,7 +2141,6 @@ body {
   color: #333;
 }
 
-/* Agent Capabilities Bar */
 .capabilities-bar {
   display: flex;
   flex-wrap: wrap;
@@ -2342,7 +2233,6 @@ body {
   color: var(--alert-red);
 }
 
-/* MCP Status Indicator (legacy — used by McpStatusIndicator component) */
 .mcp-status-indicator {
   display: flex;
   flex-wrap: wrap;
@@ -2378,20 +2268,6 @@ body {
   color: var(--text-muted);
 }
 
-.mcp-status-bar {
-  padding: 4px 16px;
-  border-bottom: 1px solid var(--border-olive);
-  background: var(--bg-header);
-}
-
-/* Agent Builder MCP badges */
-.agent-builder-saved-mcp {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 4px;
-}
-
 .agent-builder-mcp-badge {
   display: inline-flex;
   align-items: center;
@@ -2405,7 +2281,6 @@ body {
   background: var(--bg-input);
 }
 
-/* MCP test connection button & inline status */
 .agent-builder-test-mcp-btn {
   margin-top: 6px;
   padding: 4px 12px;
@@ -2507,9 +2382,6 @@ body {
   flex-shrink: 0;
 }
 
-/* ===========================================================================
-   Admin Page
-   =========================================================================== */
 
 .admin-page {
   display: flex;
@@ -2598,9 +2470,6 @@ body {
   min-width: 0;
 }
 
-/* ===========================================================================
-   Skill Builder
-   =========================================================================== */
 
 .skill-builder {
   height: 100%;
@@ -2671,25 +2540,6 @@ body {
   font-family: var(--font-mono);
   font-size: 0.85rem;
   margin-bottom: 16px;
-}
-
-.skill-list-new,
-.skill-btn-ai {
-  background: transparent;
-  color: var(--text-muted);
-  border: 1px solid var(--border-olive);
-  padding: 6px 10px;
-  font-family: var(--font-mono);
-  font-size: 0.8rem;
-  letter-spacing: 0;
-  border-radius: var(--radius);
-  cursor: pointer;
-}
-
-.skill-list-new:hover:not(:disabled),
-.skill-btn-ai:hover:not(:disabled) {
-  border-color: var(--accent-gold);
-  color: var(--text-gold);
 }
 
 .skill-list-new:disabled,

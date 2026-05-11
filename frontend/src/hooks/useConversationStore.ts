@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
 import type { ConversationIndexEntry, StoredConversation } from '../types/api';
+import { readJson, removeStorageItem, tryWriteJson } from '../utils/storage';
 
 declare const __MAX_SESSIONS__: string;
 
@@ -14,41 +15,29 @@ function conversationKey(id: string): string {
   return `${CONVERSATION_KEY_PREFIX}${id}`;
 }
 
+function isConversationIndex(value: unknown): value is ConversationIndexEntry[] {
+  return Array.isArray(value) && value.every(
+    (entry) => entry && typeof entry.id === 'string' && typeof entry.description === 'string',
+  );
+}
+
 export function useConversationStore() {
   const loadIndex = useCallback((): ConversationIndexEntry[] => {
-    try {
-      const raw = localStorage.getItem(INDEX_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      // Validate entries have required fields
-      const entries = parsed.filter(
-        (e: Record<string, unknown>) => e && typeof e.id === 'string' && typeof e.description === 'string',
-      ) as ConversationIndexEntry[];
-      // Trim to max if config changed between deployments
-      const max = getMaxSessions();
-      if (entries.length > max) {
-        entries.sort((a, b) => new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime());
-        const evicted = entries.splice(max);
-        for (const e of evicted) {
-          try { localStorage.removeItem(conversationKey(e.id)); } catch { /* ignore */ }
-        }
-        try { localStorage.setItem(INDEX_KEY, JSON.stringify(entries)); } catch { /* ignore */ }
+    const entries = readJson<ConversationIndexEntry[]>(INDEX_KEY, [], isConversationIndex);
+    const max = getMaxSessions();
+    if (entries.length > max) {
+      entries.sort((a, b) => new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime());
+      const evicted = entries.splice(max);
+      for (const entry of evicted) {
+        removeStorageItem(conversationKey(entry.id));
       }
-      return entries;
-    } catch {
-      // Corrupted data — discard
-      try { localStorage.removeItem(INDEX_KEY); } catch { /* ignore */ }
-      return [];
+      tryWriteJson(INDEX_KEY, entries);
     }
+    return entries;
   }, []);
 
   const saveIndex = useCallback((index: ConversationIndexEntry[]) => {
-    try {
-      localStorage.setItem(INDEX_KEY, JSON.stringify(index));
-    } catch (e) {
-      console.warn('Failed to save conversation index to localStorage:', e);
-    }
+    tryWriteJson(INDEX_KEY, index, (error) => console.warn('Failed to save conversation index to localStorage:', error));
   }, []);
 
   const saveConversation = useCallback((conversation: StoredConversation) => {
@@ -85,38 +74,30 @@ export function useConversationStore() {
     while (index.length > max) {
       const evicted = index.pop();
       if (evicted) {
-        try { localStorage.removeItem(conversationKey(evicted.id)); } catch { /* ignore */ }
+        removeStorageItem(conversationKey(evicted.id));
       }
     }
 
     saveIndex(index);
 
     // Save full conversation data
-    try {
-      localStorage.setItem(conversationKey(conversation.id), JSON.stringify(conversation));
-    } catch (e) {
-      console.warn('Failed to save conversation to localStorage:', e);
-    }
+    tryWriteJson(
+      conversationKey(conversation.id),
+      conversation,
+      (error) => console.warn('Failed to save conversation to localStorage:', error),
+    );
   }, [loadIndex, saveIndex]);
 
   const loadConversation = useCallback((id: string): StoredConversation | null => {
-    try {
-      const raw = localStorage.getItem(conversationKey(id));
-      if (!raw) return null;
-      const parsed = JSON.parse(raw) as StoredConversation;
-      if (!parsed || typeof parsed.id !== 'string' || !parsed.sessionData) return null;
-      return parsed;
-    } catch {
-      // Corrupted — remove it
-      try { localStorage.removeItem(conversationKey(id)); } catch { /* ignore */ }
-      return null;
-    }
+    return readJson<StoredConversation | null>(conversationKey(id), null, (value): value is StoredConversation => (
+      Boolean(value && typeof value === 'object' && typeof (value as StoredConversation).id === 'string' && (value as StoredConversation).sessionData)
+    ));
   }, []);
 
   const deleteConversation = useCallback((id: string) => {
     const index = loadIndex().filter((e) => e.id !== id);
     saveIndex(index);
-    try { localStorage.removeItem(conversationKey(id)); } catch { /* ignore */ }
+    removeStorageItem(conversationKey(id));
   }, [loadIndex, saveIndex]);
 
   const deleteConversationsByCustomAgent = useCallback((customAgentId: string) => {
@@ -124,7 +105,7 @@ export function useConversationStore() {
     const keep: ConversationIndexEntry[] = [];
     for (const e of index) {
       if (e.customAgentId === customAgentId) {
-        try { localStorage.removeItem(conversationKey(e.id)); } catch { /* ignore */ }
+        removeStorageItem(conversationKey(e.id));
       } else {
         keep.push(e);
       }
