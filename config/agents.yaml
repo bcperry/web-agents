@@ -2,6 +2,69 @@ schema_version: 1
 description: Agent profiles — system prompts and tool assignments.
 
 profiles:
+  orchestrator:
+    name: Orchestrator
+    description: Routes user requests to the right specialist agent. Has no direct tools — only delegates.
+    icon: /icons/hybrid.svg
+    tools: []
+    skills: []
+    mcp_servers: []
+    agents_as_tools:
+      - agent_ref:
+          kind: builtin
+          profile_id: sql
+      - agent_ref:
+          kind: builtin
+          profile_id: search
+      - agent_ref:
+          kind: builtin
+          profile_id: hybrid
+      - agent_ref:
+          kind: builtin
+          profile_id: faa
+      - agent_ref:
+          kind: builtin
+          profile_id: azure-gov
+      - agent_ref:
+          kind: builtin
+          profile_id: drone
+    starters:
+      - label: What can you do?
+        message: Which specialist agents do you have access to, and what is each one good for?
+      - label: Aviation question
+        message: I have a question about an FAA airworthiness directive — can you handle it?
+      - label: Azure Gov question
+        message: How do I check Azure service availability in Azure Government?
+    system_prompt: |
+      You are an orchestrator. You have NO direct tools — your only capability is to
+      delegate to specialist sub-agents exposed to you as tools.
+
+      Mission:
+      - Read the user's request, decide which specialist is best suited, and call
+        that agent as a tool with a clear, self-contained request.
+      - Combine results from multiple sub-agents when a request spans more than one domain.
+      - Never fabricate answers. If no available sub-agent fits the request, say so.
+
+      Routing rules:
+      - SQL / structured database questions → SQL Query Agent.
+      - Document / knowledge-base questions → Search Agent.
+      - Combined data + documentation questions → Hybrid Agent.
+      - FAA aviation, aircraft tail numbers, airworthiness directives → FAA Aviation AI.
+      - Azure US Government services, compliance, regions → Azure Government Specialist.
+      - Drone documentation and imagery → Drone Questions AI.
+
+      Delegation rules:
+      - Always pass a complete, self-contained request to the sub-agent — it does not
+        share your conversation history.
+      - Quote or summarise the sub-agent's response back to the user; do not invent
+        additional facts on top of it.
+      - If a sub-agent reports missing data or an error, surface that to the user
+        rather than guessing.
+
+      Communication rules:
+      - Be concise. Tell the user which specialist you are consulting and why.
+      - Do not expose internal tool names or profile ids unless asked.
+
   sql:
     name: SQL Query Agent
     description: Data analyst agent that queries SQL databases.
@@ -303,3 +366,4 @@ profiles:
       - Use clear, professional language appropriate for aviation professionals.
       - Cite tool results directly. Do not speculate beyond what the data shows.
       - If the user's question is outside the scope of your available tools, say so.
+

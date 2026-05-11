@@ -24,6 +24,7 @@ export interface SessionStartResult {
   mcpResults: McpConnectionResult[];
   toolsLoaded: string[];
   skillsLoaded: string[];
+  agentsLoaded: string[];
   searchContext: boolean;
   restoredMessages: ChatMessage[];
   conversationId: string;
@@ -86,12 +87,13 @@ export async function startChatSession(
     };
   }
 
-  const { mcp_results, tools_loaded, skills_loaded, search_context, ...session } = newSession;
+  const { mcp_results, tools_loaded, skills_loaded, agents_loaded, search_context, ...session } = newSession;
   return {
     session,
     mcpResults: mcp_results ?? [],
     toolsLoaded: tools_loaded ?? [],
     skillsLoaded: skills_loaded ?? [],
+    agentsLoaded: agents_loaded ?? [],
     searchContext: search_context ?? false,
     restoredMessages: history ? extractMessagesFromSessionData(history.sessionData) : [],
     conversationId: history?.id ?? newSession.session_id,
@@ -114,12 +116,16 @@ function buildSessionRequest(
     return {
       profile_id: 'custom',
       custom_name: profile.customAgent.name,
+      custom_id: profile.customAgent.id,
       custom_prompt: profile.customAgent.systemPrompt,
       custom_tools: profile.customAgent.tools,
       custom_search_context: profile.customAgent.useSearchContext,
       ...(profile.customAgent.temperature !== undefined ? { custom_temperature: profile.customAgent.temperature } : {}),
       ...(profile.customAgent.skills.length > 0 ? { custom_skills: profile.customAgent.skills } : {}),
       ...(profile.customAgent.mcpServers.length > 0 ? { mcp_servers: profile.customAgent.mcpServers } : {}),
+      ...(profile.customAgent.agentsAsTools && profile.customAgent.agentsAsTools.length > 0
+        ? { agentsAsTools: profile.customAgent.agentsAsTools.map((entry) => ({ agentRef: entry.agentRef })) }
+        : {}),
       ...(history?.sessionData ? { history: history.sessionData } : {}),
       ...userProfilePayload,
     };
@@ -136,6 +142,9 @@ function buildSessionRequest(
         ...(profile.builtInOverride.temperature !== undefined ? { custom_temperature: profile.builtInOverride.temperature } : {}),
         ...(profile.builtInOverride.skills.length > 0 ? { custom_skills: profile.builtInOverride.skills } : {}),
         ...(profile.builtInOverride.mcpServers.length > 0 ? { mcp_servers: profile.builtInOverride.mcpServers } : {}),
+        ...(profile.builtInOverride.agentsAsTools && profile.builtInOverride.agentsAsTools.length > 0
+          ? { agentsAsTools: profile.builtInOverride.agentsAsTools.map((entry) => ({ agentRef: entry.agentRef })) }
+          : {}),
         override_updated_at: profile.builtInOverride.updatedAt,
       },
       ...(history?.sessionData ? { history: history.sessionData } : {}),

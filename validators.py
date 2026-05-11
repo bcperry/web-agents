@@ -1,7 +1,8 @@
 """Validation helpers for request, tool, skill, and image handling."""
 
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Callable, Optional
 
 from fastapi import HTTPException, UploadFile
 
@@ -133,10 +134,207 @@ def validate_http_mcp_servers(raw_servers: object, *, override: bool) -> list[di
 	return raw_servers
 
 
+# ---------------------------------------------------------------------------
+# Sub-agent tool reference validation (feature 008-agents-as-tools)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SubAgentRefValidationError:
+	"""A single validation failure for an agents_as_tools entry.
+
+	Shape mirrors the wire ``details`` array in
+	specs/008-agents-as-tools/contracts/api-changes.md.
+	"""
+	field: str
+	code: str
+	message: str
+
+	def to_dict(self) -> dict[str, str]:
+		return {"field": self.field, "code": self.code, "message": self.message}
+
+
+def _agent_ref_target_id(agent_ref: Any) -> tuple[str, str]:
+	"""Return ``(kind, target_id)`` for an AgentRef-like object or mapping.
+
+	Accepts both the dataclass form (``BuiltinAgentRef`` / ``CustomAgentRef``)
+	and the raw payload mapping the API receives. Returns ``("", "")`` for
+	unrecognised shapes so the caller can surface ``unresolved_agent_ref``.
+	"""
+	if agent_ref is None:
+		return "", ""
+	# Dataclass instances
+	kind = getattr(agent_ref, "kind", None)
+	if kind == "builtin":
+		return "builtin", str(getattr(agent_ref, "profile_id", "") or "")
+	if kind == "custom":
+		return "custom", str(getattr(agent_ref, "custom_agent_id", "") or "")
+	# Raw mapping (frontend payload)
+	if isinstance(agent_ref, dict):
+		raw_kind = agent_ref.get("kind")
+		if raw_kind == "builtin":
+			return "builtin", str(agent_ref.get("profile_id") or agent_ref.get("profileId") or "")
+		if raw_kind == "custom":
+			return "custom", str(
+				agent_ref.get("custom_agent_id") or agent_ref.get("customAgentId") or ""
+			)
+	return "", ""
+
+
+def validate_sub_agent_tool_refs(
+	parent_id: str,
+	refs: list[Any],
+	resolve_target: Callable[[str, str], Optional[Any]],
+) -> list[SubAgentRefValidationError]:
+	"""Validate an ``agents_as_tools`` collection.
+
+	Parameters
+	----------
+	parent_id:
+		Stable identifier of the agent being saved/loaded. Used for V2
+		(self-reference) and V3 (direct cycle) checks.
+	refs:
+		The list of sub-agent tool references on the parent. Each entry may
+		be a ``SubAgentToolRef`` dataclass or a raw mapping with an
+		``agent_ref`` key — both shapes are accepted.
+	resolve_target:
+		Callable ``(kind, target_id) -> target_definition_or_None``.
+
+		The returned target definition is used both to detect
+		``unresolved_agent_ref`` (when None) and to inspect the target's own
+		``agents_as_tools`` for direct A↔B cycle detection. The callback is
+		expected to return either a dict-like object with an
+		``agents_as_tools`` (or ``agentsAsTools``) field, or any object that
+		exposes that attribute. Anything else is treated as "no sub-agents".
+
+	Returns a list of ``SubAgentRefValidationError`` — empty on success.
+	The caller is responsible for converting to an HTTPException when used
+	in an API handler.
+	"""
+	errors: list[SubAgentRefValidationError] = []
+	seen_targets: set[tuple[str, str]] = set()
+
+	for index, raw in enumerate(refs):
+		field_prefix = f"agentsAsTools[{index}]"
+
+		# Extract agent_ref (accept dataclass or mapping)
+		if hasattr(raw, "agent_ref"):
+			agent_ref = raw.agent_ref
+		elif isinstance(raw, dict):
+			agent_ref = raw.get("agent_ref") or raw.get("agentRef")
+		else:
+			errors.append(SubAgentRefValidationError(
+				field=field_prefix,
+				code="unresolved_agent_ref",
+				message="Sub-agent reference must include an agent_ref.",
+			))
+			continue
+
+		kind, target_id = _agent_ref_target_id(agent_ref)
+		if not kind or not target_id:
+			errors.append(SubAgentRefValidationError(
+				field=f"{field_prefix}.agentRef",
+				code="unresolved_agent_ref",
+				message="Sub-agent reference is missing a recognised target identifier.",
+			))
+			continue
+
+		# V5: definition_id_mismatch (custom only)
+		if kind == "custom":
+			definition = None
+			if isinstance(agent_ref, dict):
+				definition = agent_ref.get("definition")
+			else:
+				definition = getattr(agent_ref, "definition", None)
+			if isinstance(definition, dict):
+				def_id = definition.get("id")
+				if def_id is not None and str(def_id) != target_id:
+					errors.append(SubAgentRefValidationError(
+						field=f"{field_prefix}.agentRef.definition.id",
+						code="definition_id_mismatch",
+						message=(
+							f"Inlined custom-agent definition id {def_id!r} "
+							f"does not match customAgentId {target_id!r}."
+						),
+					))
+					continue
+
+		# V2: self_reference
+		if parent_id and target_id == parent_id:
+			errors.append(SubAgentRefValidationError(
+				field=f"{field_prefix}.agentRef",
+				code="self_reference",
+				message="An agent cannot reference itself as a tool.",
+			))
+			continue
+
+		# V4: duplicate_target
+		key = (kind, target_id)
+		if key in seen_targets:
+			errors.append(SubAgentRefValidationError(
+				field=f"{field_prefix}.agentRef",
+				code="duplicate_target",
+				message=f"Sub-agent {target_id!r} is referenced more than once.",
+			))
+			continue
+		seen_targets.add(key)
+
+		# Resolve target for V1 + V3
+		target = resolve_target(kind, target_id)
+		if target is None:
+			errors.append(SubAgentRefValidationError(
+				field=f"{field_prefix}.agentRef",
+				code="unresolved_agent_ref",
+				message=f"Sub-agent {target_id!r} could not be resolved.",
+			))
+			continue
+
+		# V3: direct_cycle — does target reference parent_id back?
+		if parent_id:
+			target_refs = _extract_target_subagent_refs(target)
+			for target_ref in target_refs:
+				t_kind, t_id = _agent_ref_target_id(target_ref)
+				if t_id == parent_id:
+					errors.append(SubAgentRefValidationError(
+						field=f"{field_prefix}.agentRef",
+						code="direct_cycle",
+						message=(
+							f"Sub-agent {target_id!r} already references this "
+							"agent as a tool — direct cycle is not allowed."
+						),
+					))
+					break
+
+	return errors
+
+
+def _extract_target_subagent_refs(target: Any) -> list[Any]:
+	"""Pull a list of agent_ref-like objects from a target definition.
+
+	The target may be a Python AgentProfile-like object, a built-in YAML
+	entry mapping, or a custom-agent payload (snake_case or camelCase).
+	"""
+	# Dataclass / object with attribute
+	attr = getattr(target, "agents_as_tools", None)
+	if attr is None and isinstance(target, dict):
+		attr = target.get("agents_as_tools") or target.get("agentsAsTools")
+	if not isinstance(attr, list):
+		return []
+	# Each entry may itself have agent_ref / agentRef
+	out: list[Any] = []
+	for entry in attr:
+		if hasattr(entry, "agent_ref"):
+			out.append(entry.agent_ref)
+		elif isinstance(entry, dict):
+			out.append(entry.get("agent_ref") or entry.get("agentRef"))
+	return out
+
+
 __all__ = [
 	"ALLOWED_IMAGE_MIMES",
 	"MAX_IMAGE_SIZE_BYTES",
 	"MAX_IMAGES_PER_MESSAGE",
+	"SubAgentRefValidationError",
 	"available_skill_names",
 	"filter_known_skill_names",
 	"known_tool_names_from_profiles",
@@ -144,6 +342,7 @@ __all__ = [
 	"validate_http_mcp_servers",
 	"validate_image_magic_bytes",
 	"validate_prompt",
+	"validate_sub_agent_tool_refs",
 	"validate_temperature",
 	"validate_tool_names",
 	"validate_uploaded_images",

@@ -6,7 +6,7 @@ import yaml
 
 
 AGENTS_YAML_PATH = Path(__file__).resolve().parent.parent / "config" / "agents.yaml"
-ALLOWED_PROFILES = {"sql", "search", "hybrid", "faa", "azure-gov", "drone"}
+ALLOWED_PROFILES = {"sql", "search", "hybrid", "faa", "azure-gov", "drone", "orchestrator"}
 REQUIRED_PROFILE_FIELDS = {"name", "description", "tools", "system_prompt"}
 
 
@@ -81,3 +81,82 @@ def test_optional_temperature_field_is_valid() -> None:
             assert 0.0 <= float(temp) <= 2.0, (
                 f"profiles.{profile_key}.temperature must be between 0.0 and 2.0, got {temp}"
             )
+
+
+# ---------------------------------------------------------------------------
+# T010 — agents_as_tools field round-trip (feature 008)
+# ---------------------------------------------------------------------------
+
+
+def test_existing_profiles_default_agents_as_tools_to_empty_list() -> None:
+    """Profiles without agents_as_tools must load with an empty list (FR-004)."""
+    from prompt_config import load_agent_profile
+
+    profile = load_agent_profile("sql")
+    assert profile.agents_as_tools == []
+
+
+def test_loads_agents_as_tools_from_yaml(tmp_path) -> None:
+    """A YAML profile with an agents_as_tools entry round-trips to AgentProfile."""
+    from prompt_config import BuiltinAgentRef, SubAgentToolRef, load_agent_profile
+
+    yaml_text = """
+schema_version: 1
+description: test
+profiles:
+  parent:
+    name: Parent
+    description: parent agent
+    tools: []
+    system_prompt: |
+      You are the parent.
+    agents_as_tools:
+      - agent_ref:
+          kind: builtin
+          profile_id: child
+  child:
+    name: Child
+    description: child agent
+    tools: []
+    system_prompt: |
+      You are the child.
+"""
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "agents.yaml").write_text(yaml_text, encoding="utf-8")
+
+    profile = load_agent_profile("parent", workspace_root=tmp_path)
+    assert len(profile.agents_as_tools) == 1
+    ref = profile.agents_as_tools[0]
+    assert isinstance(ref, SubAgentToolRef)
+    assert isinstance(ref.agent_ref, BuiltinAgentRef)
+    assert ref.agent_ref.profile_id == "child"
+
+
+def test_invalid_agent_ref_kind_raises(tmp_path) -> None:
+    """Unknown agent_ref.kind must surface as an error rather than silently dropping."""
+    import pytest
+
+    from prompt_config import load_agent_profile
+
+    yaml_text = """
+schema_version: 1
+description: test
+profiles:
+  parent:
+    name: Parent
+    description: parent
+    tools: []
+    system_prompt: |
+      You are the parent.
+    agents_as_tools:
+      - agent_ref:
+          kind: bogus
+          profile_id: x
+"""
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "agents.yaml").write_text(yaml_text, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="agent_ref.kind"):
+        load_agent_profile("parent", workspace_root=tmp_path)

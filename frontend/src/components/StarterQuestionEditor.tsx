@@ -20,8 +20,8 @@ export function StarterQuestionEditor({
   onMessageChange,
 }: StarterQuestionEditorProps) {
   return (
-    <div className="agent-builder-label">
-      STARTER QUESTIONS
+    <div className="agent-builder-section">
+      <h3 className="agent-builder-section-title">STARTER QUESTIONS</h3>
       {starters.length > 0 && (
         <div className="agent-builder-starters-list">
           {starters.map((starter, index) => (

@@ -1,6 +1,7 @@
 import type {
   AgentProfile,
   BuiltInAgentDefinition,
+  CustomAgentDefinition,
   McpConnectionResult,
   McpServerEntry,
   SessionCreateResponse,
@@ -140,18 +141,31 @@ export interface SessionProfileOverridePayload {
   custom_temperature?: number;
   custom_skills?: string[];
   mcp_servers?: McpServerEntry[];
+  agentsAsTools?: SubAgentToolWirePayload[];
   override_updated_at: string;
+}
+
+/**
+ * Wire format for a single sub-agent tool reference. Backend recomputes
+ * `toolName`/`toolDescription`/`argDescription` so we never send those.
+ */
+export interface SubAgentToolWirePayload {
+  agentRef:
+    | { kind: 'builtin'; profileId: string }
+    | { kind: 'custom'; customAgentId: string; definition: CustomAgentDefinition };
 }
 
 export interface SessionRequestPayload {
   profile_id: string;
   custom_name?: string;
+  custom_id?: string;
   custom_prompt?: string;
   custom_tools?: string[];
   custom_search_context?: boolean;
   custom_temperature?: number;
   custom_skills?: string[];
   mcp_servers?: McpServerEntry[];
+  agentsAsTools?: SubAgentToolWirePayload[];
   profile_override?: SessionProfileOverridePayload;
   history?: Record<string, unknown>;
   user_profile?: SessionUserProfilePayload;

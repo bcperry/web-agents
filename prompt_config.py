@@ -1,8 +1,43 @@
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional, Union
 
 import yaml
+
+
+@dataclass(frozen=True)
+class BuiltinAgentRef:
+    """Reference to a built-in agent profile defined in agents.yaml."""
+    profile_id: str
+    kind: Literal["builtin"] = "builtin"
+
+
+@dataclass(frozen=True)
+class CustomAgentRef:
+    """Reference to a custom agent.
+
+    The full ``definition`` payload is inlined by the frontend at request
+    time so the backend can build the sub-agent without needing a custom-
+    agent persistence layer. ``definition["id"]`` MUST equal
+    ``custom_agent_id`` (V5 in contracts/validation-rules.md).
+    """
+    custom_agent_id: str
+    definition: dict[str, Any]
+    kind: Literal["custom"] = "custom"
+
+
+AgentRef = Union[BuiltinAgentRef, CustomAgentRef]
+
+
+@dataclass(frozen=True)
+class SubAgentToolRef:
+    """A reference from a parent agent to a sub-agent exposed as a tool.
+
+    Only ``agent_ref`` is stored. The LLM-visible ``tool_name`` /
+    ``tool_description`` / ``arg_description`` are derived from the target
+    agent at runtime via ``sub_agent_tools.derive_sub_agent_tool_surface``.
+    """
+    agent_ref: AgentRef
 
 
 @dataclass(frozen=True)
@@ -16,6 +51,54 @@ class AgentProfile:
     temperature: Optional[float] = None
     skills: list[str] = field(default_factory=list)
     search_context: bool = False
+    agents_as_tools: list[SubAgentToolRef] = field(default_factory=list)
+
+
+def _parse_agent_ref(raw: Any) -> AgentRef:
+    """Parse a raw ``agent_ref`` mapping into a tagged ``AgentRef``.
+
+    YAML supports ``kind: builtin`` only (custom agents live in frontend
+    localStorage and cannot be referenced from agents.yaml).
+    """
+    if not isinstance(raw, dict):
+        raise ValueError("agent_ref must be a mapping")
+    kind = raw.get("kind")
+    if kind == "builtin":
+        profile_id = raw.get("profile_id")
+        if not isinstance(profile_id, str) or not profile_id.strip():
+            raise ValueError("agent_ref.profile_id is required for kind=builtin")
+        return BuiltinAgentRef(profile_id=profile_id.strip())
+    if kind == "custom":
+        custom_agent_id = raw.get("custom_agent_id")
+        definition = raw.get("definition")
+        if not isinstance(custom_agent_id, str) or not custom_agent_id.strip():
+            raise ValueError("agent_ref.custom_agent_id is required for kind=custom")
+        if not isinstance(definition, dict):
+            raise ValueError("agent_ref.definition must be a mapping for kind=custom")
+        return CustomAgentRef(custom_agent_id=custom_agent_id.strip(), definition=definition)
+    raise ValueError(f"agent_ref.kind must be 'builtin' or 'custom', got {kind!r}")
+
+
+def _parse_sub_agent_tool_refs(raw: Any) -> list[SubAgentToolRef]:
+    """Parse a raw ``agents_as_tools`` list into ``SubAgentToolRef`` objects.
+
+    Returns an empty list if ``raw`` is missing or empty (FR-004 backward
+    compatibility). Raises ``ValueError`` on malformed input so loading
+    fails loudly rather than silently dropping configuration.
+    """
+    if not raw:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError("agents_as_tools must be a list")
+    refs: list[SubAgentToolRef] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            raise ValueError("Each agents_as_tools entry must be a mapping")
+        agent_ref_raw = entry.get("agent_ref")
+        if agent_ref_raw is None:
+            raise ValueError("Each agents_as_tools entry requires 'agent_ref'")
+        refs.append(SubAgentToolRef(agent_ref=_parse_agent_ref(agent_ref_raw)))
+    return refs
 
 
 def _normalize_profile_name(name: Optional[str]) -> str:
@@ -77,9 +160,14 @@ def load_agent_profile(
 ) -> AgentProfile:
     """Load a single agent profile from agents.yaml."""
     agents_doc = load_agents_yaml(workspace_root)
-    logical_profile = resolve_logical_profile(chat_profile, workspace_root=workspace_root)
-
     profiles = agents_doc.get("profiles") or {}
+    # Accept either a profile key (e.g. "sql") or a display name
+    # (e.g. "SQL Query Agent"). Direct id lookup wins.
+    if isinstance(chat_profile, str) and chat_profile in profiles:
+        logical_profile = chat_profile
+    else:
+        logical_profile = resolve_logical_profile(chat_profile, workspace_root=workspace_root)
+
     if logical_profile not in profiles:
         raise ValueError(f"No agent profile found for '{logical_profile}' in agents.yaml")
 
@@ -109,4 +197,5 @@ def load_agent_profile(
         temperature=temperature,
         skills=[str(s) for s in raw_skills],
         search_context=bool(entry.get("search_context", False)),
+        agents_as_tools=_parse_sub_agent_tool_refs(entry.get("agents_as_tools")),
     )

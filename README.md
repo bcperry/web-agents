@@ -6,6 +6,7 @@ AI agent framework using [agent-framework](https://pypi.org/project/agent-framew
 
 - AI agent with multiple configurable profiles: SQL queries, Azure AI Search, Hybrid
 - Custom agent builder for creating new profiles on the fly
+- Agents-as-tools: any agent can declare other agents (built-in or custom) as tools it can delegate to (see [specs/008-agents-as-tools/](specs/008-agents-as-tools/spec.md))
 - SSE-streamed chat responses with tool invocation visibility
 - Image upload support (JPEG, PNG, GIF, WebP)
 - Azure AD authentication with local dev bypass

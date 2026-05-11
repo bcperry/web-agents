@@ -1465,6 +1465,19 @@ body {
   margin-bottom: 12px;
 }
 
+/* Wrapper applied to every subsection inside the agent edit form so that
+   subheaders share spacing rules in addition to typography. */
+.agent-builder-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.agent-builder-section > .agent-builder-section-title {
+  margin-bottom: 8px;
+}
+
 .agent-builder-section-toggle {
   width: 100%;
   display: flex;

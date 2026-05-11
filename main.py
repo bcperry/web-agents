@@ -249,6 +249,7 @@ class BuiltInProfileDefinitionResponse(BaseModel):
     useSearchContext: bool
     starters: list[dict[str, str]]
     temperature: float | None = None
+    agentsAsTools: list[dict[str, Any]] = []
     source: str = "builtin"
 
 
@@ -496,6 +497,39 @@ def _safe_mcp_server_definitions(raw_servers: Any) -> list[dict[str, Any]]:
     return safe_servers
 
 
+def _serialize_agents_as_tools(raw: Any) -> list[dict[str, Any]]:
+    """Convert YAML-shaped agents_as_tools entries to camelCase wire format.
+
+    Always returns a list (empty when no entries) so the response field is
+    consistently present.\
+    """
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        ref = entry.get("agent_ref") or entry.get("agentRef")
+        if not isinstance(ref, dict):
+            continue
+        kind = ref.get("kind")
+        if kind == "builtin":
+            profile_id = ref.get("profile_id") or ref.get("profileId")
+            if not profile_id:
+                continue
+            out.append({"agentRef": {"kind": "builtin", "profileId": str(profile_id)}})
+        elif kind == "custom":
+            custom_id = ref.get("custom_agent_id") or ref.get("customAgentId")
+            definition = ref.get("definition")
+            if not custom_id:
+                continue
+            wire_ref: dict[str, Any] = {"kind": "custom", "customAgentId": str(custom_id)}
+            if isinstance(definition, dict):
+                wire_ref["definition"] = definition
+            out.append({"agentRef": wire_ref})
+    return out
+
+
 def _get_builtin_profile_definition(profile_id: str) -> BuiltInProfileDefinitionResponse:
     agents_doc = load_agents_yaml()
     profiles_data = agents_doc.get("profiles") or {}
@@ -523,6 +557,7 @@ def _get_builtin_profile_definition(profile_id: str) -> BuiltInProfileDefinition
         useSearchContext=bool(entry.get("search_context", False)),
         starters=_starter_definitions(entry.get("starters")),
         temperature=temperature,
+        agentsAsTools=_serialize_agents_as_tools(entry.get("agents_as_tools")),
     )
 
 

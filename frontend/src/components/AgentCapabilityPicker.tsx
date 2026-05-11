@@ -22,8 +22,8 @@ export function AgentCapabilityPicker({
   onToggle,
 }: AgentCapabilityPickerProps) {
   return (
-    <div className="agent-builder-label">
-      {title}
+    <div className="agent-builder-section">
+      <h3 className="agent-builder-section-title">{title}</h3>
       <span className="agent-builder-tool-desc" style={{ display: 'block', marginBottom: '0.5rem' }}>
         {description}
       </span>

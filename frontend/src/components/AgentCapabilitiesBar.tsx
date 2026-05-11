@@ -3,6 +3,7 @@ import type { McpConnectionResult } from '../types/api';
 interface Props {
   toolsLoaded: string[];
   skillsLoaded: string[];
+  agentsLoaded?: string[];
   searchContext: boolean;
   mcpResults: McpConnectionResult[];
   isCustomized?: boolean;
@@ -11,16 +12,18 @@ interface Props {
 export function AgentCapabilitiesBar({
   toolsLoaded,
   skillsLoaded,
+  agentsLoaded = [],
   searchContext,
   mcpResults,
   isCustomized = false,
 }: Props) {
   const hasTools = toolsLoaded.length > 0;
   const hasSkills = skillsLoaded.length > 0;
+  const hasAgents = agentsLoaded.length > 0;
   const hasMcp = mcpResults.length > 0;
   const hasSearch = searchContext;
 
-  if (!hasTools && !hasSkills && !hasMcp && !hasSearch && !isCustomized) return null;
+  if (!hasTools && !hasSkills && !hasAgents && !hasMcp && !hasSearch && !isCustomized) return null;
 
   return (
     <div className="capabilities-bar">
@@ -48,6 +51,16 @@ export function AgentCapabilitiesBar({
           <div className="capabilities-items">
             {skillsLoaded.map((name) => (
               <span key={name} className="capabilities-pill capabilities-pill--skill">{name}</span>
+            ))}
+          </div>
+        </div>
+      )}
+      {hasAgents && (
+        <div className="capabilities-section">
+          <span className="capabilities-label">AGENTS</span>
+          <div className="capabilities-items">
+            {agentsLoaded.map((name) => (
+              <span key={name} className="capabilities-pill capabilities-pill--tool">{name}</span>
             ))}
           </div>
         </div>
