@@ -49,6 +49,7 @@ export function ChatPage({ onOpenAdmin, customAgents, builtInOverrides }: ChatPa
     mcpResults,
     toolsLoaded,
     skillsLoaded,
+    agentsLoaded,
     searchContext,
     error,
     saveCounter,
@@ -316,10 +317,11 @@ export function ChatPage({ onOpenAdmin, customAgents, builtInOverrides }: ChatPa
           </div>
         </header>
 
-        {(toolsLoaded.length > 0 || skillsLoaded.length > 0 || searchContext || mcpResults.length > 0 || selectedProfile?.isCustomized) && (
+        {(toolsLoaded.length > 0 || skillsLoaded.length > 0 || agentsLoaded.length > 0 || searchContext || mcpResults.length > 0 || selectedProfile?.isCustomized) && (
           <AgentCapabilitiesBar
             toolsLoaded={toolsLoaded}
             skillsLoaded={skillsLoaded}
+            agentsLoaded={agentsLoaded}
             searchContext={searchContext}
             mcpResults={mcpResults}
             isCustomized={selectedProfile?.isCustomized}

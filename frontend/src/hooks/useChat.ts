@@ -25,6 +25,7 @@ interface ChatState {
   mcpResults: McpConnectionResult[];
   toolsLoaded: string[];
   skillsLoaded: string[];
+  agentsLoaded: string[];
   searchContext: boolean;
   error: string | null;
   conversationId: string | null;
@@ -47,6 +48,7 @@ export function useChat(): ChatState {
   const [mcpResults, setMcpResults] = useState<McpConnectionResult[]>([]);
   const [toolsLoaded, setToolsLoaded] = useState<string[]>([]);
   const [skillsLoaded, setSkillsLoaded] = useState<string[]>([]);
+  const [agentsLoaded, setAgentsLoaded] = useState<string[]>([]);
   const [searchContext, setSearchContext] = useState(false);
 
   // Accumulator refs for building the current assistant message during streaming
@@ -84,6 +86,7 @@ export function useChat(): ChatState {
       setMcpResults(next.mcpResults);
       setToolsLoaded(next.toolsLoaded);
       setSkillsLoaded(next.skillsLoaded);
+      setAgentsLoaded(next.agentsLoaded);
       setSearchContext(next.searchContext);
       setMessages(next.restoredMessages);
       setSessionUsage(emptyUsage());
@@ -112,6 +115,7 @@ export function useChat(): ChatState {
     setMcpResults([]);
     setToolsLoaded([]);
     setSkillsLoaded([]);
+    setAgentsLoaded([]);
     setSearchContext(false);
     setConversationId(null);
     conversationIdRef.current = null;
@@ -302,6 +306,7 @@ export function useChat(): ChatState {
     mcpResults,
     toolsLoaded,
     skillsLoaded,
+    agentsLoaded,
     searchContext,
     error,
     conversationId,

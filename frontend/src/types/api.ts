@@ -37,6 +37,39 @@ export interface McpConnectionResult {
   error?: string;
 }
 
+// Agents-as-Tools (feature 008) ---------------------------------------------
+//
+// Tagged union — `kind` discriminates built-in (references a YAML profile by
+// id) from custom (inlines the full local CustomAgentDefinition because the
+// backend has no custom-agent persistence layer).
+export interface BuiltinAgentRefWire {
+  kind: 'builtin';
+  profileId: string;
+}
+
+export interface CustomAgentRefWire {
+  kind: 'custom';
+  customAgentId: string;
+  /** Full inlined custom-agent definition; required on the wire. */
+  definition: CustomAgentDefinition;
+}
+
+export type AgentRef = BuiltinAgentRefWire | CustomAgentRefWire;
+
+/**
+ * Reference from one agent to another agent that should be exposed as a tool.
+ * `toolName` / `toolDescription` / `argDescription` are SERVER-DERIVED and
+ * MUST NOT be sent on the wire — the backend recomputes them on every load.
+ */
+export interface SubAgentToolRef {
+  agentRef: AgentRef;
+  /** Server-supplied (read-only); slugified from the target agent's name. */
+  toolName?: string;
+  /** Server-supplied (read-only); copied from the target agent's description. */
+  toolDescription?: string;
+  argDescription?: string;
+}
+
 export interface CustomAgentDefinition {
   id: string;
   name: string;
@@ -49,6 +82,7 @@ export interface CustomAgentDefinition {
   icon: string;
   starters: StarterQuestion[];
   temperature?: number;
+  agentsAsTools?: SubAgentToolRef[];
   createdAt: string;
   updatedAt: string;
 }
@@ -64,6 +98,7 @@ export interface AgentCustomizationOverride {
   icon: string;
   starters: StarterQuestion[];
   temperature?: number;
+  agentsAsTools?: SubAgentToolRef[];
   source: 'builtin-override';
   createdAt: string;
   updatedAt: string;
@@ -83,6 +118,7 @@ export interface BuiltInAgentDefinition {
   icon: string;
   starters: StarterQuestion[];
   temperature?: number;
+  agentsAsTools?: SubAgentToolRef[];
   source: 'builtin';
 }
 
@@ -128,6 +164,7 @@ export interface SessionCreateResponse {
   profile_name: string;
   tools_loaded?: string[];
   skills_loaded?: string[];
+  agents_loaded?: string[];
   search_context?: boolean;
   mcp_results?: McpConnectionResult[];
   used_profile_override?: boolean;

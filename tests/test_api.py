@@ -464,3 +464,164 @@ def test_custom_session_rejects_sql_when_database_is_unconfigured(client, monkey
 
     assert resp.status_code == 400
     assert resp.json()["detail"] == "Unknown tools: sql_read_query"
+
+
+# ---------------------------------------------------------------------------
+# T028 — agents_as_tools wire format & validation through /api/sessions
+# ---------------------------------------------------------------------------
+
+
+def _stub_runtime(monkeypatch):
+    """Patch session_orchestration to bypass real LLM client + MCP init."""
+    import session_orchestration
+
+    captured: dict[str, object] = {}
+
+    class _DummySession:
+        def to_dict(self):
+            return {"items": []}
+
+    def fake_create_chat_runtime(**kwargs):
+        captured["runtime"] = kwargs
+        return SimpleNamespace(
+            agent=object(),
+            session=_DummySession(),
+            tools=kwargs.get("function_tools", []),
+            prompt_manifest={},
+            prompt_logical_profile="custom",
+            sub_agent_tool_names=[],
+        )
+
+    async def fake_connect_mcp_servers(configs, *, user_token=None):
+        return [], []
+
+    monkeypatch.setattr(session_orchestration, "create_chat_runtime", fake_create_chat_runtime)
+    monkeypatch.setattr(session_orchestration, "connect_mcp_servers", fake_connect_mcp_servers)
+    return captured
+
+
+def test_custom_session_with_valid_custom_sub_agent_succeeds(client, monkeypatch):
+    captured = _stub_runtime(monkeypatch)
+
+    payload = {
+        "profile_id": "custom",
+        "custom_name": "Parent",
+        "custom_id": "parent-1",
+        "custom_prompt": "Coordinate.",
+        "custom_tools": [],
+        "custom_search_context": False,
+        "agentsAsTools": [
+            {
+                "agentRef": {
+                    "kind": "custom",
+                    "customAgentId": "child-1",
+                    "definition": {
+                        "id": "child-1",
+                        "name": "Child Agent",
+                        "description": "Child does things.",
+                        "systemPrompt": "You are the child.",
+                    },
+                }
+            }
+        ],
+    }
+    resp = client.post("/api/sessions", json=payload)
+    assert resp.status_code == 201, resp.json()
+    runtime_kwargs = captured["runtime"]
+    refs = runtime_kwargs["agents_as_tools"]
+    assert len(refs) == 1
+    assert refs[0].agent_ref.kind == "custom"
+    assert refs[0].agent_ref.custom_agent_id == "child-1"
+
+
+def test_custom_session_self_reference_returns_400(client, monkeypatch):
+    _stub_runtime(monkeypatch)
+    payload = {
+        "profile_id": "custom",
+        "custom_name": "Parent",
+        "custom_id": "parent-1",
+        "custom_prompt": "x",
+        "agentsAsTools": [
+            {
+                "agentRef": {
+                    "kind": "custom",
+                    "customAgentId": "parent-1",
+                    "definition": {
+                        "id": "parent-1",
+                        "name": "Parent",
+                        "systemPrompt": "x",
+                    },
+                }
+            }
+        ],
+    }
+    resp = client.post("/api/sessions", json=payload)
+    assert resp.status_code == 400
+    detail = resp.json()["detail"]
+    codes = {e["code"] for e in detail["errors"]}
+    assert "self_reference" in codes
+
+
+def test_custom_session_duplicate_target_returns_400(client, monkeypatch):
+    _stub_runtime(monkeypatch)
+    dup = {
+        "agentRef": {
+            "kind": "custom",
+            "customAgentId": "child",
+            "definition": {"id": "child", "name": "Child", "systemPrompt": "x"},
+        }
+    }
+    resp = client.post(
+        "/api/sessions",
+        json={
+            "profile_id": "custom",
+            "custom_name": "Parent",
+            "custom_prompt": "x",
+            "agentsAsTools": [dup, dup],
+        },
+    )
+    assert resp.status_code == 400
+    codes = {e["code"] for e in resp.json()["detail"]["errors"]}
+    assert "duplicate_target" in codes
+
+
+def test_custom_session_definition_id_mismatch_returns_400(client, monkeypatch):
+    _stub_runtime(monkeypatch)
+    resp = client.post(
+        "/api/sessions",
+        json={
+            "profile_id": "custom",
+            "custom_name": "Parent",
+            "custom_prompt": "x",
+            "agentsAsTools": [
+                {
+                    "agentRef": {
+                        "kind": "custom",
+                        "customAgentId": "child-1",
+                        "definition": {
+                            "id": "child-mismatch",
+                            "name": "Child",
+                            "systemPrompt": "x",
+                        },
+                    }
+                }
+            ],
+        },
+    )
+    assert resp.status_code == 400
+    codes = {e["code"] for e in resp.json()["detail"]["errors"]}
+    assert "definition_id_mismatch" in codes
+
+
+def test_builtin_profile_definition_response_includes_agents_as_tools_field(client):
+    """The /definition endpoint MUST always include the new field."""
+    # Use the first available built-in profile id.
+    profiles_resp = client.get("/api/profiles")
+    assert profiles_resp.status_code == 200
+    profile_ids = [p["id"] for p in profiles_resp.json()["profiles"] if not p.get("isCustom")]
+    assert profile_ids, "Expected at least one built-in profile in test fixtures"
+    resp = client.get(f"/api/profiles/{profile_ids[0]}/definition")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "agentsAsTools" in data
+    assert isinstance(data["agentsAsTools"], list)

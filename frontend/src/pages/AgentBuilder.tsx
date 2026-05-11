@@ -1,17 +1,21 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import type {
   AgentCustomizationOverride,
   AgentProfile,
+  AgentRef,
   ToolInfo,
   CustomAgentDefinition,
   StandardAgentCandidate,
+  SubAgentToolRef,
 } from '../types/api';
 import { fetchBuiltInProfileDefinition, fetchProfiles, fetchSkills, fetchTools } from '../api/client';
 import { generateStandardAgentCandidate } from '../utils/standardAgentCandidate';
 import { AgentCapabilityPicker } from '../components/AgentCapabilityPicker';
+import { AgentAsToolPicker, type AgentToolOption } from '../components/AgentAsToolPicker';
 import { StarterQuestionEditor } from '../components/StarterQuestionEditor';
 import { useAgentMcpEditor } from '../hooks/useAgentMcpEditor';
 import { prepareBuiltInOverride, prepareCustomAgent, useAgentBuilderForm } from '../hooks/useAgentBuilderForm';
+import { validateSubAgentTools, type ResolvedAgentTarget } from '../utils/agentToolValidation';
 
 interface AgentBuilderProps {
   agents: CustomAgentDefinition[];
@@ -120,6 +124,7 @@ export function AgentBuilder({
       icon: agent.icon,
       starters: [...agent.starters],
       temperature: agent.temperature !== undefined ? String(agent.temperature) : '',
+      agentsAsTools: [...(agent.agentsAsTools || [])],
     });
   };
 
@@ -144,6 +149,7 @@ export function AgentBuilder({
         icon: source.icon,
         starters: [...source.starters],
         temperature: source.temperature !== undefined ? String(source.temperature) : '',
+        agentsAsTools: [...((source.agentsAsTools as SubAgentToolRef[] | undefined) || (definition.agentsAsTools || []))],
       });
     } catch (err) {
       console.error('Failed to load built-in agent definition:', err);
@@ -185,8 +191,57 @@ export function AgentBuilder({
     }));
   };
 
+  // ---- Agents-as-Tools picker support ------------------------------------
+  // The current agent's id (built-in profile id, custom agent id, or '' when
+  // creating a brand-new custom agent — empty parentId disables self-ref check).
+  const parentAgentId = editingBuiltInDefinition?.id ?? editingId ?? '';
+
+  const availableAgentOptions = useMemo<AgentToolOption[]>(() => {
+    const builtinOptions: AgentToolOption[] = builtInProfiles.map((profile) => ({
+      id: profile.id,
+      kind: 'builtin',
+      name: profile.name,
+      description: profile.description || '',
+    }));
+    const customOptions: AgentToolOption[] = agents.map((agent) => ({
+      id: agent.id,
+      kind: 'custom',
+      name: agent.name,
+      description: agent.description || '',
+      definition: agent,
+    }));
+    return [...builtinOptions, ...customOptions];
+  }, [agents, builtInProfiles]);
+
+  const subAgentValidationErrors = useMemo(() => {
+    const optionsById = new Map(availableAgentOptions.map((o) => [o.id, o]));
+    const customById = new Map(agents.map((a) => [a.id, a]));
+    return validateSubAgentTools(parentAgentId, form.agentsAsTools, (ref: AgentRef): ResolvedAgentTarget | null => {
+      const targetId = ref.kind === 'builtin' ? ref.profileId : ref.customAgentId;
+      const opt = optionsById.get(targetId);
+      if (!opt) return null;
+      // For cycle detection, look up the target's own agentsAsTools.
+      // Built-ins: the local cache won't have it (only loaded on edit) → treat as []
+      //   so we don't false-positive. Backend has authoritative cycle check.
+      // Custom: read from local store.
+      const targetRefs: SubAgentToolRef[] =
+        opt.kind === 'custom' ? (customById.get(targetId)?.agentsAsTools || []) : [];
+      return {
+        id: targetId,
+        name: opt.name,
+        description: opt.description,
+        agentsAsTools: targetRefs,
+      };
+    });
+  }, [parentAgentId, form.agentsAsTools, availableAgentOptions, agents]);
+
+  const handleAgentsAsToolsChange = (next: SubAgentToolRef[]) => {
+    setForm((prev) => ({ ...prev, agentsAsTools: next }));
+  };
+
   const handleSave = () => {
     if (!isValid) return;
+    if (subAgentValidationErrors.length > 0) return;
     if (editingBuiltInDefinition) {
       const existingOverride = builtInOverrides.find((item) => item.baseProfileId === editingBuiltInDefinition.id);
       const override = prepareBuiltInOverride(form, editingBuiltInDefinition, existingOverride, parsedTemperature);
@@ -400,15 +455,18 @@ export function AgentBuilder({
 
           {/* AI Search context provider — hidden when not configured */}
           {searchContextAvailable && (
-            <label className="agent-builder-tool-item agent-builder-search-toggle">
-              <input
-                type="checkbox"
-                checked={form.useSearchContext}
-                onChange={(e) => setForm((prev) => ({ ...prev, useSearchContext: e.target.checked }))}
-              />
-              <span className="agent-builder-tool-name">AI SEARCH CONTEXT</span>
-              <span className="agent-builder-tool-desc">ENABLE AI SEARCH ACROSS INDEXED DOCUMENTS</span>
-            </label>
+            <div className="agent-builder-section">
+              <h3 className="agent-builder-section-title">AI SEARCH CONTEXT</h3>
+              <label className="agent-builder-tool-item agent-builder-search-toggle">
+                <input
+                  type="checkbox"
+                  checked={form.useSearchContext}
+                  onChange={(e) => setForm((prev) => ({ ...prev, useSearchContext: e.target.checked }))}
+                />
+                <span className="agent-builder-tool-name">ENABLE AI SEARCH</span>
+                <span className="agent-builder-tool-desc">Search across indexed documents during the conversation</span>
+              </label>
+            </div>
           )}
 
           <AgentCapabilityPicker
@@ -423,8 +481,8 @@ export function AgentBuilder({
           />
 
           {/* MCP Servers */}
-          <div className="agent-builder-label">
-            MCP SERVERS
+          <div className="agent-builder-section">
+            <h3 className="agent-builder-section-title">MCP SERVERS</h3>
             <span className="agent-builder-tool-desc" style={{ display: 'block', marginBottom: '0.5rem' }}>
               Connect to remote tool servers using the Model Context Protocol
             </span>
@@ -514,6 +572,14 @@ export function AgentBuilder({
             </div>
           </div>
 
+          <AgentAsToolPicker
+            availableAgents={availableAgentOptions}
+            value={form.agentsAsTools}
+            parentAgentId={parentAgentId}
+            validationErrors={subAgentValidationErrors}
+            onChange={handleAgentsAsToolsChange}
+          />
+
           <StarterQuestionEditor
             starters={form.starters}
             newStarterLabel={newStarterLabel}
@@ -535,7 +601,7 @@ export function AgentBuilder({
               className="agent-builder-save"
               onClick={handleSave}
               type="button"
-              disabled={!isValid}
+              disabled={!isValid || subAgentValidationErrors.length > 0}
             >
               {editingBuiltInDefinition ? 'SAVE CUSTOMIZATION' : editingId ? 'UPDATE AGENT' : 'SAVE AGENT'}
             </button>

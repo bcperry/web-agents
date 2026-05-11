@@ -18,9 +18,27 @@ DEFAULT_CUSTOM_AGENT = {
     "useSearchContext": False,
     "icon": "/icons/custom.svg",
     "starters": [],
+    "agentsAsTools": [],
     "source": "custom",
     "createdAt": "2026-05-06T12:00:00.000Z",
     "updatedAt": "2026-05-06T12:00:00.000Z",
+}
+
+SECONDARY_CUSTOM_AGENT = {
+    "id": "custom_helper_bot",
+    "name": "Helper Bot",
+    "description": "A second custom agent used to demonstrate the Agents-as-Tools picker.",
+    "systemPrompt": "You assist the parent agent.",
+    "tools": [],
+    "skills": [],
+    "mcpServers": [],
+    "useSearchContext": False,
+    "icon": "/icons/custom.svg",
+    "starters": [],
+    "agentsAsTools": [],
+    "source": "custom",
+    "createdAt": "2026-05-07T12:00:00.000Z",
+    "updatedAt": "2026-05-07T12:00:00.000Z",
 }
 
 DEFAULT_PROFILE = {
@@ -215,7 +233,7 @@ def capture(args: argparse.Namespace) -> None:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    custom_agents = json.dumps([DEFAULT_CUSTOM_AGENT])
+    custom_agents = json.dumps([DEFAULT_CUSTOM_AGENT, SECONDARY_CUSTOM_AGENT])
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(
@@ -251,9 +269,38 @@ def capture(args: argparse.Namespace) -> None:
         scroll_agent_layout(page, "bottom")
         page.screenshot(path=str(output_dir / "005-admin-agents-custom-collapsed.png"), full_page=True)
 
+        capture_agents_as_tools_states(page, output_dir)
+
         capture_skills_states(page, output_dir)
 
         browser.close()
+
+
+def capture_agents_as_tools_states(page: Page, output_dir: Path) -> None:
+    """Capture the new Agents-as-Tools section and the full subheader frame (T031)."""
+    # The customs section may be collapsed by previous captures — expand both lists.
+    ensure_expanded(page, 0)
+    ensure_expanded(page, 1)
+    edit_btn = page.locator(".agent-builder-saved-entry").filter(has_text="Blaine Bot").first.get_by_role("button", name="EDIT")
+    if edit_btn.count() == 0:
+        return
+    edit_btn.click(timeout=5_000)
+    page.wait_for_selector(".agent-builder-form", timeout=5_000)
+
+    # (a) Scroll to the Agents-as-Tools section and capture it.
+    page.evaluate(
+        """
+        () => {
+          const headers = Array.from(document.querySelectorAll('.agent-builder-section-title'));
+          const target = headers.find(h => h.textContent && h.textContent.trim() === 'AGENTS AS TOOLS');
+          if (target) target.scrollIntoView({ block: 'center' });
+        }
+        """
+    )
+    page.screenshot(path=str(output_dir / "008-agent-builder-agents-as-tools-section.png"), full_page=False)
+
+    # (b) Full-page capture so the seven subsection headers can be visually compared.
+    page.screenshot(path=str(output_dir / "008-agent-builder-all-subheaders.png"), full_page=True)
 
 
 def parse_args() -> argparse.Namespace:

@@ -14,10 +14,17 @@ from agent_framework import AgentSession
 from fastapi import HTTPException
 from pydantic import BaseModel
 
-from agent_factory import create_chat_runtime
+from agent_factory import SubAgentResources, create_chat_runtime
 from eval_trace import EvalTraceLogger
 from mcp_servers import connect_mcp_servers, parse_mcp_server_configs
-from prompt_config import get_profile_display_name, load_agents_yaml
+from prompt_config import (
+    SubAgentToolRef,
+    _parse_sub_agent_tool_refs,
+    get_profile_display_name,
+    load_agent_profile,
+    load_agents_yaml,
+)
+from sub_agent_tools import derive_sub_agent_tool_surface, disambiguate_tool_names
 from validators import (
     available_skill_names,
     filter_known_skill_names,
@@ -25,6 +32,7 @@ from validators import (
     validate_custom_name,
     validate_http_mcp_servers,
     validate_prompt,
+    validate_sub_agent_tool_refs,
     validate_temperature,
     validate_tool_names,
 )
@@ -57,6 +65,8 @@ class ProfileOverrideRequest(BaseModel):
     custom_temperature: float | None = None
     custom_skills: list[str] = []
     mcp_servers: list[McpServerEntryRequest] = []
+    agents_as_tools: list[dict[str, Any]] = []
+    agentsAsTools: list[dict[str, Any]] | None = None
     override_updated_at: str | None = None
 
 
@@ -124,6 +134,195 @@ def _serialize_mcp_results(results: list[Any]) -> list[dict[str, Any]]:
         }
         for result in results
     ]
+
+
+def _normalize_agent_ref_keys(raw: dict[str, Any]) -> dict[str, Any]:
+    """Accept camelCase wire format and emit snake_case keys for the parser."""
+    out: dict[str, Any] = {}
+    for key, value in raw.items():
+        if key == "profileId":
+            out.setdefault("profile_id", value)
+        elif key == "customAgentId":
+            out.setdefault("custom_agent_id", value)
+        else:
+            out[key] = value
+    return out
+
+
+def _normalize_sub_agent_tool_payload(raw_list: object) -> list[dict[str, Any]]:
+    if raw_list in (None, ""):
+        return []
+    if not isinstance(raw_list, list):
+        raise HTTPException(status_code=400, detail="agents_as_tools must be a list")
+    normalized: list[dict[str, Any]] = []
+    for entry in raw_list:
+        if not isinstance(entry, dict):
+            raise HTTPException(status_code=400, detail="Each agents_as_tools entry must be an object")
+        agent_ref_raw = entry.get("agent_ref") or entry.get("agentRef") or {}
+        if not isinstance(agent_ref_raw, dict):
+            raise HTTPException(status_code=400, detail="agents_as_tools[].agent_ref must be an object")
+        normalized.append({"agent_ref": _normalize_agent_ref_keys(agent_ref_raw)})
+    return normalized
+
+
+def _resolve_for_validation(agent_ref: Any) -> dict[str, Any] | None:
+    """Resolve a SubAgentToolRef target for cycle/orphan detection."""
+    kind = getattr(agent_ref, "kind", None)
+    if kind == "builtin":
+        profile_id = getattr(agent_ref, "profile_id", None)
+        if not profile_id:
+            return None
+        try:
+            profile = load_agent_profile(profile_id)
+        except Exception:
+            return None
+        nested: list[dict[str, Any]] = []
+        for r in profile.agents_as_tools:
+            ar = r.agent_ref
+            nested.append({"agent_ref": {
+                "kind": getattr(ar, "kind", None),
+                "profile_id": getattr(ar, "profile_id", None),
+                "custom_agent_id": getattr(ar, "custom_agent_id", None),
+            }})
+        return {"id": profile_id, "name": profile.name, "agents_as_tools": nested}
+    if kind == "custom":
+        custom_id = getattr(agent_ref, "custom_agent_id", None)
+        definition = getattr(agent_ref, "definition", None) or {}
+        if not custom_id or not isinstance(definition, dict):
+            return None
+        return {
+            "id": custom_id,
+            "name": definition.get("name", custom_id),
+            "agents_as_tools": definition.get("agentsAsTools") or definition.get("agents_as_tools") or [],
+        }
+    return None
+
+
+def _build_validated_sub_agent_refs(
+    parent_id: str,
+    raw_payload: object,
+    logger: logging.Logger,
+) -> list[SubAgentToolRef]:
+    normalized = _normalize_sub_agent_tool_payload(raw_payload)
+    if not normalized:
+        return []
+    try:
+        refs = _parse_sub_agent_tool_refs(normalized)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid agents_as_tools: {exc}") from exc
+
+    def resolver(ref_kind: str, target_id: str) -> dict[str, Any] | None:
+        for r in refs:
+            ar = r.agent_ref
+            if getattr(ar, "kind", None) != ref_kind:
+                continue
+            ref_target = (
+                getattr(ar, "profile_id", None) if ref_kind == "builtin"
+                else getattr(ar, "custom_agent_id", None)
+            )
+            if ref_target == target_id:
+                return _resolve_for_validation(ar)
+        return None
+
+    errors = validate_sub_agent_tool_refs(parent_id, refs, resolver)
+    if errors:
+        logger.warning("agents_as_tools validation failed for %s: %s", parent_id, [e.code for e in errors])
+        raise HTTPException(
+            status_code=400,
+            detail={"message": "agents_as_tools validation failed", "errors": [e.to_dict() for e in errors]},
+        )
+    return refs
+
+
+def _derive_sub_agent_tool_names(refs: list[SubAgentToolRef]) -> list[str]:
+    """Return derived (disambiguated) tool names for a list of sub-agent refs.
+
+    Mirrors the runtime wiring in agent_factory so the UI can show the same
+    names the LLM will see.
+    """
+    profiles_doc = load_agents_yaml().get("profiles") or {}
+    base_names: list[str] = []
+    for r in refs:
+        ar = r.agent_ref
+        kind = getattr(ar, "kind", None)
+        if kind == "builtin":
+            profile_id = getattr(ar, "profile_id", "") or ""
+            entry = profiles_doc.get(profile_id) if isinstance(profiles_doc, dict) else None
+            if isinstance(entry, dict):
+                name = str(entry.get("name", "") or "")
+                desc = str(entry.get("description", "") or "")
+            else:
+                name, desc = "", ""
+            fallback = profile_id
+        elif kind == "custom":
+            custom_id = getattr(ar, "custom_agent_id", "") or ""
+            definition = getattr(ar, "definition", None) or {}
+            if not isinstance(definition, dict):
+                definition = {}
+            name = str(definition.get("name", "") or "")
+            desc = str(definition.get("description", "") or "")
+            fallback = custom_id
+        else:
+            name, desc, fallback = "", "", ""
+        tool_name, _, _ = derive_sub_agent_tool_surface(name, desc, fallback)
+        base_names.append(tool_name)
+    return disambiguate_tool_names(base_names)
+
+
+async def _resolve_builtin_sub_agent_resources(
+    refs: list[SubAgentToolRef],
+    *,
+    ctx: SessionContext,
+    user_bearer_token: str | None,
+    user_profile_data: dict[str, str] | None,
+    session_id: str,
+    logger: logging.Logger,
+) -> tuple[dict[str, SubAgentResources], list[Any]]:
+    """Pre-resolve each *builtin* sub-agent's tools, MCPs, and skills.
+
+    Returns ``(resources_by_profile_id, all_mcp_tools)`` where the second
+    element is a flat list of every MCP tool object connected here so the
+    caller can register them for cleanup at session-end.
+    """
+    profiles_doc = load_agents_yaml().get("profiles") or {}
+    resources_by_profile: dict[str, SubAgentResources] = {}
+    all_mcp_tools: list[Any] = []
+    for ref in refs:
+        ar = ref.agent_ref
+        if getattr(ar, "kind", None) != "builtin":
+            continue
+        profile_id = getattr(ar, "profile_id", "") or ""
+        if not profile_id or profile_id in resources_by_profile:
+            continue
+        entry = profiles_doc.get(profile_id) if isinstance(profiles_doc, dict) else None
+        if not isinstance(entry, dict):
+            continue
+        tool_names_raw = entry.get("tools") or []
+        tool_names = {str(t) for t in tool_names_raw if isinstance(t, str)}
+        function_tools, _store = ctx.build_tool_instances(
+            tool_names,
+            session_id=f"{session_id}:sub:{profile_id}",
+            user_profile_data=user_profile_data,
+        )
+        try:
+            mcp_configs = parse_mcp_server_configs(entry)
+            mcp_tools, mcp_results = await connect_mcp_servers(mcp_configs, user_token=user_bearer_token)
+        except Exception as exc:  # noqa: BLE001 — orphan/connection errors must not crash parent
+            logger.warning("Sub-agent '%s' MCP connect failed: %s", profile_id, exc)
+            mcp_tools, mcp_results = [], []
+        for r in mcp_results:
+            if r.status == "failed":
+                logger.warning("Sub-agent '%s' MCP server '%s' failed: %s", profile_id, r.name, r.error)
+        all_mcp_tools.extend(mcp_tools)
+        skills = entry.get("skills") or []
+        skill_names = [str(s) for s in skills if isinstance(s, str)]
+        resources_by_profile[profile_id] = SubAgentResources(
+            function_tools=list(function_tools),
+            mcp_tools=list(mcp_tools),
+            skill_names=skill_names,
+            enable_search_context=bool(entry.get("search_context", False)),
+        )
+    return resources_by_profile, all_mcp_tools
 
 
 def _restore_session_history(history: object, session_id: str, fallback_session: AgentSession, logger: logging.Logger) -> AgentSession:
@@ -244,6 +443,11 @@ async def _create_custom_chat_session(
     if dropped_skills:
         logger.warning("Custom agent '%s' references unknown skills, dropping: %s", custom_name, dropped_skills)
     raw_mcp_servers = validate_http_mcp_servers(body.get("mcp_servers", []), override=False)
+    sub_agent_refs = _build_validated_sub_agent_refs(
+        parent_id=str(body.get("custom_id") or custom_name),
+        raw_payload=body.get("agents_as_tools") or body.get("agentsAsTools"),
+        logger=logger,
+    )
 
     session_id = str(uuid.uuid4())
     custom_tool_set = set(custom_tools)
@@ -256,6 +460,14 @@ async def _create_custom_chat_session(
         mcp_configs = parse_mcp_server_configs({"mcp_servers": raw_mcp_servers})
         mcp_tools, mcp_results = await connect_mcp_servers(mcp_configs, user_token=user_bearer_token)
         profile_context = ctx.build_user_profile_context(body.get("user_profile")) if "get_user_profile" in custom_tool_set else ""
+        sub_agent_resources, sub_mcp_tools = await _resolve_builtin_sub_agent_resources(
+            sub_agent_refs,
+            ctx=ctx,
+            user_bearer_token=user_bearer_token,
+            user_profile_data=body.get("user_profile"),
+            session_id=session_id,
+            logger=logger,
+        )
         chat_runtime = create_chat_runtime(
             custom_name=custom_name,
             custom_instructions=custom_prompt,
@@ -265,7 +477,12 @@ async def _create_custom_chat_session(
             enable_search_context=custom_search_context,
             custom_skills=custom_skills or None,
             extra_instructions=profile_context or None,
+            agents_as_tools=sub_agent_refs,
+            sub_agent_resources=sub_agent_resources,
         )
+        # Sub-agent MCP connections must be cleaned up with the parent session
+        # but must NOT be exposed as direct tools to the parent agent.
+        mcp_tools = [*mcp_tools, *sub_mcp_tools]
     except HTTPException as exc:
         logger.error("Session creation failed for custom agent '%s': %s", custom_name, exc.detail)
         raise
@@ -293,6 +510,7 @@ async def _create_custom_chat_session(
         "profile_name": custom_name,
         "tools_loaded": list(custom_tools),
         "skills_loaded": list(custom_skills),
+        "agents_loaded": _derive_sub_agent_tool_names(sub_agent_refs),
         "search_context": custom_search_context,
         "mcp_results": _serialize_mcp_results(mcp_results),
     }
@@ -339,6 +557,20 @@ async def _create_profile_chat_session(
         profile_context = ctx.build_user_profile_context(body.get("user_profile")) if "get_user_profile" in profile_tool_names else ""
 
         if profile_override is not None:
+            override_sub_agent_payload = profile_override.agentsAsTools if profile_override.agentsAsTools is not None else profile_override.agents_as_tools
+            override_sub_agent_refs = _build_validated_sub_agent_refs(
+                parent_id=logical_profile,
+                raw_payload=override_sub_agent_payload,
+                logger=logger,
+            )
+            sub_agent_resources, sub_mcp_tools = await _resolve_builtin_sub_agent_resources(
+                override_sub_agent_refs,
+                ctx=ctx,
+                user_bearer_token=user_bearer_token,
+                user_profile_data=body.get("user_profile"),
+                session_id=session_id,
+                logger=logger,
+            )
             chat_runtime = create_chat_runtime(
                 custom_name=profile_name,
                 custom_instructions=profile_override.custom_prompt,
@@ -348,14 +580,29 @@ async def _create_profile_chat_session(
                 enable_search_context=profile_override.custom_search_context,
                 custom_skills=profile_override.custom_skills or None,
                 extra_instructions=profile_context or None,
+                agents_as_tools=override_sub_agent_refs,
+                sub_agent_resources=sub_agent_resources,
             )
+            mcp_tools = [*mcp_tools, *sub_mcp_tools]
         else:
+            profile_sub_agent_refs = list(getattr(load_agent_profile(logical_profile), "agents_as_tools", []) or [])
+            sub_agent_resources, sub_mcp_tools = await _resolve_builtin_sub_agent_resources(
+                profile_sub_agent_refs,
+                ctx=ctx,
+                user_bearer_token=user_bearer_token,
+                user_profile_data=body.get("user_profile"),
+                session_id=session_id,
+                logger=logger,
+            )
             chat_runtime = create_chat_runtime(
                 chat_profile=get_profile_display_name(logical_profile, fallback=profile_id),
                 function_tools=function_tools,
                 mcp_servers=mcp_tools,
                 extra_instructions=profile_context or None,
+                agents_as_tools=profile_sub_agent_refs,
+                sub_agent_resources=sub_agent_resources,
             )
+            mcp_tools = [*mcp_tools, *sub_mcp_tools]
     except HTTPException as exc:
         logger.error("Session creation failed for profile '%s': %s", logical_profile, exc.detail)
         raise
@@ -383,12 +630,18 @@ async def _create_profile_chat_session(
     ]
     profile_search_context = bool(profile_override.custom_search_context) if profile_override is not None else bool(profile_entry.get("search_context", False))
 
+    if profile_override is not None:
+        profile_sub_agent_refs = override_sub_agent_refs
+    else:
+        profile_sub_agent_refs = list(getattr(load_agent_profile(logical_profile), "agents_as_tools", []) or [])
+
     return {
         "session_id": session_id,
         "profile_id": logical_profile,
         "profile_name": profile_name,
         "tools_loaded": list(profile_tool_names),
         "skills_loaded": profile_skills,
+        "agents_loaded": _derive_sub_agent_tool_names(profile_sub_agent_refs),
         "search_context": profile_search_context,
         "mcp_results": _serialize_mcp_results(mcp_results),
         "used_profile_override": profile_override is not None,

@@ -5,6 +5,7 @@ import type {
   CustomAgentDefinition,
   McpServerEntry,
   StarterQuestion,
+  SubAgentToolRef,
 } from '../types/api';
 
 export interface AgentBuilderFormState {
@@ -18,6 +19,7 @@ export interface AgentBuilderFormState {
   icon: string;
   starters: StarterQuestion[];
   temperature: string;
+  agentsAsTools: SubAgentToolRef[];
 }
 
 export const EMPTY_AGENT_FORM: AgentBuilderFormState = {
@@ -31,6 +33,7 @@ export const EMPTY_AGENT_FORM: AgentBuilderFormState = {
   icon: '/icons/custom.svg',
   starters: [],
   temperature: '',
+  agentsAsTools: [],
 };
 
 export function useAgentBuilderForm() {
@@ -90,6 +93,7 @@ export function prepareCustomAgent(
     useSearchContext: form.useSearchContext,
     icon: form.icon,
     starters: form.starters,
+    agentsAsTools: form.agentsAsTools,
     ...(parsedTemperature !== undefined ? { temperature: parsedTemperature } : {}),
     createdAt: editingId ? agents.find((agent) => agent.id === editingId)?.createdAt || now : now,
     updatedAt: now,
@@ -115,6 +119,7 @@ export function prepareBuiltInOverride(
     useSearchContext: form.useSearchContext,
     icon: definition.icon,
     starters: form.starters,
+    agentsAsTools: form.agentsAsTools,
     ...(parsedTemperature !== undefined ? { temperature: parsedTemperature } : {}),
     source: 'builtin-override',
     createdAt: existingOverride?.createdAt ?? now,
