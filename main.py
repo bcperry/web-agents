@@ -368,6 +368,7 @@ async def get_profiles(user: AuthenticatedUser = Depends(get_current_user)):
             "name": name,
             "description": entry.get("description", ""),
             "icon": entry.get("icon", _DEFAULT_PROFILE_ICON),
+            "group": entry.get("group", "") if isinstance(entry.get("group", ""), str) else "",
             "starters": starters,
             "skills": [str(s) for s in (entry.get("skills") or []) if isinstance(s, str)],
             "mcp_server_count": len(entry.get("mcp_servers") or []),

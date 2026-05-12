@@ -11,6 +11,7 @@ import type {
 export interface AgentBuilderFormState {
   name: string;
   description: string;
+  group: string;
   systemPrompt: string;
   tools: string[];
   skills: string[];
@@ -25,6 +26,7 @@ export interface AgentBuilderFormState {
 export const EMPTY_AGENT_FORM: AgentBuilderFormState = {
   name: '',
   description: '',
+  group: '',
   systemPrompt: '',
   tools: [],
   skills: [],
@@ -86,6 +88,7 @@ export function prepareCustomAgent(
     id: editingId || `custom_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     name: form.name.trim(),
     description: form.description.trim(),
+    ...(form.group.trim() ? { group: form.group.trim() } : {}),
     systemPrompt: form.systemPrompt,
     tools: form.tools,
     skills: form.skills,
@@ -112,6 +115,7 @@ export function prepareBuiltInOverride(
     baseProfileId: definition.id,
     baseProfileName: definition.name,
     description: form.description.trim(),
+    ...(form.group.trim() ? { group: form.group.trim() } : {}),
     systemPrompt: form.systemPrompt,
     tools: form.tools,
     skills: form.skills,

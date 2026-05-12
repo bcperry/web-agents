@@ -74,6 +74,7 @@ export interface CustomAgentDefinition {
   id: string;
   name: string;
   description: string;
+  group?: string;
   systemPrompt: string;
   tools: string[];
   skills: string[];
@@ -90,6 +91,7 @@ export interface CustomAgentDefinition {
 export interface AgentCustomizationOverride {
   id: string;
   description: string;
+  group?: string;
   systemPrompt: string;
   tools: string[];
   skills: string[];
@@ -135,6 +137,7 @@ export interface AgentProfile {
   name: string;
   description: string;
   icon: string;
+  group?: string;
   starters: StarterQuestion[];
   isCustom?: boolean;
   isCustomized?: boolean;

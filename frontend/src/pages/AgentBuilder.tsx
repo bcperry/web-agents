@@ -116,6 +116,7 @@ export function AgentBuilder({
     setForm({
       name: agent.name,
       description: agent.description,
+      group: agent.group ?? '',
       systemPrompt: agent.systemPrompt,
       tools: agent.tools.filter((tool) => availableToolNames.has(tool)),
       skills: (agent.skills || []).filter((skill) => availableSkillNames.has(skill)),
@@ -141,6 +142,7 @@ export function AgentBuilder({
       setForm({
         name: definition.name,
         description: source.description,
+        group: (override?.group ?? profile.group) ?? '',
         systemPrompt: source.systemPrompt,
         tools: source.tools.filter((tool) => availableToolNames.has(tool)),
         skills: source.skills.filter((skill) => availableSkillNames.has(skill)),
@@ -406,6 +408,28 @@ export function AgentBuilder({
               placeholder="Brief description of this agent's purpose"
               maxLength={200}
             />
+          </label>
+
+          <label className="agent-builder-label">
+            GROUP
+            <input
+              className="agent-builder-input"
+              type="text"
+              list="agent-builder-group-options"
+              value={form.group}
+              onChange={(e) => setForm((prev) => ({ ...prev, group: e.target.value }))}
+              placeholder="Optional group name (e.g., General Staff)"
+              maxLength={100}
+            />
+            <datalist id="agent-builder-group-options">
+              {Array.from(new Set([
+                ...builtInProfiles.map((p) => p.group).filter((g): g is string => Boolean(g)),
+                ...agents.map((a) => a.group).filter((g): g is string => Boolean(g)),
+                ...builtInOverrides.map((o) => o.group).filter((g): g is string => Boolean(g)),
+              ])).sort().map((groupName) => (
+                <option key={groupName} value={groupName} />
+              ))}
+            </datalist>
           </label>
 
           <label className="agent-builder-label">
