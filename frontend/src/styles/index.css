@@ -196,7 +196,9 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .chat-messages {
@@ -490,14 +492,16 @@ body {
 }
 
 .profile-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 16px;
   width: 100%;
   max-width: 1000px;
 }
 
 .profile-card {
+  flex: 0 1 220px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -536,6 +540,55 @@ body {
   font-size: 0.9rem;
   color: var(--text-primary);
   line-height: 1.4;
+}
+
+.profile-selector-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  width: 100%;
+  max-width: 1000px;
+}
+
+.profile-selector-group {
+  border: 1px solid var(--border-olive);
+  border-radius: var(--radius);
+  padding: 16px;
+  background-color: var(--bg-panel);
+}
+
+.profile-selector-group.collapsed .profile-selector-group-toggle {
+  margin-bottom: 0;
+}
+
+.profile-selector-group-title {
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  color: var(--text-gold);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+}
+
+.profile-selector-show-more {
+  margin-top: 16px;
+  width: 100%;
+  padding: 10px;
+  border: 1px dashed var(--border-olive);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.profile-selector-show-more:hover,
+.profile-selector-show-more:focus-visible {
+  border-color: var(--accent-gold);
+  color: var(--text-gold);
+  outline: none;
 }
 
 .profile-card-badge {
