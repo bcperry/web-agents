@@ -12,7 +12,7 @@ import { getRuntimeConfigSnapshot } from './config/runtimeConfig'
 import './styles/index.css'
 
 function AppContent() {
-  const { isAuthenticated, isLoading, login } = useAuth()
+  const { isAuthenticated, isLoading, login, user } = useAuth()
   const { appName } = getRuntimeConfigSnapshot()
   const [currentView, setCurrentView] = useState<'chat' | 'admin'>('chat')
   const { agents: customAgents, save: saveCustomAgent, remove: removeCustomAgent } = useCustomAgents()
@@ -81,6 +81,7 @@ function AppContent() {
       {currentView === 'admin' ? (
         <AdminPage
           onBack={handleAdminBack}
+          userEmail={user?.email}
           agents={customAgents}
           builtInOverrides={builtInOverrides}
           onSaveAgent={saveCustomAgent}

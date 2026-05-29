@@ -26,6 +26,8 @@
 - Built-in agents → `config/agents.yaml`. Custom agents → frontend `localStorage` (key `webagents_custom_agents`). No backend custom-agent store today; the new field is purely additive to the existing in-memory / localStorage shapes. (008-agents-as-tools)
 - Python 3.12+ (backend), TypeScript (frontend) + FastAPI (backend), React (frontend), Vite (bundler) (009-agents-page-grouping)
 - `config/agents.yaml` (built-in), localStorage (custom agents) (009-agents-page-grouping)
+- TypeScript 5.9.x and React 19.x for frontend; Python 3.12.6/FastAPI backend unchanged + React, Vite, existing `useTheme` and `useAuth` hooks; no new dependencies (010-admin-settings-page)
+- Existing localStorage key `webagents_theme`; no backend storage changes (010-admin-settings-page)
 
 ## Project Structure
 
@@ -58,6 +60,6 @@ uv run pytest                      # Run tests
 - Package manager: uv only (never pip)
 
 ## Recent Changes
+- 010-admin-settings-page: Added TypeScript 5.9.x and React 19.x for frontend; Python 3.12.6/FastAPI backend unchanged + React, Vite, existing `useTheme` and `useAuth` hooks; no new dependencies
 - 009-agents-page-grouping: Added Python 3.12+ (backend), TypeScript (frontend) + FastAPI (backend), React (frontend), Vite (bundler)
 - 008-agents-as-tools: Added Python 3.12+ (backend), TypeScript / React 18 (frontend) + FastAPI, `agent-framework-core` (`Agent.as_tool()`), `agent-framework-azure-ai-search`, OpenAIChatClient (Azure OpenAI Government endpoint), React, Vite
-- 007-application-refactor: Added Python 3.12.6, TypeScript 5.9, React 19 + FastAPI, agent-framework-core/openai/azure-ai-search, Azure SDKs, React, Vite, react-markdown, MSAL
