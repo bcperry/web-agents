@@ -156,8 +156,8 @@ select:focus-visible,
 .profile-selector-title,
 .profile-selector-group-title,
 .agent-builder-section-title,
-.sidebar-advanced-label,
-.sidebar-theme-label,
+.settings-menu-label,
+.admin-settings-heading,
 .capabilities-label {
   font-family: var(--font-body);
   font-weight: 600;
@@ -170,8 +170,9 @@ select:focus-visible,
 .acknowledge-btn,
 .login-btn,
 .sidebar-new-mission,
-.sidebar-advanced-btn,
-.sidebar-theme-btn,
+.settings-menu-trigger,
+.settings-menu-item,
+.admin-theme-option,
 .admin-back-btn,
 .admin-tab,
 .agent-builder-back,
@@ -266,6 +267,108 @@ select:focus-visible,
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
+  justify-content: flex-end;
+}
+
+.settings-menu {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.settings-menu-trigger {
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--border-olive);
+  color: var(--text-gold);
+  border-radius: var(--radius);
+  cursor: pointer;
+  padding: 0;
+}
+
+.settings-menu-trigger:hover,
+.settings-menu-trigger:focus-visible {
+  background-color: var(--bg-hover);
+  border-color: var(--accent-gold);
+}
+
+.settings-menu-trigger:focus-visible,
+.settings-menu-item:focus-visible,
+.admin-theme-option:focus-visible {
+  outline: 2px solid var(--accent-gold);
+  outline-offset: 2px;
+}
+
+.settings-menu-icon {
+  width: 22px;
+  height: 22px;
+  fill: currentColor;
+  display: block;
+}
+
+.settings-menu-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 80;
+  width: min(280px, calc(100vw - 32px));
+  padding: 10px;
+  border: 1px solid var(--border-olive);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  box-shadow: var(--surface-shadow);
+}
+
+.settings-menu-account {
+  padding: 8px 10px 10px;
+  border-bottom: 1px solid var(--border-olive);
+  margin-bottom: 8px;
+  min-width: 0;
+}
+
+.settings-menu-label {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+
+.settings-menu-email {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-menu-item {
+  width: 100%;
+  display: block;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-gold);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-menu-item:hover {
+  background-color: var(--bg-hover);
+  border-color: var(--border-olive);
+}
+
+.settings-menu-item.logout {
+  color: var(--text-muted);
 }
 
 .new-chat-btn {
@@ -1480,6 +1583,56 @@ select:focus-visible,
 }
 
 @media (max-width: 768px) {
+  .chat-header {
+    gap: 12px;
+    padding: 10px 12px;
+  }
+
+  .chat-header-brand {
+    min-width: 0;
+  }
+
+  .chat-header-logo {
+    width: 48px;
+    height: 48px;
+  }
+
+  .chat-header-titles {
+    min-width: 0;
+  }
+
+  .chat-title {
+    font-size: 1.2rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .chat-subtitle {
+    display: none;
+  }
+
+  .chat-header-status {
+    display: none;
+  }
+
+  .chat-header-actions {
+    gap: 8px;
+  }
+
+  .new-chat-btn {
+    padding: 6px 8px;
+    font-size: 0.72rem;
+  }
+
+  .settings-menu-panel {
+    position: fixed;
+    top: 108px;
+    left: 12px;
+    right: 12px;
+    width: auto;
+  }
+
   .sidebar {
     position: fixed;
     left: 0;
@@ -2040,112 +2193,6 @@ select:focus-visible,
 }
 
 
-.sidebar-advanced {
-  border-top: 1px solid var(--border-olive);
-  padding: 12px;
-  flex-shrink: 0;
-}
-
-.sidebar-advanced-label {
-  font-family: var(--font-mono);
-  font-size: 0.65rem;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 2px;
-  margin-bottom: 8px;
-}
-
-.sidebar-advanced-email {
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-  color: var(--text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  margin-bottom: 8px;
-}
-
-.sidebar-advanced-btn {
-  width: 100%;
-  padding: 6px 10px;
-  background: none;
-  border: 1px solid var(--border-olive);
-  color: var(--text-gold);
-  font-family: var(--font-mono);
-  font-size: 0.8rem;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  cursor: pointer;
-  border-radius: var(--radius);
-  margin-bottom: 6px;
-  text-align: left;
-}
-
-.sidebar-advanced-btn:hover {
-  background-color: var(--bg-hover);
-  border-color: var(--accent-gold);
-}
-
-.sidebar-advanced-btn.logout {
-  color: var(--text-muted);
-  border-color: var(--alert-red);
-}
-
-.sidebar-advanced-btn.logout:hover {
-  color: var(--text-primary);
-  background-color: rgba(139, 0, 0, 0.2);
-}
-
-
-.sidebar-theme-selector {
-  border-top: 1px solid var(--border-olive);
-  padding: 12px;
-  flex-shrink: 0;
-}
-
-.sidebar-theme-label {
-  font-family: var(--font-mono);
-  font-size: 0.65rem;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 2px;
-  margin-bottom: 8px;
-}
-
-.sidebar-theme-options {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4px;
-}
-
-.sidebar-theme-btn {
-  padding: 5px 8px;
-  background: none;
-  border: 1px solid var(--border-olive);
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  font-size: 0.65rem;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  cursor: pointer;
-  border-radius: var(--radius);
-  text-align: center;
-  transition: all 0.15s;
-}
-
-.sidebar-theme-btn:hover {
-  background-color: var(--bg-hover);
-  border-color: var(--accent-gold);
-  color: var(--text-gold);
-}
-
-.sidebar-theme-btn.active {
-  background-color: var(--accent-olive);
-  border-color: var(--accent-gold);
-  color: #ffffff;
-}
-
-
 [data-theme="light"] .user-message {
   background-color: var(--bg-header);
 }
@@ -2635,6 +2682,121 @@ select:focus-visible,
   overflow-x: hidden;
   padding: 0;
   min-width: 0;
+}
+
+.admin-settings {
+  max-width: 960px;
+  padding: 32px;
+  display: grid;
+  gap: 24px;
+}
+
+.admin-settings-section {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  padding: 20px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.08);
+}
+
+.admin-settings-section-header {
+  margin-bottom: 16px;
+}
+
+.admin-settings-heading {
+  margin: 0 0 6px;
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  color: var(--text-gold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.admin-settings-copy {
+  margin: 0;
+  max-width: 620px;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.admin-theme-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.admin-theme-option {
+  min-height: 104px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.admin-theme-option:hover {
+  border-color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent-gold) 8%, transparent);
+}
+
+.admin-theme-option.active {
+  border-color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent-gold) 12%, var(--bg-panel));
+}
+
+.admin-theme-option-label {
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  color: var(--text-gold);
+}
+
+.admin-theme-option-description {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.admin-account-summary {
+  max-width: 520px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+  .admin-header {
+    padding: 10px 12px;
+  }
+
+  .admin-tabs {
+    overflow-x: auto;
+  }
+
+  .admin-tab {
+    padding: 10px 16px;
+    white-space: nowrap;
+  }
+
+  .admin-settings {
+    padding: 16px;
+  }
+
+  .admin-theme-options {
+    grid-template-columns: 1fr;
+  }
 }
 
 

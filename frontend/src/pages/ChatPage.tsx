@@ -13,6 +13,7 @@ import { StarterQuestions } from '../components/StarterQuestions';
 import { TokenUsage } from '../components/TokenUsage';
 import { AgentCapabilitiesBar } from '../components/AgentCapabilitiesBar';
 import { Sidebar } from '../components/Sidebar';
+import { SettingsMenu } from '../components/SettingsMenu';
 import { getRuntimeConfigSnapshot } from '../config/runtimeConfig';
 import type { CustomAgentDefinition } from '../types/api';
 
@@ -247,6 +248,10 @@ export function ChatPage({ onOpenAdmin, customAgents, builtInOverrides }: ChatPa
     setSidebarCollapsed((prev) => !prev);
   }, []);
 
+  const renderSettingsMenu = () => (
+    <SettingsMenu userEmail={user?.email} onOpenAdmin={onOpenAdmin} onLogout={logout} />
+  );
+
   // Main content
   const renderMainContent = () => {
     if (!session) {
@@ -261,6 +266,9 @@ export function ChatPage({ onOpenAdmin, customAgents, builtInOverrides }: ChatPa
                 <h1 className="chat-title">{appName}</h1>
                 <div className="chat-subtitle">{appTagline}</div>
               </div>
+            </div>
+            <div className="chat-header-actions">
+              {renderSettingsMenu()}
             </div>
           </header>
           <div className="chat-page-content">
@@ -314,6 +322,7 @@ export function ChatPage({ onOpenAdmin, customAgents, builtInOverrides }: ChatPa
             <button className="new-chat-btn" onClick={handleNewChat} type="button">
               NEW CHAT
             </button>
+            {renderSettingsMenu()}
           </div>
         </header>
 
@@ -369,9 +378,6 @@ export function ChatPage({ onOpenAdmin, customAgents, builtInOverrides }: ChatPa
         onDelete={handleDeleteConversation}
         onNewMission={handleNewChat}
         onToggle={toggleSidebar}
-        userEmail={user?.email}
-        onLogout={logout}
-        onOpenAdmin={onOpenAdmin}
       />
       {renderMainContent()}
     </div>

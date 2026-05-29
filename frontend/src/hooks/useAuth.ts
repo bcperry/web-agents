@@ -42,10 +42,11 @@ export function useAuth(): AuthState {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [account, setAccount] = useState<AccountInfo | null>(null);
+  const [authDisabled, setAuthDisabled] = useState(false);
   const configRef = useRef<RuntimeConfig | null>(null);
 
   const user = useMemo(() => {
-    if (configRef.current?.authDisabled) {
+    if (authDisabled) {
       return { id: 'dev-user', name: 'Developer', email: 'dev@localhost' };
     }
     if (!account) return null;
@@ -54,13 +55,14 @@ export function useAuth(): AuthState {
       name: account.name || account.username || 'Unknown',
       email: account.username || '',
     };
-  }, [account]);
+  }, [account, authDisabled]);
 
   useEffect(() => {
     const init = async () => {
       try {
         const cfg = await fetchRuntimeConfig();
         configRef.current = cfg;
+        setAuthDisabled(cfg.authDisabled);
 
         if (cfg.authDisabled) {
           setIsAuthenticated(true);

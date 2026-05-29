@@ -1,10 +1,4 @@
 import type { ConversationIndexEntry } from '../types/api';
-import { useTheme, type ThemeMode } from '../hooks/useTheme';
-
-const THEME_OPTIONS: { value: ThemeMode; label: string }[] = [
-  { value: 'light', label: 'Light' },
-  { value: 'dark', label: 'Dark' },
-];
 
 interface SidebarProps {
   conversations: ConversationIndexEntry[];
@@ -14,9 +8,6 @@ interface SidebarProps {
   onDelete: (id: string) => void;
   onNewMission: () => void;
   onToggle: () => void;
-  userEmail?: string;
-  onLogout?: () => void;
-  onOpenAdmin?: () => void;
 }
 
 function formatDate(isoString: string): string {
@@ -33,12 +24,7 @@ export function Sidebar({
   onDelete,
   onNewMission,
   onToggle,
-  userEmail,
-  onLogout,
-  onOpenAdmin,
 }: SidebarProps) {
-  const { mode, setMode } = useTheme();
-
   return (
     <div className={`sidebar ${isCollapsed ? 'collapsed' : ''}`}>
       <div className="sidebar-header">
@@ -87,40 +73,6 @@ export function Sidebar({
         </div>
       )}
 
-      {!isCollapsed && (
-        <div className="sidebar-theme-selector">
-          <div className="sidebar-theme-label">THEME</div>
-          <div className="sidebar-theme-options">
-            {THEME_OPTIONS.map((opt) => (
-              <button
-                key={opt.value}
-                className={`sidebar-theme-btn ${mode === opt.value ? 'active' : ''}`}
-                onClick={() => setMode(opt.value)}
-                type="button"
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {!isCollapsed && (onOpenAdmin || onLogout || userEmail) && (
-        <div className="sidebar-advanced">
-          <div className="sidebar-advanced-label">ADVANCED</div>
-          {onOpenAdmin && (
-            <button className="sidebar-advanced-btn" onClick={onOpenAdmin} type="button">
-              ADMIN
-            </button>
-          )}
-          {userEmail && <div className="sidebar-advanced-email" title={userEmail}>{userEmail}</div>}
-          {onLogout && (
-            <button className="sidebar-advanced-btn logout" onClick={onLogout} type="button">
-              LOGOUT
-            </button>
-          )}
-        </div>
-      )}
     </div>
   );
 }
