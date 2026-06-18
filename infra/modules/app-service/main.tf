@@ -43,20 +43,26 @@ resource "azurerm_linux_web_app" "app_service" {
     SCM_DO_BUILD_DURING_DEPLOYMENT = "true"
     AZURE_CLIENT_ID                = var.managed_identity_client_id
     WEBSITES_PORT                  = "8000"
-    
+
     # Azure OpenAI settings
-    AZURE_OPENAI_ENDPOINT     = var.azure_openai_endpoint
-    AZURE_OPENAI_MODEL        = var.azure_openai_model
-    AZURE_OPENAI_API_KEY      = var.azure_openai_api_key
-    AZURE_OPENAI_API_VERSION  = var.azure_openai_api_version
-    
+    AZURE_OPENAI_ENDPOINT    = var.azure_openai_endpoint
+    AZURE_OPENAI_MODEL       = var.azure_openai_model
+    AZURE_OPENAI_API_KEY     = var.azure_openai_api_key
+    AZURE_OPENAI_API_VERSION = var.azure_openai_api_version
+
     # Azure SQL settings
     AZURE_SQL_CONNECTIONSTRING = var.azure_sql_connectionstring
-    
+
     # Azure AI Search settings
     SEARCH_SERVICE_ENDPOINT = var.search_service_endpoint
     SEARCH_INDEX_NAME       = var.search_index_name
     SEARCH_API_KEY          = var.search_api_key
+
+    # Azure Cosmos DB (durable agent memory + per-user chat history)
+    AZURE_COSMOS_ENDPOINT                = var.azure_cosmos_endpoint
+    AZURE_COSMOS_DATABASE_NAME           = var.azure_cosmos_database_name
+    AZURE_COSMOS_CONTAINER_NAME          = var.azure_cosmos_container_name
+    AZURE_COSMOS_CONVERSATIONS_CONTAINER = var.azure_cosmos_conversations_container
 
     # Entra ID / Azure AD authentication
     OAUTH_AZURE_GOV_AD_TENANT_ID = var.entra_tenant_id

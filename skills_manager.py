@@ -48,15 +48,15 @@ class SkillManager:
 						name = line[len("name:"):].strip()
 		return {"name": name, "description": description, "content": content}
 
-	def list_summaries(self) -> list[dict[str, str]]:
+	async def list_summaries(self) -> list[dict[str, str]]:
 		if not self.skills_dir.is_dir():
 			return []
-		from agent_framework import SkillsProvider
+		from agent_framework import FileSkillsSource
 
-		provider = SkillsProvider(skill_paths=self.skills_dir)
+		skills = await FileSkillsSource(self.skills_dir).get_skills()
 		return [
-			{"name": skill.name, "description": skill.description}
-			for skill in provider._skills.values()
+			{"name": skill.frontmatter.name, "description": skill.frontmatter.description}
+			for skill in skills
 		]
 
 	def get(self, name: str) -> dict:

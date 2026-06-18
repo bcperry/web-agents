@@ -19,8 +19,21 @@ wheels = [
 ]
 
 [[package]]
+name = "agent-framework-azure-cosmos"
+version = "1.0.0b260521"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "agent-framework-core" },
+    { name = "azure-cosmos" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2d/16/97180499c1177010f0efd8a47d41bce7847bf729852402ef0b8b2edd18ba/agent_framework_azure_cosmos-1.0.0b260521.tar.gz", hash = "sha256:4cff0da0fafdd952f8517ec7961e6457263232392b27d07734a2914d9816ba34", size = 10977, upload-time = "2026-05-22T02:23:51.913Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/53/2d/cb1565112364ab30b747801f98dc62f541e26344cdd9e53d2d9bd9edba31/agent_framework_azure_cosmos-1.0.0b260521-py3-none-any.whl", hash = "sha256:f6e2b53539f5a62a5c8d47960aa950cb5d70ddb01c3e2bbefa6e67bb79804795", size = 11989, upload-time = "2026-05-22T02:24:26.541Z" },
+]
+
+[[package]]
 name = "agent-framework-core"
-version = "1.0.1"
+version = "1.9.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "opentelemetry-api" },
@@ -28,9 +41,9 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2a/3d/371e57a74ecd4fc551d458bd234d7591c052b467cac21e8805cb519a4187/agent_framework_core-1.0.1.tar.gz", hash = "sha256:6ace9fa8bee9d2e8556c28ff767d89b8e0a0a734246dcca4a196d0b0bc5cedb0", size = 285179, upload-time = "2026-04-10T03:29:28.193Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f1/38/5b4f1f69cfe62ecf0b66838a09d82678dfc0a90084e16b3f1c0f52aa53c3/agent_framework_core-1.9.0.tar.gz", hash = "sha256:09c5f18a43209f6db53dfe0da25d3dfbf1e5176a930a8ec3859091687d8f80a2", size = 449168, upload-time = "2026-06-18T09:42:48.308Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2e/11/a460d6656257c4302deb33724f29a52059bae193758ded7571fb576b26cb/agent_framework_core-1.0.1-py3-none-any.whl", hash = "sha256:8305fadb78adb9b625cda0ba8188bcb76ce01a2aa64eed937f8c9fb384043bc0", size = 323596, upload-time = "2026-04-10T03:31:01.698Z" },
+    { url = "https://files.pythonhosted.org/packages/d9/4b/1c0140cfbb134c51d335274948bcbdcee837a3bdad86bea92ef6b7235d13/agent_framework_core-1.9.0-py3-none-any.whl", hash = "sha256:aa33c588ec839dc7fc8e4768f4ff3d3cd44d4b38d7aa9733f5ee0a37ff4de956", size = 496431, upload-time = "2026-06-18T09:42:46.613Z" },
 ]
 
 [[package]]
@@ -238,6 +251,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/34/83/bbde3faa84ddcb8eb0eca4b3ffb3221252281db4ce351300fe248c5c70b1/azure_core-1.39.0.tar.gz", hash = "sha256:8a90a562998dd44ce84597590fff6249701b98c0e8797c95fcdd695b54c35d74", size = 367531, upload-time = "2026-03-19T01:31:29.461Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7e/d6/8ebcd05b01a580f086ac9a97fb9fac65c09a4b012161cc97c21a336e880b/azure_core-1.39.0-py3-none-any.whl", hash = "sha256:4ac7b70fab5438c3f68770649a78daf97833caa83827f91df9c14e0e0ea7d34f", size = 218318, upload-time = "2026-03-19T01:31:31.25Z" },
+]
+
+[[package]]
+name = "azure-cosmos"
+version = "4.16.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "azure-core" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fe/2a/0f2bba256e56626ba2cec97ab81dd002ff47ead1329767760b619afd927a/azure_cosmos-4.16.1.tar.gz", hash = "sha256:fa15d13702b470265a67e2dd9c0794021e6b776856dac6c223dcacc4d8e1d8d1", size = 2377651, upload-time = "2026-06-02T01:08:07.656Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7f/b4/9c984ad33ca9e5c378ea472fc9aa38e719c245a4fa58a99d6dabbe0f9a17/azure_cosmos-4.16.1-py3-none-any.whl", hash = "sha256:43717215ec1433c1ea0f0e3d465f9182fb5afff3ae2331e595367122297872f1", size = 499044, upload-time = "2026-06-02T01:08:10.111Z" },
 ]
 
 [[package]]
@@ -1653,6 +1679,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "agent-framework-azure-ai-search" },
+    { name = "agent-framework-azure-cosmos" },
     { name = "agent-framework-core" },
     { name = "agent-framework-openai" },
     { name = "azure-search-documents" },
@@ -1677,6 +1704,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "agent-framework-azure-ai-search", specifier = ">=1.0.0b260311" },
+    { name = "agent-framework-azure-cosmos", specifier = ">=1.0.0b260521" },
     { name = "agent-framework-core", specifier = ">=1.0.0" },
     { name = "agent-framework-openai", specifier = ">=1.0.1" },
     { name = "azure-search-documents", specifier = ">=11.7.0b2" },

@@ -21,7 +21,7 @@ function AppContent() {
     save: saveBuiltInOverride,
     remove: resetBuiltInOverride,
   } = useBuiltInAgentCustomizations()
-  const { loadIndex, deleteConversationsByCustomAgent } = useConversationStore()
+  const { deleteConversationsByCustomAgent } = useConversationStore()
 
   // Initialise history state so the back button can return here from admin.
   useEffect(() => {
@@ -50,8 +50,7 @@ function AppContent() {
 
   const handleDeleteAgent = (id: string) => {
     removeCustomAgent(id)
-    deleteConversationsByCustomAgent(id)
-    loadIndex()
+    void deleteConversationsByCustomAgent(id)
   }
 
   if (isLoading) {

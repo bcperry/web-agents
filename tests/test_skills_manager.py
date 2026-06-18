@@ -7,10 +7,11 @@ from skills_manager import SkillManager
 
 
 def test_list_and_get_skills(tmp_path, make_skill):
+    import asyncio
     make_skill(tmp_path, "alpha", "Alpha skill", "# Alpha\nBody")
     manager = SkillManager(tmp_path)
 
-    assert manager.list_summaries() == [{"name": "alpha", "description": "Alpha skill"}]
+    assert asyncio.run(manager.list_summaries()) == [{"name": "alpha", "description": "Alpha skill"}]
     assert manager.get("alpha") == {"name": "alpha", "description": "Alpha skill", "content": "# Alpha\nBody\n"}
 
 

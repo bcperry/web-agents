@@ -1,0 +1,402 @@
+"""Azure Cosmos DB memory layer for agent chat history and conversation index.
+
+Provides two things:
+
+1. ``get_history_provider()`` — the Agent Framework ``HistoryProvider`` used by
+   ``agent_factory`` for durable per-session message memory. Returns a
+   ``CosmosHistoryProvider``; Cosmos is required (the emulator locally, a real
+   account when deployed) and there is no runtime fallback.
+
+2. ``get_conversation_repository()`` — a per-user conversation *index* (the data
+   that powers the left chat pane and enforces ownership), backed by a Cosmos
+   container partitioned by ``/user_id``.
+
+Tests run against the emulator; where they need a double they monkeypatch the
+module-level ``_history_provider`` / ``_conversation_repo`` singletons (see
+``tests/_doubles.py``).
+
+Credentials: a Cosmos account key (``AZURE_COSMOS_KEY``) is used for local /
+emulator development only; production uses ``DefaultAzureCredential`` (managed
+identity) and Azure Government endpoints. Keys are never logged.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Protocol
+from urllib.parse import urlsplit
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+def cosmos_config_summary() -> dict[str, str]:
+    """Non-secret Cosmos settings for startup logging (never the account key)."""
+    endpoint = (os.getenv("AZURE_COSMOS_ENDPOINT") or "").strip()
+    host = urlsplit(endpoint).hostname or ""
+    has_key = bool((os.getenv("AZURE_COSMOS_KEY") or "").strip())
+    return {
+        "endpoint": endpoint,
+        "database": (os.getenv("AZURE_COSMOS_DATABASE_NAME") or "agent-memory").strip(),
+        "messages_container": (os.getenv("AZURE_COSMOS_CONTAINER_NAME") or "chat-history").strip(),
+        "conversations_container": (os.getenv("AZURE_COSMOS_CONVERSATIONS_CONTAINER") or "conversations").strip(),
+        "auth": "key" if has_key or host in ("localhost", "127.0.0.1") else "managed-identity",
+    }
+
+
+# Public, fixed master key the Azure Cosmos DB Emulator accepts (NOT a secret —
+# Microsoft documents it). The emulator rejects AAD tokens, so the local client
+# uses this key unless AZURE_COSMOS_KEY is set.
+_EMULATOR_WELL_KNOWN_KEY = (
+    "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw=="
+)
+
+
+# ---------------------------------------------------------------------------
+# Conversation index record
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ConversationRecord:
+    """One conversation-index entry (partitioned by ``user_id`` in Cosmos)."""
+
+    id: str
+    user_id: str
+    profile_id: str
+    profile_name: str
+    title: str = ""
+    created_at: str = ""
+    last_activity_at: str = ""
+    custom_agent_id: str | None = None
+    used_builtin_override: bool = False
+    base_profile_id: str | None = None
+    override_updated_at: str | None = None
+
+    def to_doc(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "profile_id": self.profile_id,
+            "profile_name": self.profile_name,
+            "title": self.title,
+            "created_at": self.created_at,
+            "last_activity_at": self.last_activity_at,
+            "custom_agent_id": self.custom_agent_id,
+            "used_builtin_override": self.used_builtin_override,
+            "base_profile_id": self.base_profile_id,
+            "override_updated_at": self.override_updated_at,
+            "doc_type": "conversation",
+            "schema_version": 1,
+        }
+
+    @classmethod
+    def from_doc(cls, doc: dict[str, Any]) -> "ConversationRecord":
+        return cls(
+            id=str(doc["id"]),
+            user_id=str(doc.get("user_id", "")),
+            profile_id=str(doc.get("profile_id", "")),
+            profile_name=str(doc.get("profile_name", "")),
+            title=str(doc.get("title", "")),
+            created_at=str(doc.get("created_at", "")),
+            last_activity_at=str(doc.get("last_activity_at", "")),
+            custom_agent_id=doc.get("custom_agent_id"),
+            used_builtin_override=bool(doc.get("used_builtin_override", False)),
+            base_profile_id=doc.get("base_profile_id"),
+            override_updated_at=doc.get("override_updated_at"),
+        )
+
+    def to_wire(self) -> dict[str, Any]:
+        """Shape consumed by the frontend ``ConversationIndexEntry``."""
+        return {
+            "id": self.id,
+            "profileId": self.profile_id,
+            "profileName": self.profile_name,
+            "description": self.title,
+            "createdAt": self.created_at,
+            "lastActivityAt": self.last_activity_at,
+            "customAgentId": self.custom_agent_id,
+            "usedBuiltInOverride": self.used_builtin_override,
+            "baseProfileId": self.base_profile_id,
+            "overrideUpdatedAt": self.override_updated_at,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Conversation index repository
+# ---------------------------------------------------------------------------
+
+class ConversationIndexRepository(Protocol):
+    """Per-user conversation index. All methods are partition-scoped by user_id."""
+
+    async def create(
+        self,
+        user_id: str,
+        conversation_id: str,
+        profile_id: str,
+        profile_name: str,
+        *,
+        custom_agent_id: str | None = None,
+        used_builtin_override: bool = False,
+        base_profile_id: str | None = None,
+        override_updated_at: str | None = None,
+    ) -> ConversationRecord: ...
+
+    async def list_for_user(
+        self, user_id: str, *, limit: int = 50, cursor: str | None = None
+    ) -> tuple[list[ConversationRecord], str | None]: ...
+
+    async def get_owned(self, user_id: str, conversation_id: str) -> ConversationRecord | None: ...
+
+    async def touch(self, user_id: str, conversation_id: str, *, title: str | None = None) -> None: ...
+
+    async def delete(self, user_id: str, conversation_id: str) -> bool: ...
+
+
+class CosmosConversationRepository:
+    """Cosmos-backed conversation index, partitioned by ``/user_id``."""
+
+    def __init__(self, client: Any, database_name: str, container_name: str) -> None:
+        self._client = client
+        self._database_name = database_name
+        self._container_name = container_name
+        self._container: Any = None
+
+    async def _get_container(self) -> Any:
+        if self._container is None:
+            from azure.cosmos import PartitionKey
+
+            database = await self._client.create_database_if_not_exists(self._database_name)
+            self._container = await database.create_container_if_not_exists(
+                id=self._container_name,
+                partition_key=PartitionKey(path="/user_id"),
+            )
+        return self._container
+
+    async def create(
+        self,
+        user_id: str,
+        conversation_id: str,
+        profile_id: str,
+        profile_name: str,
+        *,
+        custom_agent_id: str | None = None,
+        used_builtin_override: bool = False,
+        base_profile_id: str | None = None,
+        override_updated_at: str | None = None,
+    ) -> ConversationRecord:
+        now = datetime.now(timezone.utc).isoformat()
+        record = ConversationRecord(
+            id=conversation_id,
+            user_id=user_id,
+            profile_id=profile_id,
+            profile_name=profile_name,
+            title="",
+            created_at=now,
+            last_activity_at=now,
+            custom_agent_id=custom_agent_id,
+            used_builtin_override=used_builtin_override,
+            base_profile_id=base_profile_id,
+            override_updated_at=override_updated_at,
+        )
+        container = await self._get_container()
+        await container.upsert_item(record.to_doc())
+        return record
+
+    async def list_for_user(
+        self, user_id: str, *, limit: int = 50, cursor: str | None = None
+    ) -> tuple[list[ConversationRecord], str | None]:
+        container = await self._get_container()
+        query = (
+            "SELECT * FROM c WHERE c.user_id = @uid "
+            "ORDER BY c.last_activity_at DESC"
+        )
+        parameters = [{"name": "@uid", "value": user_id}]
+        records: list[ConversationRecord] = []
+        items = container.query_items(
+            query=query,
+            parameters=parameters,
+            partition_key=user_id,
+        )
+        async for item in items:
+            records.append(ConversationRecord.from_doc(item))
+            if len(records) >= max(0, limit):
+                break
+        return records, None
+
+    async def get_owned(self, user_id: str, conversation_id: str) -> ConversationRecord | None:
+        from azure.cosmos.exceptions import CosmosResourceNotFoundError
+
+        container = await self._get_container()
+        try:
+            item = await container.read_item(item=conversation_id, partition_key=user_id)
+        except CosmosResourceNotFoundError:
+            return None
+        return ConversationRecord.from_doc(item)
+
+    async def touch(self, user_id: str, conversation_id: str, *, title: str | None = None) -> None:
+        from azure.cosmos.exceptions import CosmosResourceNotFoundError
+
+        container = await self._get_container()
+        try:
+            item = await container.read_item(item=conversation_id, partition_key=user_id)
+        except CosmosResourceNotFoundError:
+            return
+        item["last_activity_at"] = datetime.now(timezone.utc).isoformat()
+        if title and not item.get("title"):
+            item["title"] = title
+        await container.upsert_item(item)
+
+    async def delete(self, user_id: str, conversation_id: str) -> bool:
+        from azure.cosmos.exceptions import CosmosResourceNotFoundError
+
+        container = await self._get_container()
+        try:
+            await container.delete_item(item=conversation_id, partition_key=user_id)
+            return True
+        except CosmosResourceNotFoundError:
+            return False
+
+
+# ---------------------------------------------------------------------------
+# Shared Cosmos client + provider/repository singletons
+# ---------------------------------------------------------------------------
+
+_cosmos_client: Any = None
+_async_credential: Any = None
+_history_provider: Any = None
+_conversation_repo: Any = None
+
+
+def _build_cosmos_client() -> Any:
+    """Create a single shared async CosmosClient (key for local, MI for prod)."""
+    from azure.cosmos.aio import CosmosClient
+
+    endpoint = (os.getenv("AZURE_COSMOS_ENDPOINT") or "").strip()
+    key = (os.getenv("AZURE_COSMOS_KEY") or "").strip() or None
+    host = urlsplit(endpoint).hostname or ""
+    kwargs: dict[str, Any] = {}
+    if host in ("localhost", "127.0.0.1"):
+        # Emulator: self-signed cert, rejects AAD tokens (use its well-known key),
+        # and advertises its internal container IP — so pin the client to our
+        # endpoint by disabling endpoint discovery.
+        kwargs["connection_verify"] = False
+        kwargs["enable_endpoint_discovery"] = False
+        if not key:
+            key = _EMULATOR_WELL_KNOWN_KEY
+
+    global _async_credential
+    if key:
+        credential: Any = key
+    else:
+        from azure.identity.aio import DefaultAzureCredential
+
+        # DefaultAzureCredential honours AZURE_AUTHORITY_HOST for Azure Government.
+        _async_credential = DefaultAzureCredential()
+        credential = _async_credential
+
+    logger.info(
+        "Cosmos client created (host=%s, auth=%s)",
+        host,
+        "key" if key else "managed-identity",
+    )
+    return CosmosClient(url=endpoint, credential=credential, **kwargs)
+
+
+def get_cosmos_client() -> Any:
+    """Return the lazily-created, shared async CosmosClient.
+
+    Raises if Cosmos is unconfigured. Shared with the per-user repositories in
+    ``user_data`` so the whole app uses a single client / connection pool.
+    """
+    global _cosmos_client
+    _require_cosmos()
+    if _cosmos_client is None:
+        _cosmos_client = _build_cosmos_client()
+    return _cosmos_client
+
+
+def _require_cosmos() -> None:
+    """Raise unless Cosmos is configured. There is no in-memory fallback by design."""
+    if not (os.getenv("AZURE_COSMOS_ENDPOINT") or "").strip():
+        raise RuntimeError(
+            "Azure Cosmos DB is required but not configured (AZURE_COSMOS_ENDPOINT is unset). "
+            "Run the Cosmos emulator locally (USE_COSMOS_EMULATOR=true and "
+            "AZURE_COSMOS_ENDPOINT=https://localhost:8081/), or point AZURE_COSMOS_ENDPOINT at "
+            "the deployed Cosmos account. Chat memory has no non-durable fallback."
+        )
+
+
+def get_history_provider() -> Any:
+    """Return the cached Cosmos agent history provider.
+
+    Requires Cosmos to be configured (emulator locally, real account when
+    deployed); raises otherwise.
+    """
+    global _history_provider
+    if _history_provider is not None:
+        return _history_provider
+
+    from agent_framework.azure import CosmosHistoryProvider
+
+    db = (os.getenv("AZURE_COSMOS_DATABASE_NAME") or "agent-memory").strip()
+    container = (os.getenv("AZURE_COSMOS_CONTAINER_NAME") or "chat-history").strip()
+    _history_provider = CosmosHistoryProvider(
+        cosmos_client=get_cosmos_client(),
+        database_name=db,
+        container_name=container,
+    )
+    logger.info(
+        "Durable Cosmos history provider enabled (db=%s, container=%s)",
+        db,
+        container,
+    )
+    return _history_provider
+
+
+def get_conversation_repository() -> Any:
+    """Return the cached Cosmos conversation-index repository.
+
+    Requires Cosmos to be configured; raises otherwise.
+    """
+    global _conversation_repo
+    if _conversation_repo is not None:
+        return _conversation_repo
+
+    _conversation_repo = CosmosConversationRepository(
+        get_cosmos_client(),
+        (os.getenv("AZURE_COSMOS_DATABASE_NAME") or "agent-memory").strip(),
+        (os.getenv("AZURE_COSMOS_CONVERSATIONS_CONTAINER") or "conversations").strip(),
+    )
+    return _conversation_repo
+
+
+def require_cosmos_configured() -> None:
+    """Fail fast at startup unless Cosmos is configured (or a double was injected for tests)."""
+    if _history_provider is not None or _conversation_repo is not None:
+        return
+    _require_cosmos()
+
+
+async def close_cosmos() -> None:
+    """Close the shared Cosmos client + credential (called on app shutdown)."""
+    global _cosmos_client, _async_credential, _history_provider, _conversation_repo
+    if _cosmos_client is not None:
+        try:
+            await _cosmos_client.close()
+        except Exception:  # noqa: BLE001 — shutdown best-effort
+            logger.debug("Error closing Cosmos client", exc_info=True)
+    if _async_credential is not None:
+        try:
+            await _async_credential.close()
+        except Exception:  # noqa: BLE001 — shutdown best-effort
+            logger.debug("Error closing Cosmos credential", exc_info=True)
+    _cosmos_client = None
+    _async_credential = None
+    _history_provider = None
+    _conversation_repo = None

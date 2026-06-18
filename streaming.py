@@ -1,6 +1,7 @@
 """Streaming, usage, and content conversion helpers for chat responses."""
 
 import json
+import re
 from typing import Any, AsyncGenerator, Optional
 
 from agent_framework import Agent as RuntimeAgent
@@ -121,6 +122,48 @@ def render_tool_result(result: object) -> str:
 	if isinstance(result, dict):
 		return json.dumps(result, ensure_ascii=False)
 	return str(result or "")
+
+
+_USER_TIME_OPEN = "[Current date and time: "
+_USER_TIME_CLOSE = "]\n\n"
+_USER_TIME_RE = re.compile(r"^\[Current date and time: [^\]]*\]\n\n")
+
+
+def with_user_time(text: str, when: str) -> str:
+	"""Prepend a date/time marker to a user message for the model.
+
+	The marker is stripped from the wire form by ``messages_to_wire`` so it stays
+	invisible in the UI while remaining in the model-visible session history.
+	"""
+	return f"{_USER_TIME_OPEN}{when}{_USER_TIME_CLOSE}{text}"
+
+
+def strip_user_time(text: str) -> str:
+	"""Remove the ``with_user_time`` marker so resumed history renders cleanly."""
+	return _USER_TIME_RE.sub("", text, count=1)
+
+
+def messages_to_wire(messages: list[Any]) -> list[dict[str, Any]]:
+	"""Map stored agent_framework ``Message`` objects to the frontend ``ChatMessage[]`` shape.
+
+	Mirrors the framework's conversation-persistence sample: read each message's
+	``role`` and ``text``. Only user/assistant turns that carry text become chat
+	bubbles (tool-call/result messages have no display text).
+	"""
+	wire: list[dict[str, Any]] = []
+	for msg in messages:
+		role = getattr(msg, "role", None)
+		role = getattr(role, "value", role)
+		if role not in ("user", "assistant"):
+			continue
+		text = getattr(msg, "text", "") or ""
+		if role == "user":
+			text = strip_user_time(text)
+		if not text:
+			continue
+		wire.append({"role": role, "content": text})
+	return wire
+
 
 
 async def stream_agent_response(

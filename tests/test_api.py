@@ -1,11 +1,13 @@
 """Tests for FastAPI API endpoints."""
 
+import asyncio
 import os
 from types import SimpleNamespace
 
 os.environ.setdefault("AUTH_DISABLED", "true")
 os.environ.setdefault("AZURE_SQL_CONNECTIONSTRING", "")
 
+import user_data
 from main import _sessions
 from prompt_config import load_agents_yaml
 
@@ -132,11 +134,16 @@ def test_standard_profile_session_preserves_runtime_request_and_response(client,
     monkeypatch.setattr(session_orchestration, "create_chat_runtime", fake_create_chat_runtime)
     monkeypatch.setattr(session_orchestration, "connect_mcp_servers", fake_connect_mcp_servers)
 
+    asyncio.run(
+        user_data.get_user_profile_repository().upsert(
+            "dev-user", "dev-user", {"name": "Avery", "preferences": "brief", "notes": "pilot"}
+        )
+    )
+
     resp = client.post(
         "/api/sessions",
         json={
             "profile_id": "search",
-            "user_profile": {"name": "Avery", "preferences": "brief", "notes": "pilot"},
         },
     )
 
@@ -183,6 +190,12 @@ def test_custom_session_preserves_runtime_request_and_response(client, monkeypat
     monkeypatch.setattr(session_orchestration, "create_chat_runtime", fake_create_chat_runtime)
     monkeypatch.setattr(session_orchestration, "connect_mcp_servers", fake_connect_mcp_servers)
 
+    asyncio.run(
+        user_data.get_user_profile_repository().upsert(
+            "dev-user", "dev-user", {"name": "Avery", "preferences": "brief", "notes": "pilot"}
+        )
+    )
+
     resp = client.post(
         "/api/sessions",
         json={
@@ -194,7 +207,6 @@ def test_custom_session_preserves_runtime_request_and_response(client, monkeypat
             "custom_temperature": 0.7,
             "custom_skills": [],
             "mcp_servers": [],
-            "user_profile": {"name": "Avery", "preferences": "brief", "notes": "pilot"},
         },
     )
 

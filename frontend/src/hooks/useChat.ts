@@ -3,8 +3,8 @@ import type {
   AgentProfile,
   ChatMessage,
   ChatSession,
+  ConversationIndexEntry,
   McpConnectionResult,
-  StoredConversation,
   ToolInvocation,
   UsageDetails,
 } from '../types/api';
@@ -13,8 +13,6 @@ import {
   AuthError,
 } from '../api/client';
 import { emitToast } from './useToast';
-import { saveProfile } from './useUserProfile';
-import { useConversationPersistence } from './useConversationPersistence';
 import { cleanupSession, emptyBuiltInOverride, emptyUsage, startChatSession } from './useSessionLifecycle';
 
 interface ChatState {
@@ -30,7 +28,7 @@ interface ChatState {
   error: string | null;
   conversationId: string | null;
   saveCounter: number;
-  startSession: (profile: AgentProfile, history?: StoredConversation) => Promise<void>;
+  startSession: (profile: AgentProfile, resume?: ConversationIndexEntry) => Promise<void>;
   endSession: () => Promise<void>;
   send: (content: string, images?: File[]) => Promise<void>;
   clearError: () => void;
@@ -64,18 +62,14 @@ export function useChat(): ChatState {
     overrideUpdatedAt?: string;
   }>(emptyBuiltInOverride());
 
-  const { persistLatestConversation, saveCurrentConversation } = useConversationPersistence({
-    session,
-    messages,
-    createdAtRef,
-    conversationIdRef,
-    customAgentIdRef,
-    builtInOverrideRef,
-  });
+  // History is persisted server-side (Cosmos); the client no longer saves
+  // conversations to browser storage. saveCurrentConversation is a no-op kept
+  // for call-site compatibility.
+  const saveCurrentConversation = useCallback(async () => {}, []);
 
-  const startSession = useCallback(async (profile: AgentProfile, history?: StoredConversation) => {
+  const startSession = useCallback(async (profile: AgentProfile, resume?: ConversationIndexEntry) => {
     try {
-      const next = await startChatSession(profile, history, session);
+      const next = await startChatSession(profile, resume, session);
       createdAtRef.current = next.createdAt;
       conversationIdRef.current = next.conversationId;
       customAgentIdRef.current = next.customAgentId;
@@ -262,27 +256,11 @@ export function useChat(): ChatState {
           },
           onDone: () => {
             setIsStreaming(false);
-            // Sync user profile if save_user_profile was called
-            const profileSave = toolsRef.current.find((t) => t.name === 'save_user_profile');
-            if (profileSave && session) {
-              try {
-                const args = JSON.parse(profileSave.arguments);
-                saveProfile(session.profile_id, {
-                  name: args.name ?? '',
-                  preferences: args.preferences ?? '',
-                  notes: args.notes ?? '',
-                  updatedAt: new Date().toISOString(),
-                });
-              } catch { /* best-effort */ }
-            }
-            // Auto-save conversation after response completes
+            // The backend already persisted this turn to Cosmos and updated the
+            // conversation index; bump the save counter so the sidebar reloads
+            // the server-sourced conversation list.
             if (session) {
-              setMessages((currentMessages) => {
-                persistLatestConversation(currentMessages)
-                  .then(() => setSaveCounter((c) => c + 1))
-                  .catch(() => { /* persistence is best-effort */ });
-                return currentMessages;
-              });
+              setSaveCounter((c) => c + 1);
             }
           },
         },
@@ -294,7 +272,7 @@ export function useChat(): ChatState {
       // Non-auth errors already emitted as toasts by client.ts
       setIsStreaming(false);
     }
-  }, [session, messages.length, persistLatestConversation]);
+  }, [session, messages.length]);
 
   const clearError = useCallback(() => setError(null), []);
 
