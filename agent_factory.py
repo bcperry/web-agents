@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Sequence
 
-from agent_framework import CompactionProvider, InMemoryHistoryProvider, SkillsProvider
+from agent_framework import CompactionProvider, SkillsProvider
 from agent_framework import Agent as RuntimeAgent
 from agent_framework._compaction import (
     CharacterEstimatorTokenizer,
@@ -28,6 +28,7 @@ from prompt_config import (
 )
 from mcp_servers import get_search_context_provider
 from sub_agent_tools import derive_sub_agent_tool_surface, disambiguate_tool_names
+from cosmos_memory import get_history_provider
 
 
 @dataclass(frozen=True)
@@ -92,24 +93,14 @@ def _build_skills_provider(
     if not skill_names or not _SKILLS_DIR.is_dir():
         return None
 
-    provider = SkillsProvider(skill_paths=_SKILLS_DIR)
+    from agent_framework import FileSkillsSource, FilteringSkillsSource
 
-    # Filter to only the requested skills
-    discovered = set(provider._skills.keys())
-    requested = set(skill_names)
-    missing = requested - discovered
-    if missing:
-        logger.warning("Requested skills not found in %s: %s", _SKILLS_DIR, missing)
-
-    # Remove skills that weren't requested
-    to_remove = discovered - requested
-    for name in to_remove:
-        del provider._skills[name]
-
-    if not provider._skills:
-        return None
-
-    return provider
+    selected = set(skill_names)
+    source = FilteringSkillsSource(
+        FileSkillsSource(_SKILLS_DIR),
+        predicate=lambda skill: skill.frontmatter.name in selected,
+    )
+    return SkillsProvider(source)
 
 
 def _get_default_temperature() -> float:
@@ -145,7 +136,7 @@ def _build_context_providers(
         ],
     )
 
-    history = InMemoryHistoryProvider(skip_excluded=True)
+    history = get_history_provider()
     compaction = CompactionProvider(
         before_strategy=pipeline,
         after_strategy=pipeline,

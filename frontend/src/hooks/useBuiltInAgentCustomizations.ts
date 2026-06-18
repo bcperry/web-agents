@@ -1,57 +1,38 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { AgentCustomizationOverride } from '../types/api';
-import { readJson, writeJson } from '../utils/storage';
+import {
+  listAgentCustomizations,
+  saveAgentCustomization as saveAgentCustomizationApi,
+  deleteAgentCustomization as deleteAgentCustomizationApi,
+} from '../api/client';
 
-const STORAGE_KEY = 'webagents_builtin_agent_customizations';
-
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === 'string');
-}
-
-function isOverride(value: unknown): value is AgentCustomizationOverride {
-  if (!value || typeof value !== 'object') return false;
-  const candidate = value as Record<string, unknown>;
-  return (
-    typeof candidate.id === 'string' &&
-    typeof candidate.baseProfileId === 'string' &&
-    typeof candidate.description === 'string' &&
-    typeof candidate.systemPrompt === 'string' &&
-    isStringArray(candidate.tools) &&
-    isStringArray(candidate.skills) &&
-    Array.isArray(candidate.mcpServers) &&
-    typeof candidate.useSearchContext === 'boolean' &&
-    typeof candidate.icon === 'string' &&
-    Array.isArray(candidate.starters) &&
-    candidate.source === 'builtin-override' &&
-    typeof candidate.createdAt === 'string' &&
-    typeof candidate.updatedAt === 'string'
-  );
-}
-
-function persistOverrides(overrides: AgentCustomizationOverride[]): void {
-  writeJson(STORAGE_KEY, overrides);
-}
-
+/**
+ * Server-backed built-in agent customizations (overrides). The authoritative
+ * store is Azure Cosmos DB (via the backend API); mutations update local state
+ * optimistically and persist in the background.
+ */
 export function useBuiltInAgentCustomizations() {
-  const [overrides, setOverrides] = useState<AgentCustomizationOverride[]>(() =>
-    readJson<unknown[]>(STORAGE_KEY, [], Array.isArray).filter(isOverride),
-  );
+  const [overrides, setOverrides] = useState<AgentCustomizationOverride[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void listAgentCustomizations()
+      .then((list) => { if (!cancelled) setOverrides(list); })
+      .catch(() => { /* surfaced by the API layer */ });
+    return () => { cancelled = true; };
+  }, []);
 
   const save = useCallback((override: AgentCustomizationOverride) => {
     setOverrides((prev) => {
       const idx = prev.findIndex((item) => item.baseProfileId === override.baseProfileId);
-      const next = idx >= 0 ? prev.map((item, i) => (i === idx ? override : item)) : [...prev, override];
-      persistOverrides(next);
-      return next;
+      return idx >= 0 ? prev.map((item, i) => (i === idx ? override : item)) : [...prev, override];
     });
+    void saveAgentCustomizationApi(override).catch(() => { /* surfaced by the API layer */ });
   }, []);
 
   const remove = useCallback((baseProfileId: string) => {
-    setOverrides((prev) => {
-      const next = prev.filter((item) => item.baseProfileId !== baseProfileId);
-      persistOverrides(next);
-      return next;
-    });
+    setOverrides((prev) => prev.filter((item) => item.baseProfileId !== baseProfileId));
+    void deleteAgentCustomizationApi(baseProfileId).catch(() => { /* surfaced by the API layer */ });
   }, []);
 
   const get = useCallback(

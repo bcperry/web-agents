@@ -28,6 +28,8 @@
 - `config/agents.yaml` (built-in), localStorage (custom agents) (009-agents-page-grouping)
 - TypeScript 5.9.x and React 19.x for frontend; Python 3.12.6/FastAPI backend unchanged + React, Vite, existing `useTheme` and `useAuth` hooks; no new dependencies (010-admin-settings-page)
 - Existing localStorage key `webagents_theme`; no backend storage changes (010-admin-settings-page)
+- Python 3.12.6 (FastAPI backend); TypeScript 5.9.x + React 19.x (frontend) + `agent-framework-core`/`agent-framework-openai` (existing); NEW `agent-framework-azure-cosmos` (provides `CosmosHistoryProvider`, re-exported as `agent_framework.azure.CosmosHistoryProvider`); `azure-cosmos` (async SDK, pulled in by the provider); `azure-identity` (`DefaultAzureCredential`, already used) (011-cosmos-agent-memory)
+- Azure Cosmos DB for NoSQL — one database, two containers: `chat-history` (messages, partition key `/session_id`, managed by `CosmosHistoryProvider`) and `conversations` (per-user index, partition key `/user_id`, managed by new backend code). Local dev/tests use a Cosmos key/emulator or an in-memory fallback (011-cosmos-agent-memory)
 
 ## Project Structure
 
@@ -60,6 +62,6 @@ uv run pytest                      # Run tests
 - Package manager: uv only (never pip)
 
 ## Recent Changes
+- 011-cosmos-agent-memory: Added Python 3.12.6 (FastAPI backend); TypeScript 5.9.x + React 19.x (frontend) + `agent-framework-core`/`agent-framework-openai` (existing); NEW `agent-framework-azure-cosmos` (provides `CosmosHistoryProvider`, re-exported as `agent_framework.azure.CosmosHistoryProvider`); `azure-cosmos` (async SDK, pulled in by the provider); `azure-identity` (`DefaultAzureCredential`, already used)
 - 010-admin-settings-page: Added TypeScript 5.9.x and React 19.x for frontend; Python 3.12.6/FastAPI backend unchanged + React, Vite, existing `useTheme` and `useAuth` hooks; no new dependencies
 - 009-agents-page-grouping: Added Python 3.12+ (backend), TypeScript (frontend) + FastAPI (backend), React (frontend), Vite (bundler)
-- 008-agents-as-tools: Added Python 3.12+ (backend), TypeScript / React 18 (frontend) + FastAPI, `agent-framework-core` (`Agent.as_tool()`), `agent-framework-azure-ai-search`, OpenAIChatClient (Azure OpenAI Government endpoint), React, Vite

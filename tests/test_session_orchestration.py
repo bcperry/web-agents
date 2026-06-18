@@ -1,13 +1,17 @@
 """Tests for session orchestration helpers."""
 
+import asyncio
 import logging
 
 import pytest
 from fastapi import HTTPException
 
+import session_orchestration
 from prompt_config import BuiltinAgentRef, CustomAgentRef
 from session_orchestration import (
     _build_validated_sub_agent_refs,
+    _create_conversation_index,
+    _resolve_session_id,
     sanitize_mcp_result_error,
 )
 
@@ -124,3 +128,57 @@ def test_build_validated_sub_agent_refs_flags_duplicate_targets():
         )
     codes = {e["code"] for e in exc_info.value.detail["errors"]}
     assert "duplicate_target" in codes
+
+
+# ---------------------------------------------------------------------------
+# Conversation-store error paths must surface a clean 503 (regression: the
+# module-level `logger` was undefined, so the error branch raised NameError
+# instead of HTTPException 503).
+# ---------------------------------------------------------------------------
+
+
+def _run(coro):
+    return asyncio.run(coro)
+
+
+class _SimpleUser:
+    def __init__(self, user_id="user-1"):
+        self.user_id = user_id
+
+
+class _BoomConversations:
+    """Conversation store whose every call fails, to exercise the error/log path."""
+
+    async def get_owned(self, user_id, conversation_id):
+        raise RuntimeError("store down")
+
+    async def create(self, *args, **kwargs):
+        raise RuntimeError("store down")
+
+
+def test_session_orchestration_defines_module_logger():
+    assert isinstance(session_orchestration.logger, logging.Logger)
+
+
+def test_resolve_session_id_maps_store_error_to_503():
+    with pytest.raises(HTTPException) as exc_info:
+        _run(
+            _resolve_session_id(
+                _BoomConversations(), _SimpleUser(), {"conversation_id": "c1"}
+            )
+        )
+    assert exc_info.value.status_code == 503
+
+
+def test_create_conversation_index_maps_store_error_to_503():
+    with pytest.raises(HTTPException) as exc_info:
+        _run(
+            _create_conversation_index(
+                _BoomConversations(),
+                user=_SimpleUser(),
+                session_id="c1",
+                profile_id="search",
+                profile_name="Search Agent",
+            )
+        )
+    assert exc_info.value.status_code == 503

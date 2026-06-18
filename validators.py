@@ -95,13 +95,13 @@ def validate_tool_names(raw_tools: object, known_tools: set[str], field_name: st
 	return list(raw_tools)
 
 
-def available_skill_names(skills_dir: Path) -> set[str]:
+async def available_skill_names(skills_dir: Path) -> set[str]:
 	if not skills_dir.is_dir():
 		return set()
-	from agent_framework import SkillsProvider
+	from agent_framework import FileSkillsSource
 
-	provider = SkillsProvider(skill_paths=skills_dir)
-	return set(provider._skills.keys())
+	skills = await FileSkillsSource(skills_dir).get_skills()
+	return {skill.frontmatter.name for skill in skills}
 
 
 def filter_known_skill_names(raw_skills: object, available_skills: set[str], field_name: str = "custom_skills") -> tuple[list[str], list[str]]:

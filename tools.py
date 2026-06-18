@@ -5,6 +5,7 @@ import re
 import struct
 import time
 from contextlib import closing
+from datetime import datetime, timezone
 from typing import Any
 
 from pydantic import Field
@@ -85,26 +86,28 @@ def _sanitize_cell_value(value: Any) -> Any:
         return _truncate_text(value, MAX_SQL_CELL_CHARS, "SQL CELL")
     return value
 
-class UserProfileStore:
-    """Per-session in-memory store for user profile data.
+def build_user_profile_tools(user_id: str) -> dict[str, Any]:
+    """Build the user-profile memory tools bound to a specific user.
 
-    The frontend sends the profile (from localStorage) when creating a session.
-    Tools exposed: get_user_profile, save_user_profile.
+    The returned async tools read and write the user's profile directly in
+    Azure Cosmos DB, so Cosmos is the single source of truth — there is no
+    per-session copy and no frontend round-trip to keep in sync. Returned
+    keyed by tool name so callers can expose ``get_user_profile`` and/or
+    ``save_user_profile`` independently.
     """
+    from user_data import get_user_profile_repository
 
-    def __init__(self, profile: dict[str, str] | None = None):
-        self._profile: dict[str, str] | None = profile
+    async def get_user_profile() -> str:
+        """Return the user's saved profile (name, preferences, notes) as JSON, or a message if none is stored yet."""
+        profile = await get_user_profile_repository().get(user_id, user_id)
+        if not profile:
+            return (
+                "No user profile found. Please ask the user for their name "
+                "and any preferences or interests they'd like you to remember."
+            )
+        return json.dumps(profile)
 
-    def get_user_profile(self) -> str:
-        """Return the stored user profile as a JSON string, or a message indicating no profile was found."""
-        if self._profile:
-            return json.dumps(self._profile)
-        return (
-            "No user profile found. Please ask the user for their name "
-            "and any preferences or interests they'd like you to remember."
-        )
-
-    def save_user_profile(self, name: str, preferences: str = "", notes: str = "") -> str:
+    async def save_user_profile(name: str, preferences: str = "", notes: str = "") -> str:
         """Save or update the user profile. Returns confirmation or a validation error.
 
         Args:
@@ -114,9 +117,13 @@ class UserProfileStore:
         """
         if not name or not name.strip():
             return "Error: name must not be empty."
-        self._profile = {
+        profile = {
             "name": name.strip(),
             "preferences": preferences.strip(),
             "notes": notes.strip(),
+            "updatedAt": datetime.now(timezone.utc).isoformat(),
         }
-        return f"User profile saved successfully: {json.dumps(self._profile)}"
+        await get_user_profile_repository().upsert(user_id, user_id, profile)
+        return f"User profile saved successfully: {json.dumps(profile)}"
+
+    return {"get_user_profile": get_user_profile, "save_user_profile": save_user_profile}

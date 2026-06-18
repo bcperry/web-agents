@@ -15,8 +15,10 @@ from fastapi import HTTPException
 from pydantic import BaseModel
 
 from agent_factory import SubAgentResources, create_chat_runtime
+from cosmos_memory import get_conversation_repository
 from eval_trace import EvalTraceLogger
 from mcp_servers import connect_mcp_servers, parse_mcp_server_configs
+from user_data import get_user_profile_repository
 from prompt_config import (
     SubAgentToolRef,
     _parse_sub_agent_tool_refs,
@@ -36,6 +38,8 @@ from validators import (
     validate_temperature,
     validate_tool_names,
 )
+
+logger = logging.getLogger(__name__)
 
 MAX_USER_INPUT_CHARS = int(os.getenv("MAX_USER_INPUT_CHARS", "8000"))
 
@@ -80,7 +84,7 @@ class SessionContext:
     sessions: dict[str, Any]
     session_data_cls: type
     get_skills_dir: Callable[[], Path]
-    build_tool_instances: Callable[..., tuple[list[Any], Any]]
+    build_tool_instances: Callable[..., list[Any]]
     build_user_profile_context: Callable[[dict[str, str] | None], str]
 
 
@@ -274,7 +278,7 @@ async def _resolve_builtin_sub_agent_resources(
     *,
     ctx: SessionContext,
     user_bearer_token: str | None,
-    user_profile_data: dict[str, str] | None,
+    user_id: str,
     session_id: str,
     logger: logging.Logger,
 ) -> tuple[dict[str, SubAgentResources], list[Any]]:
@@ -299,10 +303,10 @@ async def _resolve_builtin_sub_agent_resources(
             continue
         tool_names_raw = entry.get("tools") or []
         tool_names = {str(t) for t in tool_names_raw if isinstance(t, str)}
-        function_tools, _store = ctx.build_tool_instances(
+        function_tools = ctx.build_tool_instances(
             tool_names,
             session_id=f"{session_id}:sub:{profile_id}",
-            user_profile_data=user_profile_data,
+            user_id=user_id,
         )
         try:
             mcp_configs = parse_mcp_server_configs(entry)
@@ -325,16 +329,61 @@ async def _resolve_builtin_sub_agent_resources(
     return resources_by_profile, all_mcp_tools
 
 
-def _restore_session_history(history: object, session_id: str, fallback_session: AgentSession, logger: logging.Logger) -> AgentSession:
-    if history and isinstance(history, dict):
-        try:
-            agent_session = AgentSession.from_dict(history)
-            agent_session._session_id = session_id
-            logger.info("Restored session history for session %s", session_id)
-            return agent_session
-        except Exception:
-            logger.warning("Failed to restore session history for %s, using fresh session", session_id)
-    return fallback_session
+def _bind_session_id(session: AgentSession, session_id: str) -> AgentSession:
+    """Bind the runtime session to the conversation id (Cosmos partition key)."""
+    session._session_id = session_id
+    return session
+
+
+async def _resolve_session_id(conversations: Any, user: Any, body: dict[str, Any]) -> tuple[str, bool]:
+    """Return ``(session_id, is_resume)``.
+
+    When ``conversation_id`` is supplied the caller is resuming an existing
+    conversation: ownership is verified against the per-user index (404 if it is
+    not owned by the caller). Otherwise a new unguessable session id is generated
+    for a fresh conversation.
+    """
+    conversation_id = body.get("conversation_id")
+    if not conversation_id:
+        return str(uuid.uuid4()), False
+    conversation_id = str(conversation_id)
+    try:
+        owned = await conversations.get_owned(user.user_id, conversation_id)
+    except Exception as exc:  # noqa: BLE001 — surface store errors as retryable
+        logger.error("Conversation lookup failed for %s: %s", conversation_id, sanitize_mcp_result_error(str(exc)))
+        raise HTTPException(status_code=503, detail="Conversation store is temporarily unavailable. Please try again.") from exc
+    if owned is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return conversation_id, True
+
+
+async def _create_conversation_index(
+    conversations: Any,
+    *,
+    user: Any,
+    session_id: str,
+    profile_id: str,
+    profile_name: str,
+    custom_agent_id: str | None = None,
+    used_builtin_override: bool = False,
+    base_profile_id: str | None = None,
+    override_updated_at: str | None = None,
+) -> None:
+    """Write the per-user conversation index entry (FR-002/FR-004)."""
+    try:
+        await conversations.create(
+            user.user_id,
+            session_id,
+            profile_id,
+            profile_name,
+            custom_agent_id=custom_agent_id,
+            used_builtin_override=used_builtin_override,
+            base_profile_id=base_profile_id,
+            override_updated_at=override_updated_at,
+        )
+    except Exception as exc:  # noqa: BLE001 — surface store errors as retryable
+        logger.error("Failed to write conversation index for %s: %s", session_id, sanitize_mcp_result_error(str(exc)))
+        raise HTTPException(status_code=503, detail="Conversation store is temporarily unavailable. Please try again.") from exc
 
 
 def _parse_profile_override(raw_profile_override: object) -> ProfileOverrideRequest | None:
@@ -364,7 +413,6 @@ def _store_session(
     profile_name: str,
     chat_runtime: Any,
     agent_session: AgentSession,
-    user_profile_store: Any,
     mcp_tools: list[Any],
     profile_override: "ProfileOverrideRequest | None" = None,
 ) -> None:
@@ -380,7 +428,6 @@ def _store_session(
         prompt_manifest=chat_runtime.prompt_manifest,
         prompt_logical_profile=chat_runtime.prompt_logical_profile,
     )
-    session_data.user_profile_store = user_profile_store
     session_data.mcp_tools = mcp_tools
     if profile_override is not None:
         session_data.used_profile_override = True
@@ -439,7 +486,7 @@ async def _create_custom_chat_session(
     custom_search_context = bool(body.get("custom_search_context", False))
     custom_temperature = validate_temperature(body.get("custom_temperature"))
     custom_tools = validate_tool_names(body.get("custom_tools", []), known_tool_names_from_profiles(profiles_data))
-    custom_skills, dropped_skills = filter_known_skill_names(body.get("custom_skills", []), available_skill_names(ctx.get_skills_dir()))
+    custom_skills, dropped_skills = filter_known_skill_names(body.get("custom_skills", []), await available_skill_names(ctx.get_skills_dir()))
     if dropped_skills:
         logger.warning("Custom agent '%s' references unknown skills, dropping: %s", custom_name, dropped_skills)
     raw_mcp_servers = validate_http_mcp_servers(body.get("mcp_servers", []), override=False)
@@ -449,22 +496,27 @@ async def _create_custom_chat_session(
         logger=logger,
     )
 
-    session_id = str(uuid.uuid4())
+    conversations = get_conversation_repository()
+    session_id, is_resume = await _resolve_session_id(conversations, user, body)
     custom_tool_set = set(custom_tools)
     try:
-        function_tools, user_profile_store = ctx.build_tool_instances(
+        function_tools = ctx.build_tool_instances(
             custom_tool_set,
             session_id=session_id,
-            user_profile_data=body.get("user_profile"),
+            user_id=user.user_id,
         )
         mcp_configs = parse_mcp_server_configs({"mcp_servers": raw_mcp_servers})
         mcp_tools, mcp_results = await connect_mcp_servers(mcp_configs, user_token=user_bearer_token)
-        profile_context = ctx.build_user_profile_context(body.get("user_profile")) if "get_user_profile" in custom_tool_set else ""
+        profile_context = (
+            ctx.build_user_profile_context(await get_user_profile_repository().get(user.user_id, user.user_id))
+            if "get_user_profile" in custom_tool_set
+            else ""
+        )
         sub_agent_resources, sub_mcp_tools = await _resolve_builtin_sub_agent_resources(
             sub_agent_refs,
             ctx=ctx,
             user_bearer_token=user_bearer_token,
-            user_profile_data=body.get("user_profile"),
+            user_id=user.user_id,
             session_id=session_id,
             logger=logger,
         )
@@ -490,7 +542,7 @@ async def _create_custom_chat_session(
         logger.exception("Unexpected error creating session for custom agent '%s'", custom_name)
         raise HTTPException(status_code=500, detail=sanitize_mcp_result_error(str(exc))) from exc
 
-    agent_session = _restore_session_history(body.get("history"), session_id, chat_runtime.session, logger)
+    agent_session = _bind_session_id(chat_runtime.session, session_id)
     _store_session(
         ctx,
         session_id=session_id,
@@ -499,9 +551,17 @@ async def _create_custom_chat_session(
         profile_name=custom_name,
         chat_runtime=chat_runtime,
         agent_session=agent_session,
-        user_profile_store=user_profile_store,
         mcp_tools=mcp_tools,
     )
+    if not is_resume:
+        await _create_conversation_index(
+            conversations,
+            user=user,
+            session_id=session_id,
+            profile_id="custom",
+            profile_name=custom_name,
+            custom_agent_id=str(body.get("custom_id") or custom_name) or None,
+        )
 
     logger.info("Created custom session %s for user %s agent=%s", session_id, user.user_id, custom_name)
     return {
@@ -531,19 +591,20 @@ async def _create_profile_chat_session(
     profile_name = str(profile_entry.get("name", logical_profile))
     profile_override = _parse_profile_override(body.get("profile_override"))
     profile_tool_names = list(profile_override.custom_tools) if profile_override is not None else (profile_entry.get("tools") or [])
-    session_id = str(uuid.uuid4())
+    conversations = get_conversation_repository()
+    session_id, is_resume = await _resolve_session_id(conversations, user, body)
 
     try:
-        function_tools, user_profile_store = ctx.build_tool_instances(
+        function_tools = ctx.build_tool_instances(
             set(profile_tool_names),
             session_id=session_id,
-            user_profile_data=body.get("user_profile"),
+            user_id=user.user_id,
         )
 
         if profile_override is not None:
             validate_tool_names(profile_override.custom_tools, known_tool_names_from_profiles(profiles_data))
             if profile_override.custom_skills:
-                kept, dropped = filter_known_skill_names(profile_override.custom_skills, available_skill_names(ctx.get_skills_dir()))
+                kept, dropped = filter_known_skill_names(profile_override.custom_skills, await available_skill_names(ctx.get_skills_dir()))
                 if dropped:
                     logger.warning("Profile override for '%s' references unknown skills, dropping: %s", logical_profile, dropped)
                 profile_override.custom_skills = kept
@@ -554,7 +615,11 @@ async def _create_profile_chat_session(
             mcp_configs = parse_mcp_server_configs(profile_entry)
 
         mcp_tools, mcp_results = await connect_mcp_servers(mcp_configs, user_token=user_bearer_token)
-        profile_context = ctx.build_user_profile_context(body.get("user_profile")) if "get_user_profile" in profile_tool_names else ""
+        profile_context = (
+            ctx.build_user_profile_context(await get_user_profile_repository().get(user.user_id, user.user_id))
+            if "get_user_profile" in profile_tool_names
+            else ""
+        )
 
         if profile_override is not None:
             override_sub_agent_payload = profile_override.agentsAsTools if profile_override.agentsAsTools is not None else profile_override.agents_as_tools
@@ -567,7 +632,7 @@ async def _create_profile_chat_session(
                 override_sub_agent_refs,
                 ctx=ctx,
                 user_bearer_token=user_bearer_token,
-                user_profile_data=body.get("user_profile"),
+                user_id=user.user_id,
                 session_id=session_id,
                 logger=logger,
             )
@@ -590,7 +655,7 @@ async def _create_profile_chat_session(
                 profile_sub_agent_refs,
                 ctx=ctx,
                 user_bearer_token=user_bearer_token,
-                user_profile_data=body.get("user_profile"),
+                user_id=user.user_id,
                 session_id=session_id,
                 logger=logger,
             )
@@ -610,7 +675,7 @@ async def _create_profile_chat_session(
         logger.exception("Unexpected error creating session for profile '%s'", logical_profile)
         raise HTTPException(status_code=500, detail=sanitize_mcp_result_error(str(exc))) from exc
 
-    agent_session = _restore_session_history(body.get("history"), session_id, chat_runtime.session, logger)
+    agent_session = _bind_session_id(chat_runtime.session, session_id)
     _store_session(
         ctx,
         session_id=session_id,
@@ -619,10 +684,20 @@ async def _create_profile_chat_session(
         profile_name=profile_name,
         chat_runtime=chat_runtime,
         agent_session=agent_session,
-        user_profile_store=user_profile_store,
         mcp_tools=mcp_tools,
         profile_override=profile_override,
     )
+    if not is_resume:
+        await _create_conversation_index(
+            conversations,
+            user=user,
+            session_id=session_id,
+            profile_id=logical_profile,
+            profile_name=profile_name,
+            used_builtin_override=profile_override is not None,
+            base_profile_id=logical_profile if profile_override is not None else None,
+            override_updated_at=profile_override.override_updated_at if profile_override is not None else None,
+        )
 
     logger.info("Created session %s for user %s profile %s", session_id, user.user_id, logical_profile)
     profile_skills = list(profile_override.custom_skills) if profile_override is not None else [

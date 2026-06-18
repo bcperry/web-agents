@@ -249,27 +249,6 @@ export interface ConversationIndexEntry {
   overrideUpdatedAt?: string;
 }
 
-export interface StoredConversation {
-  id: string;
-  profileId: string;
-  profileName: string;
-  description: string;
-  createdAt: string;
-  lastActivityAt: string;
-  sessionData: Record<string, unknown>;
-  customAgentId?: string;
-  usedBuiltInOverride?: boolean;
-  baseProfileId?: string;
-  overrideUpdatedAt?: string;
-}
-
-export interface UserMemoryProfile {
-  name: string;
-  preferences: string;
-  notes: string;
-  updatedAt: string;
-}
-
 export interface SkillDefinition {
   name: string;
   description: string;

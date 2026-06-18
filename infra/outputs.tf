@@ -39,6 +39,16 @@ output "MANAGED_IDENTITY_CLIENT_ID" {
   value       = module.managed_identity.managed_identity_client_id
 }
 
+output "AZURE_COSMOS_ENDPOINT" {
+  description = "The Cosmos DB account endpoint"
+  value       = module.cosmos.endpoint
+}
+
+output "AZURE_COSMOS_ACCOUNT_NAME" {
+  description = "The Cosmos DB account name"
+  value       = module.cosmos.account_name
+}
+
 output "MANAGED_IDENTITY_PRINCIPAL_ID" {
   description = "The principal ID of the managed identity"
   value       = module.managed_identity.managed_identity_principal_id

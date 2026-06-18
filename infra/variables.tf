@@ -90,6 +90,13 @@ variable "search_api_key" {
   sensitive   = true
 }
 
+# Local development access to the live Cosmos account
+variable "enable_dev_cosmos_access" {
+  description = "When 'true', grant the deploying user (AZURE_PRINCIPAL_ID) the Cosmos data-plane 'Built-in Data Contributor' role so you can run the app locally against the live account. Leave 'false'/empty for normal deployments."
+  type        = string
+  default     = "false"
+}
+
 # Entra ID / Azure AD authentication
 variable "entra_tenant_id" {
   description = "Entra ID (Azure AD) tenant ID for authentication"

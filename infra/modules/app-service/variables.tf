@@ -101,6 +101,31 @@ variable "search_api_key" {
   sensitive   = true
 }
 
+# Azure Cosmos DB (durable agent memory + per-user chat history)
+variable "azure_cosmos_endpoint" {
+  description = "Cosmos DB account endpoint"
+  type        = string
+  default     = ""
+}
+
+variable "azure_cosmos_database_name" {
+  description = "Cosmos DB database name"
+  type        = string
+  default     = "agent-memory"
+}
+
+variable "azure_cosmos_container_name" {
+  description = "Cosmos DB messages container name"
+  type        = string
+  default     = "chat-history"
+}
+
+variable "azure_cosmos_conversations_container" {
+  description = "Cosmos DB conversation index container name"
+  type        = string
+  default     = "conversations"
+}
+
 # Entra ID / Azure AD authentication
 variable "entra_tenant_id" {
   description = "Entra ID (Azure AD) tenant ID for authentication"

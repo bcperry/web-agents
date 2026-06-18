@@ -29,6 +29,11 @@ from eval_trace import EvalTraceLogger
 from mcp_servers import parse_mcp_server_configs, connect_mcp_servers, cleanup_mcp_servers, get_search_service_config
 from prompt_config import get_profile_display_name, load_agents_yaml
 from session_orchestration import SessionContext, create_chat_session
+from cosmos_memory import close_cosmos, cosmos_config_summary, get_conversation_repository, get_history_provider, require_cosmos_configured
+from user_data import (
+    get_agent_customizations_repository,
+    get_custom_agents_repository,
+)
 from skills_manager import SkillManager
 from streaming import (
     USAGE_INPUT_KEY,
@@ -38,11 +43,13 @@ from streaming import (
     is_context_length_error,
     is_retryable_error,
     merge_usage,
+    messages_to_wire,
     sse_event,
     stream_agent_response,
     usage_value,
+    with_user_time,
 )
-from tools import UserProfileStore
+from tools import build_user_profile_tools
 from validators import (
     ALLOWED_IMAGE_MIMES,
     MAX_IMAGE_SIZE_BYTES,
@@ -74,7 +81,7 @@ class SessionData:
         "session_id", "user_id", "profile_id", "profile_name",
         "agent", "agent_session", "tools", "usage",
         "eval_trace_logger", "prompt_manifest", "prompt_logical_profile",
-        "created_at", "context_usage", "user_profile_store",
+        "created_at", "context_usage",
         "mcp_tools", "used_profile_override", "override_updated_at",
     )
 
@@ -110,7 +117,6 @@ class SessionData:
             "max_context_chars": 0,
             "last_context_chars": 0,
         }
-        self.user_profile_store = None
         self.mcp_tools: list[Any] = []
         self.used_profile_override = False
         self.override_updated_at: str | None = None
@@ -154,20 +160,19 @@ def _build_tool_instances(
     tool_names: set[str],
     *,
     session_id: str,
-    user_profile_data: dict[str, str] | None = None,
-) -> tuple[list[Any], UserProfileStore | None]:
+    user_id: str | None = None,
+) -> list[Any]:
     """Instantiate the selected backend tools for a session or tool inventory call."""
     function_tools: list[Any] = []
-    user_profile_store = None
 
-    if {"get_user_profile", "save_user_profile"} & tool_names:
-        user_profile_store = UserProfileStore(user_profile_data if isinstance(user_profile_data, dict) else None)
-        if "get_user_profile" in tool_names:
-            function_tools.append(user_profile_store.get_user_profile)
-        if "save_user_profile" in tool_names:
-            function_tools.append(user_profile_store.save_user_profile)
+    profile_tool_names = {"get_user_profile", "save_user_profile"} & tool_names
+    if profile_tool_names:
+        profile_tools = build_user_profile_tools(user_id or "")
+        for name in ("get_user_profile", "save_user_profile"):
+            if name in profile_tool_names:
+                function_tools.append(profile_tools[name])
 
-    return function_tools, user_profile_store
+    return function_tools
 
 
 def _build_user_profile_context(user_profile_data: dict[str, str] | None) -> str:
@@ -203,12 +208,25 @@ _session_context = SessionContext(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler — runs on startup and shutdown."""
+    # Fail fast: Cosmos is required (emulator locally, real account when deployed).
+    # There is no non-durable in-memory fallback.
+    require_cosmos_configured()
+    cfg = cosmos_config_summary()
+    logger.info(
+        "Cosmos memory enabled — endpoint=%s database=%s messages=%s conversations=%s auth=%s",
+        cfg["endpoint"],
+        cfg["database"],
+        cfg["messages_container"],
+        cfg["conversations_container"],
+        cfg["auth"],
+    )
 
     yield
 
-    # Shutdown: clean up sessions
+    # Shutdown: clean up sessions and Cosmos resources
     session_count = len(_sessions)
     _sessions.clear()
+    await close_cosmos()
     logger.info("Cleaned up %d sessions on shutdown", session_count)
 
 
@@ -298,7 +316,7 @@ async def get_tools(user: AuthenticatedUser = Depends(get_current_user)):
     available_names: set[str] = set()
     for tool_name in sorted(tool_names):
         try:
-            tool_objects, _ = _build_tool_instances({tool_name}, session_id="discovery")
+            tool_objects = _build_tool_instances({tool_name}, session_id="discovery")
         except HTTPException as e:
             unavailable_tools.append({"name": tool_name, "reason": e.detail})
             continue
@@ -422,7 +440,7 @@ async def test_mcp_connections(
 # GET /api/skills — list available skills for custom agent builder
 @app.get("/api/skills")
 async def get_skills(user: AuthenticatedUser = Depends(get_current_user)):
-    return {"skills": SkillManager(_get_skills_dir()).list_summaries()}
+    return {"skills": await SkillManager(_get_skills_dir()).list_summaries()}
 
 
 # ---------------------------------------------------------------------------
@@ -688,12 +706,14 @@ async def send_message(
 
     content_type = request.headers.get("content-type", "")
     text_content = ""
+    client_time = ""
     image_files: list[UploadFile] = []
     image_data_list: list[bytes] = []
 
     if "multipart/form-data" in content_type:
         form = await request.form()
         text_content = str(form.get("content", ""))
+        client_time = str(form.get("client_time", ""))
         for item in form.getlist("images"):
             if hasattr(item, "read"):
                 data = await item.read()
@@ -702,6 +722,7 @@ async def send_message(
     else:
         body = await request.json()
         text_content = body.get("content", "")
+        client_time = str(body.get("client_time", "") or "")
 
     # Validate input length (T020)
     if len(text_content) > DEFAULT_MAX_USER_INPUT_CHARS:
@@ -716,8 +737,12 @@ async def send_message(
         if error:
             raise HTTPException(status_code=400, detail=error)
 
-    # Build content objects
-    contents: list[Content] = [Content.from_text(text_content)]
+    # Build content objects. The user's local date/time is prepended to the text the
+    # model sees (and to the persisted session history) but is stripped from the wire
+    # form by messages_to_wire, so it stays invisible in the UI.
+    when = client_time.strip() or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    model_text = with_user_time(text_content, when) if text_content.strip() else text_content
+    contents: list[Content] = [Content.from_text(model_text)]
     for f, data in zip(image_files, image_data_list):
         mime = f.content_type or "image/jpeg"
         contents.append(Content.from_data(data=data, media_type=mime))
@@ -732,6 +757,17 @@ async def send_message(
 
     # Stream the response
     async def generate() -> AsyncGenerator[str, None]:
+        # Persist the conversation index (title on first turn + last activity) BEFORE
+        # streaming, so the sidebar's refresh on the "done" event reliably reflects the
+        # title. Doing it after streaming races the client's refresh, so the title would
+        # only appear after a manual page reload.
+        try:
+            conversations = get_conversation_repository()
+            candidate_title = " ".join((text_content or "").split())[:60]
+            await conversations.touch(session_data.user_id, session_id, title=candidate_title or None)
+        except Exception:
+            logger.warning("Failed to update conversation index for %s", session_id, exc_info=True)
+
         try:
             async for event in stream_agent_response(
                 session_data.agent, contents, session_data.agent_session,
@@ -827,6 +863,156 @@ async def delete_session(
             usage_value(session_data.usage, USAGE_TOTAL_KEY),
         )
 
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Conversations — durable per-user chat history (Cosmos-backed)
+# ---------------------------------------------------------------------------
+
+# GET /api/conversations — list the authenticated user's conversations (US2)
+@app.get("/api/conversations")
+async def list_conversations(
+    user: AuthenticatedUser = Depends(get_current_user),
+    limit: int = 50,
+    cursor: str | None = None,
+):
+    repo = get_conversation_repository()
+    bounded = max(1, min(int(limit or 50), 200))
+    try:
+        records, next_cursor = await repo.list_for_user(user.user_id, limit=bounded, cursor=cursor)
+    except Exception as e:
+        logger.error("Failed to list conversations: %s", e)
+        raise HTTPException(status_code=503, detail="Conversation store is temporarily unavailable. Please try again.")
+    return {"conversations": [r.to_wire() for r in records], "nextCursor": next_cursor}
+
+
+# GET /api/conversations/{id}/messages — messages for a resumed conversation (US3)
+@app.get("/api/conversations/{conversation_id}/messages")
+async def get_conversation_messages(
+    conversation_id: str,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    repo = get_conversation_repository()
+    try:
+        owned = await repo.get_owned(user.user_id, conversation_id)
+    except Exception as e:
+        logger.error("Conversation lookup failed: %s", e)
+        raise HTTPException(status_code=503, detail="Conversation store is temporarily unavailable. Please try again.")
+    if owned is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    history_provider = get_history_provider()
+    try:
+        stored = await history_provider.get_messages(conversation_id)
+    except Exception as e:
+        logger.error("Failed to load messages for %s: %s", conversation_id, e)
+        raise HTTPException(status_code=503, detail="Conversation store is temporarily unavailable. Please try again.")
+    return {
+        "id": owned.id,
+        "profileId": owned.profile_id,
+        "profileName": owned.profile_name,
+        "messages": messages_to_wire(stored or []),
+    }
+
+
+# DELETE /api/conversations/{id} — delete index entry + stored messages (US5)
+@app.delete("/api/conversations/{conversation_id}", status_code=204)
+async def delete_conversation(
+    conversation_id: str,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    repo = get_conversation_repository()
+    try:
+        owned = await repo.get_owned(user.user_id, conversation_id)
+    except Exception as e:
+        logger.error("Conversation lookup failed: %s", e)
+        raise HTTPException(status_code=503, detail="Conversation store is temporarily unavailable. Please try again.")
+    if owned is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    history_provider = get_history_provider()
+    try:
+        clear = getattr(history_provider, "clear", None)
+        if clear is not None:
+            await clear(conversation_id)
+        await repo.delete(user.user_id, conversation_id)
+    except Exception as e:
+        logger.error("Failed to delete conversation %s: %s", conversation_id, e)
+        raise HTTPException(status_code=503, detail="Conversation store is temporarily unavailable. Please try again.")
+    # Drop any in-memory runtime session bound to this conversation
+    _sessions.pop(conversation_id, None)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Custom agents, agent customizations, user profile (durable per-user, Cosmos)
+# ---------------------------------------------------------------------------
+
+_USER_DATA_UNAVAILABLE = "User data store is temporarily unavailable. Please try again."
+
+
+@app.get("/api/custom-agents")
+async def list_custom_agents(user: AuthenticatedUser = Depends(get_current_user)):
+    try:
+        agents = await get_custom_agents_repository().list_for_user(user.user_id)
+    except Exception as e:
+        logger.error("Failed to list custom agents: %s", e)
+        raise HTTPException(status_code=503, detail=_USER_DATA_UNAVAILABLE)
+    return {"agents": agents}
+
+
+@app.put("/api/custom-agents/{agent_id}")
+async def save_custom_agent(agent_id: str, request: Request, user: AuthenticatedUser = Depends(get_current_user)):
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Body must be a JSON object")
+    try:
+        saved = await get_custom_agents_repository().upsert(user.user_id, agent_id, body)
+    except Exception as e:
+        logger.error("Failed to save custom agent %s: %s", agent_id, e)
+        raise HTTPException(status_code=503, detail=_USER_DATA_UNAVAILABLE)
+    return saved
+
+
+@app.delete("/api/custom-agents/{agent_id}", status_code=204)
+async def delete_custom_agent(agent_id: str, user: AuthenticatedUser = Depends(get_current_user)):
+    try:
+        await get_custom_agents_repository().delete(user.user_id, agent_id)
+    except Exception as e:
+        logger.error("Failed to delete custom agent %s: %s", agent_id, e)
+        raise HTTPException(status_code=503, detail=_USER_DATA_UNAVAILABLE)
+    return None
+
+
+@app.get("/api/agent-customizations")
+async def list_agent_customizations(user: AuthenticatedUser = Depends(get_current_user)):
+    try:
+        overrides = await get_agent_customizations_repository().list_for_user(user.user_id)
+    except Exception as e:
+        logger.error("Failed to list agent customizations: %s", e)
+        raise HTTPException(status_code=503, detail=_USER_DATA_UNAVAILABLE)
+    return {"overrides": overrides}
+
+
+@app.put("/api/agent-customizations/{base_profile_id}")
+async def save_agent_customization(base_profile_id: str, request: Request, user: AuthenticatedUser = Depends(get_current_user)):
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Body must be a JSON object")
+    try:
+        saved = await get_agent_customizations_repository().upsert(user.user_id, base_profile_id, body)
+    except Exception as e:
+        logger.error("Failed to save agent customization %s: %s", base_profile_id, e)
+        raise HTTPException(status_code=503, detail=_USER_DATA_UNAVAILABLE)
+    return saved
+
+
+@app.delete("/api/agent-customizations/{base_profile_id}", status_code=204)
+async def delete_agent_customization(base_profile_id: str, user: AuthenticatedUser = Depends(get_current_user)):
+    try:
+        await get_agent_customizations_repository().delete(user.user_id, base_profile_id)
+    except Exception as e:
+        logger.error("Failed to delete agent customization %s: %s", base_profile_id, e)
+        raise HTTPException(status_code=503, detail=_USER_DATA_UNAVAILABLE)
     return None
 
 

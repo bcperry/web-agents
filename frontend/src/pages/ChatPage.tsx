@@ -60,7 +60,7 @@ export function ChatPage({ onOpenAdmin, customAgents, builtInOverrides }: ChatPa
     saveCurrentConversation,
   } = useChat();
 
-  const { loadIndex, saveConversation, loadConversation, deleteConversation } = useConversationStore();
+  const { loadIndex, deleteConversation } = useConversationStore();
   const { user, logout, classificationBanner } = useAuth();
   const { setActiveAgentId } = useTheme();
   const { appName, appTagline, appLogo } = getRuntimeConfigSnapshot();
@@ -109,13 +109,13 @@ export function ChatPage({ onOpenAdmin, customAgents, builtInOverrides }: ChatPa
         console.error('Failed to load profiles:', err);
       })
       .finally(() => setLoadingProfiles(false));
-    setConversationIndex(loadIndex());
+    void loadIndex().then(setConversationIndex);
   }, [loadIndex]);
 
   // Refresh conversation index whenever a save completes
   useEffect(() => {
     if (saveCounter > 0) {
-      setConversationIndex(loadIndex());
+      void loadIndex().then(setConversationIndex);
     }
   }, [saveCounter, loadIndex]);
 
@@ -166,7 +166,7 @@ export function ChatPage({ onOpenAdmin, customAgents, builtInOverrides }: ChatPa
       await saveCurrentConversation();
       await endSession();
       setSelectedProfile(null);
-      setConversationIndex(loadIndex());
+      void loadIndex().then(setConversationIndex);
       // Replace the chat-active history entry with a chat entry so the back
       // button doesn't try to re-enter a session that no longer exists.
       if ((window.history.state as { view?: string } | null)?.view === 'chat-active') {
@@ -194,23 +194,19 @@ export function ChatPage({ onOpenAdmin, customAgents, builtInOverrides }: ChatPa
   }, [session, handleNewChat]);
 
   const handleSelectConversation = useCallback(async (id: string) => {
-    // Save the current conversation if one is active
+    // End the current session so the UI transitions to the spinner state.
     if (session) {
-      await saveCurrentConversation();
-      // End the current session so the UI transitions to the spinner state
       await endSession();
     }
 
-    const stored = loadConversation(id);
-    if (!stored) return;
+    const entry = conversationIndex.find((e) => e.id === id);
+    if (!entry) return;
 
-    // Touch lastActivityAt so resumed conversation moves to the top
-    // and is protected from eviction as the "oldest"
-    stored.lastActivityAt = new Date().toISOString();
-    saveConversation(stored);
-    setConversationIndex(loadIndex());
-
-    const profile = allProfiles.find((p) => p.id === stored.profileId);
+    // Custom-agent chats are stored with profileId "custom"; resolve them by
+    // customAgentId so the full definition is re-inlined on resume.
+    const profile = entry.profileId === 'custom' && entry.customAgentId
+      ? allProfiles.find((p) => p.customAgent?.id === entry.customAgentId)
+      : allProfiles.find((p) => p.id === entry.profileId);
     setSelectedProfile(profile || null);
     setCreatingSession(true);
     setSpinnerTextIndex(0);
@@ -222,12 +218,12 @@ export function ChatPage({ onOpenAdmin, customAgents, builtInOverrides }: ChatPa
 
     try {
       await startSession(profile || {
-        id: stored.profileId,
-        name: stored.profileName,
-        description: stored.description,
+        id: entry.profileId,
+        name: entry.profileName,
+        description: entry.description,
         icon: '/icons/custom.svg',
         starters: [],
-      }, stored);
+      }, entry);
       // Push a history entry so the back button returns to profile selection,
       // but only if we're not already in an active session (switching conversations
       // should not add an extra back step).
@@ -237,11 +233,15 @@ export function ChatPage({ onOpenAdmin, customAgents, builtInOverrides }: ChatPa
     } finally {
       setCreatingSession(false);
     }
-  }, [session, allProfiles, startSession, endSession, saveCurrentConversation, loadConversation, saveConversation, loadIndex]);
+  }, [session, conversationIndex, allProfiles, startSession, endSession]);
 
-  const handleDeleteConversation = useCallback((id: string) => {
-    deleteConversation(id);
-    setConversationIndex(loadIndex());
+  const handleDeleteConversation = useCallback(async (id: string) => {
+    try {
+      await deleteConversation(id);
+    } catch {
+      /* surfaced by the API layer */
+    }
+    void loadIndex().then(setConversationIndex);
   }, [deleteConversation, loadIndex]);
 
   const toggleSidebar = useCallback(() => {
@@ -319,9 +319,6 @@ export function ChatPage({ onOpenAdmin, customAgents, builtInOverrides }: ChatPa
           </div>
           <div className="chat-header-actions">
             <TokenUsage usage={sessionUsage} />
-            <button className="new-chat-btn" onClick={handleNewChat} type="button">
-              NEW CHAT
-            </button>
             {renderSettingsMenu()}
           </div>
         </header>

@@ -1,6 +1,9 @@
 import type {
   AgentProfile,
+  AgentCustomizationOverride,
   BuiltInAgentDefinition,
+  ChatMessage,
+  ConversationIndexEntry,
   CustomAgentDefinition,
   McpConnectionResult,
   McpServerEntry,
@@ -127,12 +130,6 @@ export async function testMcpConnections(servers: McpServerEntry[]): Promise<Mcp
   return data.results;
 }
 
-export interface SessionUserProfilePayload {
-  name: string;
-  preferences: string;
-  notes: string;
-}
-
 export interface SessionProfileOverridePayload {
   description: string;
   custom_prompt: string;
@@ -167,8 +164,7 @@ export interface SessionRequestPayload {
   mcp_servers?: McpServerEntry[];
   agentsAsTools?: SubAgentToolWirePayload[];
   profile_override?: SessionProfileOverridePayload;
-  history?: Record<string, unknown>;
-  user_profile?: SessionUserProfilePayload;
+  conversation_id?: string;
 }
 
 export async function createSessionRequest(
@@ -227,6 +223,99 @@ export async function fetchHistory(sessionId: string): Promise<HistoryResponse> 
   return resp.json();
 }
 
+// --- Conversations (durable per-user chat history, Cosmos-backed) ---
+
+export interface ConversationMessagesResponse {
+  id: string;
+  profileId: string;
+  profileName: string;
+  messages: ChatMessage[];
+}
+
+export async function listConversations(limit = 50): Promise<ConversationIndexEntry[]> {
+  const resp = await fetch(`${API_BASE}/conversations?limit=${limit}`, {
+    headers: getAuthHeaders(),
+  });
+  assertNotUnauthorized(resp, 'Failed to load conversations');
+  if (!resp.ok) await handleHttpError(resp, 'Failed to load conversations');
+  const data = await resp.json();
+  return (data.conversations ?? []) as ConversationIndexEntry[];
+}
+
+export async function getConversationMessages(id: string): Promise<ConversationMessagesResponse> {
+  const resp = await fetch(`${API_BASE}/conversations/${encodeURIComponent(id)}/messages`, {
+    headers: getAuthHeaders(),
+  });
+  assertNotUnauthorized(resp, 'Failed to load conversation');
+  if (!resp.ok) await handleHttpError(resp, 'Failed to load conversation');
+  return resp.json();
+}
+
+export async function deleteConversation(id: string): Promise<void> {
+  const resp = await fetch(`${API_BASE}/conversations/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+  assertNotUnauthorized(resp, 'Failed to delete conversation');
+  if (!resp.ok && resp.status !== 404) await handleHttpError(resp, 'Failed to delete conversation');
+}
+
+// --- Custom agents, agent customizations, user profile (durable per-user, Cosmos) ---
+
+export async function listCustomAgents(): Promise<CustomAgentDefinition[]> {
+  const resp = await fetch(`${API_BASE}/custom-agents`, { headers: getAuthHeaders() });
+  assertNotUnauthorized(resp, 'Failed to load custom agents');
+  if (!resp.ok) await handleHttpError(resp, 'Failed to load custom agents');
+  const data = await resp.json();
+  return (data.agents ?? []) as CustomAgentDefinition[];
+}
+
+export async function saveCustomAgent(agent: CustomAgentDefinition): Promise<void> {
+  const resp = await fetch(`${API_BASE}/custom-agents/${encodeURIComponent(agent.id)}`, {
+    method: 'PUT',
+    headers: jsonHeaders(),
+    body: JSON.stringify(agent),
+  });
+  assertNotUnauthorized(resp, 'Failed to save custom agent');
+  if (!resp.ok) await handleHttpError(resp, 'Failed to save custom agent');
+}
+
+export async function deleteCustomAgent(id: string): Promise<void> {
+  const resp = await fetch(`${API_BASE}/custom-agents/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+  assertNotUnauthorized(resp, 'Failed to delete custom agent');
+  if (!resp.ok && resp.status !== 404) await handleHttpError(resp, 'Failed to delete custom agent');
+}
+
+export async function listAgentCustomizations(): Promise<AgentCustomizationOverride[]> {
+  const resp = await fetch(`${API_BASE}/agent-customizations`, { headers: getAuthHeaders() });
+  assertNotUnauthorized(resp, 'Failed to load agent customizations');
+  if (!resp.ok) await handleHttpError(resp, 'Failed to load agent customizations');
+  const data = await resp.json();
+  return (data.overrides ?? []) as AgentCustomizationOverride[];
+}
+
+export async function saveAgentCustomization(override: AgentCustomizationOverride): Promise<void> {
+  const resp = await fetch(`${API_BASE}/agent-customizations/${encodeURIComponent(override.baseProfileId)}`, {
+    method: 'PUT',
+    headers: jsonHeaders(),
+    body: JSON.stringify(override),
+  });
+  assertNotUnauthorized(resp, 'Failed to save agent customization');
+  if (!resp.ok) await handleHttpError(resp, 'Failed to save agent customization');
+}
+
+export async function deleteAgentCustomization(baseProfileId: string): Promise<void> {
+  const resp = await fetch(`${API_BASE}/agent-customizations/${encodeURIComponent(baseProfileId)}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+  assertNotUnauthorized(resp, 'Failed to delete agent customization');
+  if (!resp.ok && resp.status !== 404) await handleHttpError(resp, 'Failed to delete agent customization');
+}
+
 export interface SSECallback {
   onText?: (data: SSETextEvent) => void;
   onFunctionCall?: (data: SSEFunctionCallEvent) => void;
@@ -244,10 +333,14 @@ export async function sendMessage(
 ): Promise<void> {
   let body: BodyInit;
   const headers: Record<string, string> = { ...getAuthHeaders() };
+  // Send the user's local date/time so the backend can give the model temporal
+  // context. It is added to the model/session history only — never shown in the UI.
+  const clientTime = new Date().toString();
 
   if (images && images.length > 0) {
     const formData = new FormData();
     formData.append('content', content);
+    formData.append('client_time', clientTime);
     for (const img of images) {
       formData.append('images', img);
     }
@@ -255,7 +348,7 @@ export async function sendMessage(
     // Let browser set Content-Type with boundary for multipart
   } else {
     headers['Content-Type'] = 'application/json';
-    body = JSON.stringify({ content });
+    body = JSON.stringify({ content, client_time: clientTime });
   }
 
   const resp = await fetch(

@@ -12,6 +12,19 @@
       "problemMatcher": []
     },
     {
+      "label": "Start Cosmos Emulator",
+      "type": "shell",
+      "command": "bash scripts/start_cosmos_emulator.sh",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared"
+      }
+    },
+    {
       "label": "Run Backend",
       "type": "shell",
       "command": "uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload",
@@ -20,7 +33,10 @@
       },
       "isBackground": true,
       "problemMatcher": [],
-      "dependsOn": "Build Frontend"
+      "dependsOn": [
+        "Build Frontend",
+        "Start Cosmos Emulator"
+      ]
     },
     {
       "label": "Build & Run",
