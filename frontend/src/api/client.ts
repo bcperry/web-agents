@@ -1,6 +1,9 @@
 import type {
   AgentProfile,
   AgentCustomizationOverride,
+  AutonomousDirectivesResponse,
+  AutonomousRun,
+  AutonomousRunsResponse,
   BuiltInAgentDefinition,
   ChatMessage,
   ConversationIndexEntry,
@@ -203,6 +206,51 @@ export async function fetchProfiles(): Promise<ProfilesResponse> {
   if (!resp.ok) await handleHttpError(resp, 'Failed to fetch profiles');
   const data = await resp.json();
   return { profiles: data.profiles, unavailable: data.unavailable || [] };
+}
+
+// --- Autonomous mode (Duty Officer) ---
+
+/** List the configured autonomous directives (visible to all authenticated users). */
+export async function fetchAutonomousDirectives(): Promise<AutonomousDirectivesResponse> {
+  const resp = await fetch(`${API_BASE}/autonomous/directives`, {
+    headers: getAuthHeaders(),
+  });
+  assertNotUnauthorized(resp, 'Failed to fetch autonomous directives');
+  if (!resp.ok) await handleHttpError(resp, 'Failed to fetch autonomous directives');
+  const data = await resp.json();
+  return {
+    enabled: Boolean(data.enabled),
+    systemUserId: data.systemUserId ?? '',
+    directives: data.directives ?? [],
+  };
+}
+
+/** List autonomous run history (most-recent-first), shared across all users. */
+export async function fetchAutonomousRuns(
+  limit = 50,
+  directiveId?: string,
+): Promise<AutonomousRunsResponse> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (directiveId) params.set('directive_id', directiveId);
+  const resp = await fetch(`${API_BASE}/autonomous/runs?${params.toString()}`, {
+    headers: getAuthHeaders(),
+  });
+  assertNotUnauthorized(resp, 'Failed to fetch autonomous runs');
+  if (!resp.ok) await handleHttpError(resp, 'Failed to fetch autonomous runs');
+  const data = await resp.json();
+  return { runs: data.runs ?? [], count: data.count ?? 0 };
+}
+
+/** Trigger one autonomous cycle on demand (same behavior as the scheduled timer). */
+export async function triggerAutonomousRun(directiveId?: string): Promise<AutonomousRun> {
+  const resp = await fetch(`${API_BASE}/autonomous/run-now`, {
+    method: 'POST',
+    headers: jsonHeaders(),
+    body: JSON.stringify(directiveId ? { directive_id: directiveId } : {}),
+  });
+  assertNotUnauthorized(resp, 'Failed to trigger autonomous run');
+  if (!resp.ok) await handleHttpError(resp, 'Failed to trigger autonomous run');
+  return resp.json();
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {

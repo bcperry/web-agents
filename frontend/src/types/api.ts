@@ -270,3 +270,48 @@ export interface SkillUpdatePayload {
   description: string;
   content: string;
 }
+
+// --- Autonomous mode (Duty Officer) ---
+
+/** A configured standing order the autonomous agent runs on a schedule. */
+export interface AutonomousDirective {
+  id: string;
+  profileId: string;
+  /** First ~160 chars of the directive instruction (no secrets). */
+  instructionSummary: string;
+  schedule: string | null;
+  /** Next scheduled fire time (UTC ISO-8601) when running autonomously, else null. */
+  nextRun: string | null;
+  enabled: boolean;
+  /** Non-secret notification descriptor: 'webhook' or 'log'. */
+  notify: string;
+}
+
+export interface AutonomousDirectivesResponse {
+  enabled: boolean;
+  systemUserId: string;
+  directives: AutonomousDirective[];
+}
+
+/** An audit record for one autonomous cycle (camelCase, no secrets). */
+export interface AutonomousRun {
+  id: string;
+  directiveId: string;
+  profileId: string;
+  sessionId: string;
+  status: string;
+  startedAt: string;
+  finishedAt: string;
+  responseText: string;
+  toolEvents: Array<Record<string, unknown>>;
+  usage: Partial<UsageDetails>;
+  error: string | null;
+  notifyStatus: string;
+  notifyError: string | null;
+  trigger: string;
+}
+
+export interface AutonomousRunsResponse {
+  runs: AutonomousRun[];
+  count: number;
+}

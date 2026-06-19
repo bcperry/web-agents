@@ -7,6 +7,7 @@ import { ThemeProvider } from './hooks/useTheme'
 import { ToastProvider } from './hooks/useToast'
 import { ChatPage } from './pages/ChatPage'
 import { AdminPage } from './pages/AdminPage'
+import { AutonomousPage } from './pages/AutonomousPage'
 import { Disclaimer } from './components/Disclaimer'
 import { getRuntimeConfigSnapshot } from './config/runtimeConfig'
 import './styles/index.css'
@@ -14,7 +15,7 @@ import './styles/index.css'
 function AppContent() {
   const { isAuthenticated, isLoading, login, user } = useAuth()
   const { appName } = getRuntimeConfigSnapshot()
-  const [currentView, setCurrentView] = useState<'chat' | 'admin'>('chat')
+  const [currentView, setCurrentView] = useState<'chat' | 'admin' | 'autonomous'>('chat')
   const { agents: customAgents, save: saveCustomAgent, remove: removeCustomAgent } = useCustomAgents()
   const {
     overrides: builtInOverrides,
@@ -32,7 +33,7 @@ function AppContent() {
   useEffect(() => {
     const handlePopState = (e: PopStateEvent) => {
       const view = (e.state as { view?: string } | null)?.view
-      setCurrentView(view === 'admin' ? 'admin' : 'chat')
+      setCurrentView(view === 'admin' ? 'admin' : view === 'autonomous' ? 'autonomous' : 'chat')
     }
     window.addEventListener('popstate', handlePopState)
     return () => window.removeEventListener('popstate', handlePopState)
@@ -45,6 +46,15 @@ function AppContent() {
 
   const handleAdminBack = useCallback(() => {
     // Let the browser pop the history entry; the popstate listener updates the view.
+    window.history.back()
+  }, [])
+
+  const handleOpenAutonomous = useCallback(() => {
+    window.history.pushState({ view: 'autonomous' }, '')
+    setCurrentView('autonomous')
+  }, [])
+
+  const handleAutonomousBack = useCallback(() => {
     window.history.back()
   }, [])
 
@@ -88,9 +98,12 @@ function AppContent() {
           onSaveBuiltInOverride={saveBuiltInOverride}
           onResetBuiltInOverride={resetBuiltInOverride}
         />
+      ) : currentView === 'autonomous' ? (
+        <AutonomousPage onBack={handleAutonomousBack} />
       ) : (
         <ChatPage
           onOpenAdmin={handleOpenAdmin}
+          onOpenAutonomous={handleOpenAutonomous}
           customAgents={customAgents}
           builtInOverrides={builtInOverrides}
         />
