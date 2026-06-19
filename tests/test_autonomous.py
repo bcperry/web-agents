@@ -308,7 +308,7 @@ def test_get_autonomous_config_reads_from_cosmos_store():
 
     async def scenario():
         repo = cosmos_memory.get_autonomous_directive_repository()
-        await repo.upsert_directive(
+        await repo.upsert(
             Directive(id="extra", profile_id="chief-of-staff", instruction="hi").to_doc()
         )
         config = await get_autonomous_config()
@@ -320,7 +320,7 @@ def test_get_autonomous_config_reads_from_cosmos_store():
 
 def test_seed_autonomous_directives_is_idempotent(monkeypatch, tmp_path):
     import cosmos_memory
-    from tests._doubles import InMemoryAutonomousDirectiveRepository
+    from tests._doubles import InMemoryByIdRepository
     import autonomous
 
     path = tmp_path / "seed.yaml"
@@ -331,12 +331,12 @@ def test_seed_autonomous_directives_is_idempotent(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(autonomous, "_default_config_path", lambda: path)
     # Start from an empty store so seeding has work to do.
-    monkeypatch.setattr(cosmos_memory, "_autonomous_directive_repo", InMemoryAutonomousDirectiveRepository())
+    monkeypatch.setattr(cosmos_memory, "_autonomous_directive_repo", InMemoryByIdRepository())
 
     async def scenario():
         first = await autonomous.seed_autonomous_directives()
         second = await autonomous.seed_autonomous_directives()  # idempotent
-        docs = await cosmos_memory.get_autonomous_directive_repository().list_directives()
+        docs = await cosmos_memory.get_autonomous_directive_repository().list_all()
         return first, second, [d["id"] for d in docs]
 
     first, second, ids = asyncio.run(scenario())

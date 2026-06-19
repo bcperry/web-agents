@@ -1,7 +1,6 @@
 """Validation helpers for request, tool, skill, and image handling."""
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Callable, Optional
 
 from fastapi import HTTPException, UploadFile
@@ -95,13 +94,11 @@ def validate_tool_names(raw_tools: object, known_tools: set[str], field_name: st
 	return list(raw_tools)
 
 
-async def available_skill_names(skills_dir: Path) -> set[str]:
-	if not skills_dir.is_dir():
-		return set()
-	from agent_framework import FileSkillsSource
+async def available_skill_names() -> set[str]:
+	import cosmos_memory
 
-	skills = await FileSkillsSource(skills_dir).get_skills()
-	return {skill.frontmatter.name for skill in skills}
+	docs = await cosmos_memory.get_skill_repository().list_all()
+	return {doc["id"] for doc in docs}
 
 
 def filter_known_skill_names(raw_skills: object, available_skills: set[str], field_name: str = "custom_skills") -> tuple[list[str], list[str]]:

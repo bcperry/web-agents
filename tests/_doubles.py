@@ -131,12 +131,14 @@ class InMemoryAutonomousLeaseRepository:
         return True
 
 
-class InMemoryAutonomousDirectiveRepository:
-    """Loop-independent in-memory directive store (test double).
+class InMemoryByIdRepository:
+    """Loop-independent in-memory global by-id document store (test double).
 
-    Mirrors ``CosmosAutonomousDirectiveRepository``: list/get/upsert/delete keyed by
-    directive id. Accepts an optional ``initial`` list of directive docs so the
-    autouse fixture can seed it from the YAML defaults (as Cosmos is seeded at
+    Mirrors ``cosmos_memory._CosmosByIdRepository`` — the shared backing for the
+    autonomous directive store and the skill store: list/get/create/upsert/delete
+    keyed by id. ``create`` raises ``CosmosResourceExistsError`` on a duplicate id
+    (as the real atomic create does). Accepts an optional ``initial`` list of docs
+    so the autouse fixture can seed it from the defaults (as Cosmos is seeded at
     startup in production).
     """
 
@@ -145,22 +147,31 @@ class InMemoryAutonomousDirectiveRepository:
         for doc in initial or []:
             self._by_id[str(doc["id"])] = dict(doc)
 
-    async def list_directives(self) -> list[dict]:
+    async def list_all(self) -> list[dict]:
         return sorted(
             (dict(d) for d in self._by_id.values()),
             key=lambda d: (str(d.get("created_at") or ""), str(d.get("id") or "")),
         )
 
-    async def get_directive(self, directive_id: str) -> dict | None:
-        doc = self._by_id.get(directive_id)
+    async def get(self, item_id: str) -> dict | None:
+        doc = self._by_id.get(item_id)
         return dict(doc) if doc is not None else None
 
-    async def upsert_directive(self, doc: dict) -> dict:
+    async def create(self, doc: dict) -> dict:
+        from azure.cosmos.exceptions import CosmosResourceExistsError
+
+        item_id = str(doc["id"])
+        if item_id in self._by_id:
+            raise CosmosResourceExistsError(message=f"Item already exists: {item_id}")
+        self._by_id[item_id] = dict(doc)
+        return doc
+
+    async def upsert(self, doc: dict) -> dict:
         self._by_id[str(doc["id"])] = dict(doc)
         return doc
 
-    async def delete_directive(self, directive_id: str) -> bool:
-        return self._by_id.pop(directive_id, None) is not None
+    async def delete(self, item_id: str) -> bool:
+        return self._by_id.pop(item_id, None) is not None
 
 
 class InMemoryUserScopedRepository:
@@ -197,7 +208,8 @@ def clear_cosmos_singletons(monkeypatch) -> None:
     import user_data
 
     for name in ("_cosmos_client", "_async_credential", "_history_provider", "_conversation_repo",
-                 "_autonomous_run_repo", "_autonomous_lease_repo", "_autonomous_directive_repo"):
+                 "_autonomous_run_repo", "_autonomous_lease_repo", "_autonomous_directive_repo",
+                 "_skill_repo"):
         monkeypatch.setattr(cosmos_memory, name, None)
     for name in ("_custom_agents_repo", "_agent_customizations_repo", "_user_profile_repo"):
         monkeypatch.setattr(user_data, name, None)

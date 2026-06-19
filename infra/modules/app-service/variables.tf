@@ -144,6 +144,12 @@ variable "azure_cosmos_directives_container" {
   default     = "autonomous-directives"
 }
 
+variable "azure_cosmos_skills_container" {
+  description = "Cosmos DB global agent skills store container name"
+  type        = string
+  default     = "skills"
+}
+
 variable "autonomous_scheduler_enabled" {
   description = "Gate for the in-process autonomous scheduler. Empty string = enabled in Azure (the deployed default); 'false' disables it."
   type        = string

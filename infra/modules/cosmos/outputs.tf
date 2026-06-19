@@ -37,3 +37,8 @@ output "directives_container_name" {
   description = "Autonomous directive store container name."
   value       = azurerm_cosmosdb_sql_container.autonomous_directives.name
 }
+
+output "skills_container_name" {
+  description = "Global agent skills store container name."
+  value       = azurerm_cosmosdb_sql_container.skills.name
+}

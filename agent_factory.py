@@ -2,10 +2,9 @@ import logging
 import os
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Sequence
 
-from agent_framework import CompactionProvider, SkillsProvider
+from agent_framework import CompactionProvider, SkillsProvider, SkillsSource
 from agent_framework import Agent as RuntimeAgent
 from agent_framework._compaction import (
     CharacterEstimatorTokenizer,
@@ -80,7 +79,35 @@ def _resolve_enabled_tools(
 
 _DEFAULT_TEMPERATURE = 0.2
 
-_SKILLS_DIR = Path(__file__).resolve().parent / "skills"
+class CosmosSkillsSource(SkillsSource):
+    """Agent Framework skills source backed by the durable Cosmos skill store.
+
+    ``get_skills()`` is awaited lazily by ``SkillsProvider`` during an agent run
+    (an async context), so the Cosmos fetch happens then — not at provider
+    construction (which stays synchronous). Each Cosmos skill document becomes an
+    ``InlineSkill`` whose instructions are the stored ``content`` (the SKILL.md
+    body); invalid documents are skipped rather than failing the run.
+    """
+
+    async def get_skills(self) -> list[Any]:
+        from agent_framework import InlineSkill, SkillFrontmatter
+        from cosmos_memory import get_skill_repository
+
+        docs = await get_skill_repository().list_all()
+        skills: list[Any] = []
+        for doc in docs:
+            try:
+                skills.append(
+                    InlineSkill(
+                        frontmatter=SkillFrontmatter(
+                            name=doc["id"], description=str(doc.get("description") or "")
+                        ),
+                        instructions=str(doc.get("content") or ""),
+                    )
+                )
+            except ValueError:
+                logger.warning("Skipping invalid skill document id=%r", doc.get("id"))
+        return skills
 
 
 def _build_skills_provider(
@@ -88,16 +115,18 @@ def _build_skills_provider(
 ) -> SkillsProvider | None:
     """Build a SkillsProvider filtered to the requested skill names.
 
-    Returns None if no skills are requested or the skills directory does not exist.
+    Skills are loaded from the durable Cosmos store lazily at agent-run time via
+    ``CosmosSkillsSource``; name-based filtering and the silent omission of
+    unknown names are preserved. Returns None when no skills are requested.
     """
-    if not skill_names or not _SKILLS_DIR.is_dir():
+    if not skill_names:
         return None
 
-    from agent_framework import FileSkillsSource, FilteringSkillsSource
+    from agent_framework import FilteringSkillsSource
 
     selected = set(skill_names)
     source = FilteringSkillsSource(
-        FileSkillsSource(_SKILLS_DIR),
+        CosmosSkillsSource(),
         predicate=lambda skill: skill.frontmatter.name in selected,
     )
     return SkillsProvider(source)

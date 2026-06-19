@@ -110,22 +110,22 @@ def test_directive_repo_crud_round_trip(cosmos_emulator):
             "schema_version": 1,
         }
         try:
-            await repo.upsert_directive(doc)
-            got = await repo.get_directive(directive_id)
+            await repo.upsert(doc)
+            got = await repo.get(directive_id)
             assert got is not None
             assert got["profile_id"] == "chief-of-staff"
 
-            listed = await repo.list_directives()
+            listed = await repo.list_all()
             assert any(d["id"] == directive_id for d in listed)
 
             # Update (disable) round-trips.
             doc["enabled"] = False
-            await repo.upsert_directive(doc)
-            assert (await repo.get_directive(directive_id))["enabled"] is False
+            await repo.upsert(doc)
+            assert (await repo.get(directive_id))["enabled"] is False
 
-            assert await repo.delete_directive(directive_id) is True
-            assert await repo.get_directive(directive_id) is None
-            assert await repo.delete_directive(directive_id) is False
+            assert await repo.delete(directive_id) is True
+            assert await repo.get(directive_id) is None
+            assert await repo.delete(directive_id) is False
         finally:
             await cosmos_memory.close_cosmos()
 

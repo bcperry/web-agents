@@ -158,13 +158,29 @@ class ConversationIndexRepository(Protocol):
     async def delete(self, user_id: str, conversation_id: str) -> bool: ...
 
 
-class CosmosConversationRepository:
-    """Cosmos-backed conversation index, partitioned by ``/user_id``."""
+class _CosmosContainer:
+    """Base for the Cosmos repositories: one lazily-created container bound to a
+    single partition key.
 
-    def __init__(self, client: Any, database_name: str, container_name: str) -> None:
+    Owns the bootstrap each repository used to repeat by hand (create database +
+    container on first use). Subclasses pass their partition path (and optional
+    per-item TTL) and add only the queries that actually differ.
+    """
+
+    def __init__(
+        self,
+        client: Any,
+        database_name: str,
+        container_name: str,
+        *,
+        partition_key: str,
+        default_ttl: int | None = None,
+    ) -> None:
         self._client = client
         self._database_name = database_name
         self._container_name = container_name
+        self._partition_key = partition_key
+        self._default_ttl = default_ttl
         self._container: Any = None
 
     async def _get_container(self) -> Any:
@@ -172,11 +188,21 @@ class CosmosConversationRepository:
             from azure.cosmos import PartitionKey
 
             database = await self._client.create_database_if_not_exists(self._database_name)
-            self._container = await database.create_container_if_not_exists(
-                id=self._container_name,
-                partition_key=PartitionKey(path="/user_id"),
-            )
+            kwargs: dict[str, Any] = {
+                "id": self._container_name,
+                "partition_key": PartitionKey(path=self._partition_key),
+            }
+            if self._default_ttl is not None:
+                kwargs["default_ttl"] = self._default_ttl
+            self._container = await database.create_container_if_not_exists(**kwargs)
         return self._container
+
+
+class CosmosConversationRepository(_CosmosContainer):
+    """Cosmos-backed conversation index, partitioned by ``/user_id``."""
+
+    def __init__(self, client: Any, database_name: str, container_name: str) -> None:
+        super().__init__(client, database_name, container_name, partition_key="/user_id")
 
     async def create(
         self,
@@ -354,25 +380,11 @@ class AutonomousRunRecord:
         }
 
 
-class CosmosAutonomousRunRepository:
+class CosmosAutonomousRunRepository(_CosmosContainer):
     """Cosmos-backed autonomous run audit log, partitioned by ``/directive_id``."""
 
     def __init__(self, client: Any, database_name: str, container_name: str) -> None:
-        self._client = client
-        self._database_name = database_name
-        self._container_name = container_name
-        self._container: Any = None
-
-    async def _get_container(self) -> Any:
-        if self._container is None:
-            from azure.cosmos import PartitionKey
-
-            database = await self._client.create_database_if_not_exists(self._database_name)
-            self._container = await database.create_container_if_not_exists(
-                id=self._container_name,
-                partition_key=PartitionKey(path="/directive_id"),
-            )
-        return self._container
+        super().__init__(client, database_name, container_name, partition_key="/directive_id")
 
     async def create_run(self, record: AutonomousRunRecord) -> AutonomousRunRecord:
         container = await self._get_container()
@@ -416,7 +428,7 @@ class CosmosAutonomousRunRepository:
         return AutonomousRunRecord.from_doc(item)
 
 
-class CosmosAutonomousLeaseRepository:
+class CosmosAutonomousLeaseRepository(_CosmosContainer):
     """Cosmos-backed at-most-once scheduler lease, partitioned by ``/directive_id``.
 
     The atomic ``create_item`` on the ``{directive_id}:{slot}`` id IS the lock: the
@@ -426,22 +438,9 @@ class CosmosAutonomousLeaseRepository:
     """
 
     def __init__(self, client: Any, database_name: str, container_name: str) -> None:
-        self._client = client
-        self._database_name = database_name
-        self._container_name = container_name
-        self._container: Any = None
-
-    async def _get_container(self) -> Any:
-        if self._container is None:
-            from azure.cosmos import PartitionKey
-
-            database = await self._client.create_database_if_not_exists(self._database_name)
-            self._container = await database.create_container_if_not_exists(
-                id=self._container_name,
-                partition_key=PartitionKey(path="/directive_id"),
-                default_ttl=-1,
-            )
-        return self._container
+        super().__init__(
+            client, database_name, container_name, partition_key="/directive_id", default_ttl=-1
+        )
 
     async def try_acquire(self, directive_id: str, slot: str, *, ttl: int = 3600) -> bool:
         from azure.cosmos.exceptions import CosmosResourceExistsError
@@ -463,34 +462,22 @@ class CosmosAutonomousLeaseRepository:
             return False
 
 
-class CosmosAutonomousDirectiveRepository:
-    """Cosmos-backed store of autonomous directives, partitioned by ``/id``.
+class _CosmosByIdRepository(_CosmosContainer):
+    """Generic global by-id document store, partitioned by ``/id``.
 
-    Directives are global (not per-user) operational config. The YAML file seeds
-    defaults; runtime edits (enable/disable, schedule, new directives) live here so
-    they are durable and shared across all backend instances. Volume is tiny (a
-    handful of docs), so the dominant "list all" read is a cheap cross-partition
-    query and point reads/writes are partition-scoped by id.
+    Backs the two global config stores that share this exact shape — autonomous
+    directives and agent skills — a small set of operator-authored documents keyed
+    by id (the per-user analogue is ``user_data.CosmosUserScopedRepository``).
+    Volume is tiny, so the dominant "list all" read is a cheap cross-partition
+    query and point reads/writes are partition-scoped by id. ``create`` is an
+    atomic insert (raises ``CosmosResourceExistsError`` on a duplicate id, for a
+    409); ``upsert`` is used for updates and idempotent seeding.
     """
 
     def __init__(self, client: Any, database_name: str, container_name: str) -> None:
-        self._client = client
-        self._database_name = database_name
-        self._container_name = container_name
-        self._container: Any = None
+        super().__init__(client, database_name, container_name, partition_key="/id")
 
-    async def _get_container(self) -> Any:
-        if self._container is None:
-            from azure.cosmos import PartitionKey
-
-            database = await self._client.create_database_if_not_exists(self._database_name)
-            self._container = await database.create_container_if_not_exists(
-                id=self._container_name,
-                partition_key=PartitionKey(path="/id"),
-            )
-        return self._container
-
-    async def list_directives(self) -> list[dict[str, Any]]:
+    async def list_all(self) -> list[dict[str, Any]]:
         container = await self._get_container()
         items = container.query_items(query="SELECT * FROM c")
         docs: list[dict[str, Any]] = []
@@ -499,26 +486,31 @@ class CosmosAutonomousDirectiveRepository:
         docs.sort(key=lambda d: (str(d.get("created_at") or ""), str(d.get("id") or "")))
         return docs
 
-    async def get_directive(self, directive_id: str) -> dict[str, Any] | None:
+    async def get(self, item_id: str) -> dict[str, Any] | None:
         from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
         container = await self._get_container()
         try:
-            return await container.read_item(item=directive_id, partition_key=directive_id)
+            return await container.read_item(item=item_id, partition_key=item_id)
         except CosmosResourceNotFoundError:
             return None
 
-    async def upsert_directive(self, doc: dict[str, Any]) -> dict[str, Any]:
+    async def create(self, doc: dict[str, Any]) -> dict[str, Any]:
+        container = await self._get_container()
+        await container.create_item(doc)
+        return doc
+
+    async def upsert(self, doc: dict[str, Any]) -> dict[str, Any]:
         container = await self._get_container()
         await container.upsert_item(doc)
         return doc
 
-    async def delete_directive(self, directive_id: str) -> bool:
+    async def delete(self, item_id: str) -> bool:
         from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
         container = await self._get_container()
         try:
-            await container.delete_item(item=directive_id, partition_key=directive_id)
+            await container.delete_item(item=item_id, partition_key=item_id)
             return True
         except CosmosResourceNotFoundError:
             return False
@@ -535,6 +527,7 @@ _conversation_repo: Any = None
 _autonomous_run_repo: Any = None
 _autonomous_lease_repo: Any = None
 _autonomous_directive_repo: Any = None
+_skill_repo: Any = None
 
 
 def _build_cosmos_client() -> Any:
@@ -683,12 +676,29 @@ def get_autonomous_directive_repository() -> Any:
     if _autonomous_directive_repo is not None:
         return _autonomous_directive_repo
 
-    _autonomous_directive_repo = CosmosAutonomousDirectiveRepository(
+    _autonomous_directive_repo = _CosmosByIdRepository(
         get_cosmos_client(),
         (os.getenv("AZURE_COSMOS_DATABASE_NAME") or "agent-memory").strip(),
         (os.getenv("AZURE_COSMOS_DIRECTIVES_CONTAINER") or "autonomous-directives").strip(),
     )
     return _autonomous_directive_repo
+
+
+def get_skill_repository() -> Any:
+    """Return the cached Cosmos skill repository.
+
+    Requires Cosmos to be configured; raises otherwise.
+    """
+    global _skill_repo
+    if _skill_repo is not None:
+        return _skill_repo
+
+    _skill_repo = _CosmosByIdRepository(
+        get_cosmos_client(),
+        (os.getenv("AZURE_COSMOS_DATABASE_NAME") or "agent-memory").strip(),
+        (os.getenv("AZURE_COSMOS_SKILLS_CONTAINER") or "skills").strip(),
+    )
+    return _skill_repo
 
 
 def require_cosmos_configured() -> None:
@@ -701,7 +711,7 @@ def require_cosmos_configured() -> None:
 async def close_cosmos() -> None:
     """Close the shared Cosmos client + credential (called on app shutdown)."""
     global _cosmos_client, _async_credential, _history_provider, _conversation_repo
-    global _autonomous_run_repo, _autonomous_lease_repo, _autonomous_directive_repo
+    global _autonomous_run_repo, _autonomous_lease_repo, _autonomous_directive_repo, _skill_repo
     if _cosmos_client is not None:
         try:
             await _cosmos_client.close()
@@ -719,3 +729,4 @@ async def close_cosmos() -> None:
     _autonomous_run_repo = None
     _autonomous_lease_repo = None
     _autonomous_directive_repo = None
+    _skill_repo = None

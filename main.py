@@ -46,7 +46,7 @@ from user_data import (
     get_agent_customizations_repository,
     get_custom_agents_repository,
 )
-from skills_manager import SkillManager
+from skills_manager import SkillManager, seed_skills
 from streaming import (
     USAGE_INPUT_KEY,
     USAGE_OUTPUT_KEY,
@@ -207,7 +207,6 @@ def _get_skills_dir() -> Path:
 _session_context = SessionContext(
     sessions=_sessions,
     session_data_cls=SessionData,
-    get_skills_dir=_get_skills_dir,
     build_tool_instances=_build_tool_instances,
     build_user_profile_context=_build_user_profile_context,
 )
@@ -247,6 +246,14 @@ async def lifespan(app: FastAPI):
         )
     except Exception:
         logger.warning("Failed to load/seed autonomous config at startup", exc_info=True)
+
+    # Seed the durable skill store from the filesystem defaults (idempotent) so the
+    # skill catalog is Cosmos-backed and survives restarts/redeploys.
+    try:
+        skills_seeded = await seed_skills(_get_skills_dir())
+        logger.info("Skills — seeded %d default skill(s) from ./skills into Cosmos", skills_seeded)
+    except Exception:
+        logger.warning("Failed to seed skills at startup", exc_info=True)
 
     # In-process autonomous scheduler — gated, never blocks startup.
     autonomous_scheduler = None
@@ -483,7 +490,7 @@ async def test_mcp_connections(
 # GET /api/skills — list available skills for custom agent builder
 @app.get("/api/skills")
 async def get_skills(user: AuthenticatedUser = Depends(get_current_user)):
-    return {"skills": await SkillManager(_get_skills_dir()).list_summaries()}
+    return {"skills": await SkillManager().list_summaries()}
 
 
 # ---------------------------------------------------------------------------
@@ -684,25 +691,25 @@ async def generate_skill_content(
 # GET /api/skills/{name} — fetch a single skill by name
 @app.get("/api/skills/{name}", response_model=SkillResponse)
 async def get_skill(name: str, user: AuthenticatedUser = Depends(get_current_user)):
-    return SkillResponse(**SkillManager(_get_skills_dir()).get(name))
+    return SkillResponse(**await SkillManager().get(name))
 
 
 # POST /api/skills — create a new skill
 @app.post("/api/skills", response_model=SkillResponse, status_code=201)
 async def create_skill(body: SkillCreateRequest, user: AuthenticatedUser = Depends(get_current_user)):
-    return SkillResponse(**SkillManager(_get_skills_dir()).create(body.name, body.description, body.content))
+    return SkillResponse(**await SkillManager().create(body.name, body.description, body.content))
 
 
 # PUT /api/skills/{name} — update an existing skill
 @app.put("/api/skills/{name}", response_model=SkillResponse)
 async def update_skill(name: str, body: SkillUpdateRequest, user: AuthenticatedUser = Depends(get_current_user)):
-    return SkillResponse(**SkillManager(_get_skills_dir()).update(name, body.description, body.content))
+    return SkillResponse(**await SkillManager().update(name, body.description, body.content))
 
 
-# DELETE /api/skills/{name} — remove a skill directory
+# DELETE /api/skills/{name} — remove a skill
 @app.delete("/api/skills/{name}", status_code=204)
 async def delete_skill(name: str, user: AuthenticatedUser = Depends(get_current_user)):
-    SkillManager(_get_skills_dir()).delete(name)
+    await SkillManager().delete(name)
     return Response(status_code=204)
 
 
@@ -1118,7 +1125,7 @@ async def create_autonomous_directive(
         validate_profile_id(body.profile_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    if await repo.get_directive(directive_id) is not None:
+    if await repo.get(directive_id) is not None:
         raise HTTPException(status_code=409, detail=f"Directive '{directive_id}' already exists")
 
     now = datetime.now(timezone.utc).isoformat()
@@ -1132,7 +1139,7 @@ async def create_autonomous_directive(
         created_at=now,
         updated_at=now,
     )
-    await repo.upsert_directive(directive.to_doc())
+    await repo.upsert(directive.to_doc())
     logger.info("Autonomous directive created: %s", directive_id)
     return directive_to_wire(directive)
 
@@ -1145,7 +1152,7 @@ async def update_autonomous_directive(
 ):
     """Update an automation: enable/disable, schedule, instruction, profile, or notify."""
     repo = get_autonomous_directive_repository()
-    existing = await repo.get_directive(directive_id)
+    existing = await repo.get(directive_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Directive not found")
     current = Directive.from_doc(existing)
@@ -1186,7 +1193,7 @@ async def update_autonomous_directive(
         created_at=current.created_at or now,
         updated_at=now,
     )
-    await repo.upsert_directive(updated.to_doc())
+    await repo.upsert(updated.to_doc())
     logger.info("Autonomous directive updated: %s (enabled=%s)", directive_id, enabled)
     return directive_to_wire(updated)
 
@@ -1197,7 +1204,7 @@ async def delete_autonomous_directive(
     user: AuthenticatedUser = Depends(get_current_user),
 ):
     """Delete an automation. (A YAML-default directive reappears on next startup.)"""
-    deleted = await get_autonomous_directive_repository().delete_directive(directive_id)
+    deleted = await get_autonomous_directive_repository().delete(directive_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Directive not found")
     logger.info("Autonomous directive deleted: %s", directive_id)

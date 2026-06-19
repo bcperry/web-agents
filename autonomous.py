@@ -227,7 +227,7 @@ async def get_autonomous_config() -> AutonomousConfig:
     directive **list** is the durable Cosmos store (seeded from YAML at startup).
     """
     base = load_autonomous_config()
-    docs = await get_autonomous_directive_repository().list_directives()
+    docs = await get_autonomous_directive_repository().list_all()
     directives = [Directive.from_doc(doc) for doc in docs]
     return AutonomousConfig(
         enabled=base.enabled,
@@ -249,7 +249,7 @@ async def seed_autonomous_directives() -> int:
     if not base.directives:
         return 0
     repo = get_autonomous_directive_repository()
-    existing = {str(doc.get("id")) for doc in await repo.list_directives()}
+    existing = {str(doc.get("id")) for doc in await repo.list_all()}
     now = datetime.now(timezone.utc).isoformat()
     seeded = 0
     for directive in base.directives:
@@ -258,7 +258,7 @@ async def seed_autonomous_directives() -> int:
         doc = directive.to_doc()
         doc["created_at"] = doc["created_at"] or now
         doc["updated_at"] = doc["updated_at"] or now
-        await repo.upsert_directive(doc)
+        await repo.upsert(doc)
         seeded += 1
     return seeded
 
