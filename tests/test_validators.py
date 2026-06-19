@@ -110,11 +110,16 @@ def test_validate_tool_and_skill_names():
         filter_known_skill_names("table-usage", {"table-usage"})  # type: ignore[arg-type]
 
 
-def test_available_skill_names_reads_skill_provider(tmp_path, make_skill):
+def test_available_skill_names_reads_from_cosmos(make_skill):
     import asyncio
-    make_skill(tmp_path, "alpha", "Alpha")
-    assert asyncio.run(available_skill_names(tmp_path)) == {"alpha"}
-    assert asyncio.run(available_skill_names(tmp_path / "missing")) == set()
+    import cosmos_memory
+
+    repo = cosmos_memory.get_skill_repository()
+    make_skill(repo, "alpha", "Alpha")
+    names = asyncio.run(available_skill_names())
+    assert "alpha" in names
+    # Seeded filesystem defaults are present in the durable store too.
+    assert "table-usage" in names
 
 
 def test_validate_http_mcp_servers_accepts_only_request_http_servers():

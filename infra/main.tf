@@ -83,6 +83,7 @@ module "app_service" {
   azure_cosmos_database_name           = module.cosmos.database_name
   azure_cosmos_container_name          = module.cosmos.messages_container_name
   azure_cosmos_conversations_container = module.cosmos.conversations_container_name
+  azure_cosmos_skills_container        = module.cosmos.skills_container_name
 
   # Autonomous Mode (in-process scheduler + Duty Officer audit/lease containers)
   azure_cosmos_autonomous_container = module.cosmos.autonomous_container_name

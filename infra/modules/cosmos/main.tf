@@ -110,6 +110,17 @@ resource "azurerm_cosmosdb_sql_container" "autonomous_directives" {
   partition_key_paths = ["/id"]
 }
 
+# Global agent skills store (partition key /id). Seeded from the repository
+# skills/ directory at startup; holds runtime creates/edits/deletes from the
+# admin Skill Builder so the catalog is durable and shared across instances.
+resource "azurerm_cosmosdb_sql_container" "skills" {
+  name                = var.skills_container_name
+  resource_group_name = var.resource_group_name
+  account_name        = azurerm_cosmosdb_account.cosmos.name
+  database_name       = azurerm_cosmosdb_sql_database.db.name
+  partition_key_paths = ["/id"]
+}
+
 # Grant the app's managed identity data-plane access via the built-in
 # "Cosmos DB Built-in Data Contributor" role (id ...0002).
 resource "azurerm_cosmosdb_sql_role_assignment" "data_contributor" {

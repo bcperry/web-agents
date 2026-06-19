@@ -55,6 +55,12 @@ variable "directives_container_name" {
   default     = "autonomous-directives"
 }
 
+variable "skills_container_name" {
+  description = "Container for the global agent skills store (partition key /id)."
+  type        = string
+  default     = "skills"
+}
+
 variable "principal_id" {
   description = "Principal ID of the app's managed identity, granted data-plane access."
   type        = string

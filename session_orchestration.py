@@ -6,7 +6,6 @@ import re
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -83,7 +82,6 @@ class SessionContext:
     """
     sessions: dict[str, Any]
     session_data_cls: type
-    get_skills_dir: Callable[[], Path]
     build_tool_instances: Callable[..., list[Any]]
     build_user_profile_context: Callable[[dict[str, str] | None], str]
 
@@ -486,7 +484,7 @@ async def _create_custom_chat_session(
     custom_search_context = bool(body.get("custom_search_context", False))
     custom_temperature = validate_temperature(body.get("custom_temperature"))
     custom_tools = validate_tool_names(body.get("custom_tools", []), known_tool_names_from_profiles(profiles_data))
-    custom_skills, dropped_skills = filter_known_skill_names(body.get("custom_skills", []), await available_skill_names(ctx.get_skills_dir()))
+    custom_skills, dropped_skills = filter_known_skill_names(body.get("custom_skills", []), await available_skill_names())
     if dropped_skills:
         logger.warning("Custom agent '%s' references unknown skills, dropping: %s", custom_name, dropped_skills)
     raw_mcp_servers = validate_http_mcp_servers(body.get("mcp_servers", []), override=False)
@@ -604,7 +602,7 @@ async def _create_profile_chat_session(
         if profile_override is not None:
             validate_tool_names(profile_override.custom_tools, known_tool_names_from_profiles(profiles_data))
             if profile_override.custom_skills:
-                kept, dropped = filter_known_skill_names(profile_override.custom_skills, await available_skill_names(ctx.get_skills_dir()))
+                kept, dropped = filter_known_skill_names(profile_override.custom_skills, await available_skill_names())
                 if dropped:
                     logger.warning("Profile override for '%s' references unknown skills, dropping: %s", logical_profile, dropped)
                 profile_override.custom_skills = kept

@@ -53,3 +53,32 @@ class TestBuildSkillsProvider:
         provider = _build_skills_provider(["table-usage"])
         assert provider is not None
         assert isinstance(provider, SkillsProvider)
+
+
+class TestCosmosSkillsSource:
+    """Test the Cosmos-backed skills source that loads agent skills at run time."""
+
+    def test_get_skills_returns_seeded_skills(self):
+        import asyncio
+
+        from agent_factory import CosmosSkillsSource
+
+        skills = asyncio.run(CosmosSkillsSource().get_skills())
+        names = {skill.frontmatter.name for skill in skills}
+        # The filesystem defaults are seeded into the (in-memory) Cosmos double.
+        assert "table-usage" in names
+
+    def test_filtering_source_omits_unknown_names(self):
+        import asyncio
+
+        from agent_framework import FilteringSkillsSource
+        from agent_factory import CosmosSkillsSource
+
+        selected = {"table-usage"}
+        source = FilteringSkillsSource(
+            CosmosSkillsSource(),
+            predicate=lambda skill: skill.frontmatter.name in selected,
+        )
+        skills = asyncio.run(source.get_skills())
+        names = {skill.frontmatter.name for skill in skills}
+        assert names == {"table-usage"}

@@ -34,9 +34,9 @@ def _cosmos_doubles(monkeypatch):
 	import user_data
 	from agent_framework import InMemoryHistoryProvider
 	from tests._doubles import (
-		InMemoryAutonomousDirectiveRepository,
 		InMemoryAutonomousLeaseRepository,
 		InMemoryAutonomousRunRepository,
+		InMemoryByIdRepository,
 		InMemoryConversationRepository,
 		InMemoryUserScopedRepository,
 	)
@@ -47,6 +47,16 @@ def _cosmos_doubles(monkeypatch):
 
 	seed_docs = [d.to_doc() for d in load_autonomous_config().directives]
 
+	# Seed the skill double from the filesystem defaults, mirroring the startup seed
+	# in production (so skill reads return the built-in skills offline).
+	from pathlib import Path
+
+	import skills_manager
+
+	skill_seed_docs = skills_manager.filesystem_skill_docs(
+		Path(__file__).resolve().parent.parent / "skills"
+	)
+
 	monkeypatch.setattr(cosmos_memory, "_cosmos_client", None)
 	monkeypatch.setattr(cosmos_memory, "_async_credential", None)
 	monkeypatch.setattr(cosmos_memory, "_history_provider", InMemoryHistoryProvider(skip_excluded=True))
@@ -54,8 +64,9 @@ def _cosmos_doubles(monkeypatch):
 	monkeypatch.setattr(cosmos_memory, "_autonomous_run_repo", InMemoryAutonomousRunRepository())
 	monkeypatch.setattr(cosmos_memory, "_autonomous_lease_repo", InMemoryAutonomousLeaseRepository())
 	monkeypatch.setattr(
-		cosmos_memory, "_autonomous_directive_repo", InMemoryAutonomousDirectiveRepository(seed_docs)
+		cosmos_memory, "_autonomous_directive_repo", InMemoryByIdRepository(seed_docs)
 	)
+	monkeypatch.setattr(cosmos_memory, "_skill_repo", InMemoryByIdRepository(skill_seed_docs))
 	monkeypatch.setattr(user_data, "_custom_agents_repo", InMemoryUserScopedRepository())
 	monkeypatch.setattr(user_data, "_agent_customizations_repo", InMemoryUserScopedRepository())
 	monkeypatch.setattr(user_data, "_user_profile_repo", InMemoryUserScopedRepository())
@@ -104,34 +115,50 @@ def cosmos_emulator(monkeypatch):
 	monkeypatch.setenv("AZURE_COSMOS_DATABASE_NAME", os.environ.get("AZURE_COSMOS_DATABASE_NAME", "agent-memory-test"))
 	monkeypatch.setenv("AZURE_COSMOS_CONTAINER_NAME", os.environ.get("AZURE_COSMOS_CONTAINER_NAME", "chat-history-test"))
 	monkeypatch.setenv("AZURE_COSMOS_CONVERSATIONS_CONTAINER", os.environ.get("AZURE_COSMOS_CONVERSATIONS_CONTAINER", "conversations-test"))
+	monkeypatch.setenv("AZURE_COSMOS_SKILLS_CONTAINER", os.environ.get("AZURE_COSMOS_SKILLS_CONTAINER", "skills-test"))
 	# Clear the autouse in-memory doubles so the REAL Cosmos providers are built.
 	clear_cosmos_singletons(monkeypatch)
 	yield
 
 
 @pytest.fixture
-def skills_client(tmp_path, monkeypatch):
-	"""FastAPI TestClient with skills storage redirected to a temporary directory."""
-	import main as main_module
-	from main import _sessions, app
+def skills_client(monkeypatch):
+	"""FastAPI TestClient with an empty in-memory skill store (Cosmos double).
 
-	monkeypatch.setattr(main_module, "_get_skills_dir", lambda: tmp_path)
+	The app lifespan seeds the filesystem default skills at startup, so this fixture
+	resets ``_skill_repo`` to a fresh empty repository *after* startup — giving the
+	skills CRUD tests a clean catalog. Yields the repo for direct seeding.
+	"""
+	import cosmos_memory
+	from main import _sessions, app
+	from tests._doubles import InMemoryByIdRepository
+
 	_sessions.clear()
 	with TestClient(app) as test_client:
-		yield test_client, tmp_path
+		repo = InMemoryByIdRepository()
+		monkeypatch.setattr(cosmos_memory, "_skill_repo", repo)
+		yield test_client, repo
 	_sessions.clear()
 
 
 @pytest.fixture
 def make_skill():
-	def _make_skill(tmp_path, name: str, description: str = "A test skill", content: str = "# Content\nHello."):
-		skill_dir = tmp_path / name
-		skill_dir.mkdir()
-		skill_file = skill_dir / "SKILL.md"
-		skill_file.write_text(
-			f'---\nname: {name}\ndescription: "{description}"\n---\n\n{content}\n',
-			encoding="utf-8",
-		)
-		return skill_dir
+	"""Insert a skill document directly into an ``InMemoryByIdRepository`` double."""
+	import asyncio
+	from datetime import datetime, timezone
+
+	def _make_skill(repo, name: str, description: str = "A test skill", content: str = "# Content\nHello."):
+		now = datetime.now(timezone.utc).isoformat()
+		doc = {
+			"id": name,
+			"description": description,
+			"content": content,
+			"created_at": now,
+			"updated_at": now,
+			"doc_type": "skill",
+			"schema_version": 1,
+		}
+		asyncio.run(repo.upsert(doc))
+		return doc
 
 	return _make_skill
