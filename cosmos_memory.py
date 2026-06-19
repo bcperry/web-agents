@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Protocol
 from urllib.parse import urlsplit
@@ -264,6 +264,206 @@ class CosmosConversationRepository:
 
 
 # ---------------------------------------------------------------------------
+# Autonomous run audit record (partitioned by ``directive_id`` in Cosmos)
+# ---------------------------------------------------------------------------
+
+# Cap the stored response text so a single run record stays well under the 2 MB
+# Cosmos item limit. The full response always remains in the chat-history container.
+MAX_RUN_RESPONSE_CHARS = 8000
+
+
+@dataclass
+class AutonomousRunRecord:
+    """One execution of a directive — the durable, tamper-evident audit record.
+
+    Contains NO secrets: webhook URLs/keys are referenced by env-var name in
+    config and are never copied into a run record.
+    """
+
+    id: str
+    directive_id: str
+    profile_id: str
+    session_id: str
+    status: str  # "success" | "failure"
+    started_at: str
+    finished_at: str
+    response_text: str = ""
+    tool_events: list[dict[str, Any]] = field(default_factory=list)
+    usage: dict[str, int] = field(default_factory=dict)
+    error: str | None = None
+    notify_status: str = "skipped"  # "logged" | "delivered" | "skipped" | "failed"
+    notify_error: str | None = None
+    trigger: str = "manual"  # "timer" | "manual"
+
+    def to_doc(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "directive_id": self.directive_id,
+            "profile_id": self.profile_id,
+            "session_id": self.session_id,
+            "status": self.status,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "response_text": self.response_text[:MAX_RUN_RESPONSE_CHARS],
+            "tool_events": self.tool_events,
+            "usage": self.usage,
+            "error": self.error,
+            "notify_status": self.notify_status,
+            "notify_error": self.notify_error,
+            "trigger": self.trigger,
+            "doc_type": "autonomous_run",
+            "schema_version": 1,
+        }
+
+    @classmethod
+    def from_doc(cls, doc: dict[str, Any]) -> "AutonomousRunRecord":
+        return cls(
+            id=str(doc["id"]),
+            directive_id=str(doc.get("directive_id", "")),
+            profile_id=str(doc.get("profile_id", "")),
+            session_id=str(doc.get("session_id", "")),
+            status=str(doc.get("status", "")),
+            started_at=str(doc.get("started_at", "")),
+            finished_at=str(doc.get("finished_at", "")),
+            response_text=str(doc.get("response_text", "")),
+            tool_events=list(doc.get("tool_events") or []),
+            usage=dict(doc.get("usage") or {}),
+            error=doc.get("error"),
+            notify_status=str(doc.get("notify_status", "skipped")),
+            notify_error=doc.get("notify_error"),
+            trigger=str(doc.get("trigger", "manual")),
+        )
+
+    def to_wire(self) -> dict[str, Any]:
+        """camelCase shape consumed by the frontend ``AutonomousRun`` (no secrets)."""
+        return {
+            "id": self.id,
+            "directiveId": self.directive_id,
+            "profileId": self.profile_id,
+            "sessionId": self.session_id,
+            "status": self.status,
+            "startedAt": self.started_at,
+            "finishedAt": self.finished_at,
+            "responseText": self.response_text[:MAX_RUN_RESPONSE_CHARS],
+            "toolEvents": self.tool_events,
+            "usage": self.usage,
+            "error": self.error,
+            "notifyStatus": self.notify_status,
+            "notifyError": self.notify_error,
+            "trigger": self.trigger,
+        }
+
+
+class CosmosAutonomousRunRepository:
+    """Cosmos-backed autonomous run audit log, partitioned by ``/directive_id``."""
+
+    def __init__(self, client: Any, database_name: str, container_name: str) -> None:
+        self._client = client
+        self._database_name = database_name
+        self._container_name = container_name
+        self._container: Any = None
+
+    async def _get_container(self) -> Any:
+        if self._container is None:
+            from azure.cosmos import PartitionKey
+
+            database = await self._client.create_database_if_not_exists(self._database_name)
+            self._container = await database.create_container_if_not_exists(
+                id=self._container_name,
+                partition_key=PartitionKey(path="/directive_id"),
+            )
+        return self._container
+
+    async def create_run(self, record: AutonomousRunRecord) -> AutonomousRunRecord:
+        container = await self._get_container()
+        await container.upsert_item(record.to_doc())
+        return record
+
+    async def list_runs(
+        self, *, limit: int = 50, directive_id: str | None = None
+    ) -> list[AutonomousRunRecord]:
+        container = await self._get_container()
+        limit = max(0, min(limit, 200))
+        if directive_id:
+            query = (
+                "SELECT * FROM c WHERE c.directive_id = @did "
+                "ORDER BY c.started_at DESC"
+            )
+            items = container.query_items(
+                query=query,
+                parameters=[{"name": "@did", "value": directive_id}],
+                partition_key=directive_id,
+            )
+        else:
+            # Bounded cross-partition recency query (low volume — one doc per cycle).
+            query = "SELECT * FROM c ORDER BY c.started_at DESC"
+            items = container.query_items(query=query)
+        records: list[AutonomousRunRecord] = []
+        async for item in items:
+            records.append(AutonomousRunRecord.from_doc(item))
+            if len(records) >= limit:
+                break
+        return records
+
+    async def get_run(self, run_id: str, directive_id: str) -> AutonomousRunRecord | None:
+        from azure.cosmos.exceptions import CosmosResourceNotFoundError
+
+        container = await self._get_container()
+        try:
+            item = await container.read_item(item=run_id, partition_key=directive_id)
+        except CosmosResourceNotFoundError:
+            return None
+        return AutonomousRunRecord.from_doc(item)
+
+
+class CosmosAutonomousLeaseRepository:
+    """Cosmos-backed at-most-once scheduler lease, partitioned by ``/directive_id``.
+
+    The atomic ``create_item`` on the ``{directive_id}:{slot}`` id IS the lock: the
+    first writer of a slot wins; a ``CosmosResourceExistsError`` means another
+    instance (or an earlier tick) already claimed it. Lease docs carry a per-item
+    TTL so they self-expire (the container is created with ``default_ttl = -1``).
+    """
+
+    def __init__(self, client: Any, database_name: str, container_name: str) -> None:
+        self._client = client
+        self._database_name = database_name
+        self._container_name = container_name
+        self._container: Any = None
+
+    async def _get_container(self) -> Any:
+        if self._container is None:
+            from azure.cosmos import PartitionKey
+
+            database = await self._client.create_database_if_not_exists(self._database_name)
+            self._container = await database.create_container_if_not_exists(
+                id=self._container_name,
+                partition_key=PartitionKey(path="/directive_id"),
+                default_ttl=-1,
+            )
+        return self._container
+
+    async def try_acquire(self, directive_id: str, slot: str, *, ttl: int = 3600) -> bool:
+        from azure.cosmos.exceptions import CosmosResourceExistsError
+
+        container = await self._get_container()
+        doc = {
+            "id": f"{directive_id}:{slot}",
+            "directive_id": directive_id,
+            "slot": slot,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "ttl": int(ttl),
+            "doc_type": "autonomous_lease",
+            "schema_version": 1,
+        }
+        try:
+            await container.create_item(doc)
+            return True
+        except CosmosResourceExistsError:
+            return False
+
+
+# ---------------------------------------------------------------------------
 # Shared Cosmos client + provider/repository singletons
 # ---------------------------------------------------------------------------
 
@@ -271,6 +471,8 @@ _cosmos_client: Any = None
 _async_credential: Any = None
 _history_provider: Any = None
 _conversation_repo: Any = None
+_autonomous_run_repo: Any = None
+_autonomous_lease_repo: Any = None
 
 
 def _build_cosmos_client() -> Any:
@@ -376,6 +578,40 @@ def get_conversation_repository() -> Any:
     return _conversation_repo
 
 
+def get_autonomous_run_repository() -> Any:
+    """Return the cached Cosmos autonomous-run audit repository.
+
+    Requires Cosmos to be configured; raises otherwise.
+    """
+    global _autonomous_run_repo
+    if _autonomous_run_repo is not None:
+        return _autonomous_run_repo
+
+    _autonomous_run_repo = CosmosAutonomousRunRepository(
+        get_cosmos_client(),
+        (os.getenv("AZURE_COSMOS_DATABASE_NAME") or "agent-memory").strip(),
+        (os.getenv("AZURE_COSMOS_AUTONOMOUS_CONTAINER") or "autonomous-runs").strip(),
+    )
+    return _autonomous_run_repo
+
+
+def get_autonomous_lease_repository() -> Any:
+    """Return the cached Cosmos autonomous scheduler-lease repository.
+
+    Requires Cosmos to be configured; raises otherwise.
+    """
+    global _autonomous_lease_repo
+    if _autonomous_lease_repo is not None:
+        return _autonomous_lease_repo
+
+    _autonomous_lease_repo = CosmosAutonomousLeaseRepository(
+        get_cosmos_client(),
+        (os.getenv("AZURE_COSMOS_DATABASE_NAME") or "agent-memory").strip(),
+        (os.getenv("AZURE_COSMOS_LEASES_CONTAINER") or "autonomous-leases").strip(),
+    )
+    return _autonomous_lease_repo
+
+
 def require_cosmos_configured() -> None:
     """Fail fast at startup unless Cosmos is configured (or a double was injected for tests)."""
     if _history_provider is not None or _conversation_repo is not None:
@@ -386,6 +622,7 @@ def require_cosmos_configured() -> None:
 async def close_cosmos() -> None:
     """Close the shared Cosmos client + credential (called on app shutdown)."""
     global _cosmos_client, _async_credential, _history_provider, _conversation_repo
+    global _autonomous_run_repo, _autonomous_lease_repo
     if _cosmos_client is not None:
         try:
             await _cosmos_client.close()
@@ -400,3 +637,5 @@ async def close_cosmos() -> None:
     _async_credential = None
     _history_provider = None
     _conversation_repo = None
+    _autonomous_run_repo = None
+    _autonomous_lease_repo = None

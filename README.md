@@ -104,6 +104,40 @@ Open `http://localhost:8000` in your browser.
 uv run pytest
 ```
 
+## Autonomous Mode (Duty Officer)
+
+An **in-process scheduler** in the backend runs a pre-defined **standing directive**
+(an agent profile + an instruction) on a cadence — or on demand — with no human in
+the loop. It reuses the existing agent runtime and Cosmos memory (no fork of agent
+logic), writes one durable **audit record** per cycle, and delivers the result to a
+pluggable **notification sink**. A Cosmos **lease** keyed by `(directive, slot)`
+guarantees at-most-once execution even when the backend scales out. There is **no
+external trigger and no shared secret**: the schedule runs in-process and the only
+HTTP entry point is the user-authenticated `POST /api/autonomous/run-now`.
+
+- **Config**: `config/autonomous.yaml` — a master `enabled` flag, a `system_user_id`,
+  and one or more `directives` (`id`, `profile_id`, `instruction`, optional `schedule`
+  and `notify`). A missing file is a safe disabled no-op. Contains **no secrets**
+  (webhooks are referenced by env-var name). `AUTONOMOUS_ENABLED` /
+  `AUTONOMOUS_USER_ID` override the file.
+- **Scheduler gate**: `AUTONOMOUS_SCHEDULER_ENABLED` (off by default locally; empty ⇒
+  enabled in the deployed App Service). `run-now` works regardless of this flag.
+- **Endpoints** (all normal-user auth): `POST /api/autonomous/run-now`,
+  `GET /api/autonomous/runs`, `GET /api/autonomous/directives`.
+
+```bash
+# Trigger one cycle on demand (first enabled directive), then inspect the audit trail:
+export AUTH_DISABLED=true AUTONOMOUS_ENABLED=true
+curl -s -X POST http://localhost:8000/api/autonomous/run-now -H 'Content-Type: application/json' -d '{}'
+curl -s "http://localhost:8000/api/autonomous/runs?limit=10"
+
+# Run the unattended in-process scheduler locally:
+AUTONOMOUS_SCHEDULER_ENABLED=true uv run uvicorn main:app --port 8000 --reload
+```
+
+See [specs/012-autonomous-mode/quickstart.md](specs/012-autonomous-mode/quickstart.md)
+for the full walkthrough (notifications, scheduler, the Duty Officer UI, and tests).
+
 ## License
 
 See [LICENSE](LICENSE).

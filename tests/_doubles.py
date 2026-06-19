@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from cosmos_memory import ConversationRecord
+from cosmos_memory import AutonomousRunRecord, ConversationRecord
 
 
 class InMemoryConversationRepository:
@@ -79,6 +79,58 @@ class InMemoryConversationRepository:
         return False
 
 
+class InMemoryAutonomousRunRepository:
+    """Loop-independent in-memory autonomous-run audit log (test double).
+
+    Mirrors ``CosmosAutonomousRunRepository``: create/list/get, recency-ordered
+    (most-recent-first), with a stable insertion-sequence tiebreaker so runs that
+    share a timestamp still order deterministically.
+    """
+
+    def __init__(self) -> None:
+        self._runs: list[tuple[int, AutonomousRunRecord]] = []
+        self._seq = 0
+
+    async def create_run(self, record: AutonomousRunRecord) -> AutonomousRunRecord:
+        self._runs.append((self._seq, record))
+        self._seq += 1
+        return record
+
+    async def list_runs(
+        self, *, limit: int = 50, directive_id: str | None = None
+    ) -> list[AutonomousRunRecord]:
+        rows = self._runs
+        if directive_id:
+            rows = [row for row in rows if row[1].directive_id == directive_id]
+        ordered = sorted(rows, key=lambda row: (row[1].started_at, row[0]), reverse=True)
+        return [record for _, record in ordered[: max(0, min(limit, 200))]]
+
+    async def get_run(self, run_id: str, directive_id: str) -> AutonomousRunRecord | None:
+        for _, record in self._runs:
+            if record.id == run_id and record.directive_id == directive_id:
+                return record
+        return None
+
+
+class InMemoryAutonomousLeaseRepository:
+    """Loop-independent in-memory scheduler lease (test double).
+
+    The first ``try_acquire`` of a ``{directive_id}:{slot}`` pair returns True; any
+    later claim of the same pair returns False — the in-memory analogue of the
+    atomic Cosmos create that guarantees at-most-once execution per slot.
+    """
+
+    def __init__(self) -> None:
+        self._claimed: set[str] = set()
+
+    async def try_acquire(self, directive_id: str, slot: str, *, ttl: int = 3600) -> bool:
+        key = f"{directive_id}:{slot}"
+        if key in self._claimed:
+            return False
+        self._claimed.add(key)
+        return True
+
+
 class InMemoryUserScopedRepository:
     """Loop-independent in-memory per-user collection (test double for user_data)."""
 
@@ -112,7 +164,8 @@ def clear_cosmos_singletons(monkeypatch) -> None:
     import cosmos_memory
     import user_data
 
-    for name in ("_cosmos_client", "_async_credential", "_history_provider", "_conversation_repo"):
+    for name in ("_cosmos_client", "_async_credential", "_history_provider", "_conversation_repo",
+                 "_autonomous_run_repo", "_autonomous_lease_repo"):
         monkeypatch.setattr(cosmos_memory, name, None)
     for name in ("_custom_agents_repo", "_agent_customizations_repo", "_user_profile_repo"):
         monkeypatch.setattr(user_data, name, None)

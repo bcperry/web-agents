@@ -37,6 +37,18 @@ variable "conversations_container_name" {
   default     = "conversations"
 }
 
+variable "autonomous_container_name" {
+  description = "Container for autonomous run audit records (partition key /directive_id)."
+  type        = string
+  default     = "autonomous-runs"
+}
+
+variable "leases_container_name" {
+  description = "Container for autonomous scheduler leases (partition key /directive_id, per-item TTL)."
+  type        = string
+  default     = "autonomous-leases"
+}
+
 variable "principal_id" {
   description = "Principal ID of the app's managed identity, granted data-plane access."
   type        = string

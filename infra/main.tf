@@ -84,6 +84,11 @@ module "app_service" {
   azure_cosmos_container_name          = module.cosmos.messages_container_name
   azure_cosmos_conversations_container = module.cosmos.conversations_container_name
 
+  # Autonomous Mode (in-process scheduler + Duty Officer audit/lease containers)
+  azure_cosmos_autonomous_container = module.cosmos.autonomous_container_name
+  azure_cosmos_leases_container     = module.cosmos.leases_container_name
+  autonomous_scheduler_enabled      = var.autonomous_scheduler_enabled
+
   # Entra ID / Azure AD authentication
   entra_tenant_id     = var.entra_tenant_id
   entra_client_id     = var.entra_client_id

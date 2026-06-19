@@ -11,8 +11,10 @@ implementable and testable. Priorities: US1 (P1), US2 (P1), US3 (P2), US4 (P2), 
 
 > **Rebuild note:** the design was revised to an **in-process scheduler** (no Azure Function,
 > no shared key — see plan.md / research.md). This task list is retargeted to that design. The
-> original branch implemented an earlier (Function-App) version that is being **reverted to
-> `main`**; treat the boxes below as the plan for the clean rebuild, not as reverted code.
+> original branch implemented an earlier (Function-App) version that was **reverted to `main`**;
+> the **backend was then rebuilt from scratch** against this in-process design (not the reverted
+> code). Backend phases 1–8 are complete and verified (266-test offline suite + emulator + a live
+> end-to-end cycle). The only remaining box is the frontend nav wiring (T044).
 
 ## Format: `[ID] [P?] [Story] Description`
 
@@ -40,7 +42,7 @@ implementable and testable. Priorities: US1 (P1), US2 (P1), US3 (P2), US4 (P2), 
   (`id: duty-officer-watch`, `profile_id: chief-of-staff`, a watch-officer `instruction`,
   `schedule`, `notify` referencing `AUTONOMOUS_NOTIFY_WEBHOOK_URL`) per
   `contracts/autonomous-config.md`.
-- [ ] T002 [P] Ensure `httpx` (WebhookSink) and `croniter` (scheduler NCRONTAB evaluation) are
+- [X] T002 [P] Ensure `httpx` (WebhookSink) and `croniter` (scheduler NCRONTAB evaluation) are
   explicit backend dependencies in `pyproject.toml`; run `uv sync` to confirm. (uv only — never pip.)
 
 ---
@@ -90,7 +92,7 @@ with no chat input returns a completed response derived solely from the directiv
   session for the directive's profile, sends the directive instruction, and returns an
   `AutonomousRunResult` with non-empty `response_text`, captured `tool_events`, and `usage`
   (using the fake agent runtime double).
-- [ ] T009 [P] [US1] API test in `tests/test_autonomous_api.py`: `POST /api/autonomous/run-now`
+- [X] T009 [P] [US1] API test in `tests/test_autonomous_api.py`: `POST /api/autonomous/run-now`
   with `{}` returns `200` and the run wire shape; omitting `directive_id` runs the first enabled
   directive; unknown `directive_id` returns `404`.
 
@@ -104,7 +106,7 @@ with no chat input returns a completed response derived solely from the directiv
   `streaming.stream_agent_response`, read `stream_agent_response._last_result`
   (text/tool_events/usage), and return an `AutonomousRunResult`. Catch dependency/profile
   errors and return a failure result (never raise to the caller).
-- [ ] T012 [US1] Add `POST /api/autonomous/run-now` endpoint in `main.py` (request model
+- [X] T012 [US1] Add `POST /api/autonomous/run-now` endpoint in `main.py` (request model
   `{directive_id?}`, user-authenticated via `get_current_user`), resolving the directive
   (explicit or first-enabled), calling `run_autonomous_cycle(_session_context, ..., trigger="manual")`,
   and returning the run wire shape; `404` for unknown directive, `409` when disabled.
@@ -185,14 +187,14 @@ changes or secret exposure.
 
 ### Tests for User Story 4 ⚠️
 
-- [ ] T022 [P] [US4] Tests in `tests/test_autonomous_api.py`: when disabled, `POST
+- [X] T022 [P] [US4] Tests in `tests/test_autonomous_api.py`: when disabled, `POST
   /api/autonomous/run-now` returns `409` and writes no record; `GET /api/autonomous/directives`
   returns `{enabled, systemUserId, directives[]}` with truncated `instructionSummary` and a
   non-secret `notify` descriptor.
 
 ### Implementation for User Story 4
 
-- [ ] T023 [US4] Enforce the master/per-directive enable gate in `run_autonomous_cycle` and
+- [X] T023 [US4] Enforce the master/per-directive enable gate in `run_autonomous_cycle` and
   the `run-now` endpoint (disabled → `409`, no cycle, no record).
 - [X] T024 [US4] Add `GET /api/autonomous/directives` endpoint in `main.py` returning the
   sanitized directive listing (no secrets; `notify` as `"webhook"`/`"log"`).
@@ -215,34 +217,34 @@ requires a normal user session.
 
 ### Tests for User Story 5 ⚠️
 
-- [ ] T026 [P] [US5] Scheduler tests in `tests/test_autonomous_scheduler.py`: a due directive
+- [X] T026 [P] [US5] Scheduler tests in `tests/test_autonomous_scheduler.py`: a due directive
   fires once per slot and again on the next slot; baseline-seeding skips the current slot on
   start; a disabled config never fires; two scheduler instances sharing the (in-memory) lease
   store fire the slot exactly once.
-- [ ] T027 [P] [US5] Lease emulator test in `tests/test_autonomous_runs_cosmos.py`
+- [X] T027 [P] [US5] Lease emulator test in `tests/test_autonomous_runs_cosmos.py`
   (`@pytest.mark.emulator`): `CosmosAutonomousLeaseRepository.try_acquire` returns True for the
   first claim of `{directive}:{slot}` and False for a duplicate.
 
 ### Implementation for User Story 5
 
-- [ ] T028 [US5] Add `CosmosAutonomousLeaseRepository` (container `autonomous-leases`, partition
+- [X] T028 [US5] Add `CosmosAutonomousLeaseRepository` (container `autonomous-leases`, partition
   `/directive_id`, `default_ttl = -1`) with `try_acquire(directive_id, slot, ttl)` (atomic
   `create_item`; `CosmosResourceExistsError` → False) + `get_autonomous_lease_repository()`
   singleton + close/clear wiring in `cosmos_memory.py`; add `InMemoryAutonomousLeaseRepository`
   to `tests/_doubles.py` and inject it in the autouse fixture.
-- [ ] T029 [US5] Create `autonomous_scheduler.py`: `scheduler_enabled()` gate
+- [X] T029 [US5] Create `autonomous_scheduler.py`: `scheduler_enabled()` gate
   (`AUTONOMOUS_SCHEDULER_ENABLED`), `_current_slot(schedule, now)` via `croniter`, and
   `AutonomousScheduler` (poll loop, baseline-seed on start, per-(directive, slot) lease claim,
   then `run_autonomous_cycle(..., trigger="timer")`).
-- [ ] T030 [US5] Start/stop the scheduler from the FastAPI lifespan in `main.py` when
+- [X] T030 [US5] Start/stop the scheduler from the FastAPI lifespan in `main.py` when
   `scheduler_enabled()` (create on startup, cancel/await on shutdown); never block startup.
-- [ ] T031 [US5] Keep `run-now` user-authenticated: `POST /api/autonomous/run-now` depends on
+- [X] T031 [US5] Keep `run-now` user-authenticated: `POST /api/autonomous/run-now` depends on
   `get_current_user` only (no service key, no `require_autonomous_caller`, no `X-Autonomous-Key`).
-- [ ] T032 [US5] Declare the `autonomous-runs` and `autonomous-leases` containers in
+- [X] T032 [US5] Declare the `autonomous-runs` and `autonomous-leases` containers in
   `infra/modules/cosmos` (`main.tf` + `variables.tf` + `outputs.tf`); the leases container sets
   `default_ttl = -1` so per-item TTL applies. Wire the container names through the app-service
   module env (`AZURE_COSMOS_AUTONOMOUS_CONTAINER`, `AZURE_COSMOS_LEASES_CONTAINER`).
-- [ ] T033 [US5] Add the `AUTONOMOUS_SCHEDULER_ENABLED` app setting to
+- [X] T033 [US5] Add the `AUTONOMOUS_SCHEDULER_ENABLED` app setting to
   `infra/modules/app-service` (empty ⇒ `"true"`) and the `autonomous_scheduler_enabled` variable
   through `infra/variables.tf`, `infra/main.tf`, `infra/main.tfvars.json`, and `azure.yaml`
   parameters. No function-app module, no `autonomous` azd service, no trigger key.
@@ -254,11 +256,11 @@ trigger and no shared secret.
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T036 [P] Update `README.md` with an Autonomous Mode section (in-process scheduler,
+- [X] T036 [P] Update `README.md` with an Autonomous Mode section (in-process scheduler,
   config, endpoints, local run) linking to `specs/012-autonomous-mode/quickstart.md`.
 - [X] T037 Run the full offline suite `uv run pytest -q` and fix any failures; confirm the
   new autonomous unit tests pass without a real Cosmos account.
-- [ ] T038 [P] Validate `terraform fmt`/`validate` in `infra/` for the Cosmos container +
+- [X] T038 [P] Validate `terraform fmt`/`validate` in `infra/` for the Cosmos container +
   app-setting changes (no apply).
 - [X] T039 Execute the `quickstart.md` manual steps (backend up, trigger a cycle, list runs)
   and reconcile any drift between docs and behavior.

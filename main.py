@@ -29,7 +29,9 @@ from eval_trace import EvalTraceLogger
 from mcp_servers import parse_mcp_server_configs, connect_mcp_servers, cleanup_mcp_servers, get_search_service_config
 from prompt_config import get_profile_display_name, load_agents_yaml
 from session_orchestration import SessionContext, create_chat_session
-from cosmos_memory import close_cosmos, cosmos_config_summary, get_conversation_repository, get_history_provider, require_cosmos_configured
+from cosmos_memory import close_cosmos, cosmos_config_summary, get_autonomous_run_repository, get_conversation_repository, get_history_provider, require_cosmos_configured
+from autonomous import directive_to_wire, load_autonomous_config, run_autonomous_cycle
+from autonomous_scheduler import AutonomousScheduler, scheduler_enabled
 from user_data import (
     get_agent_customizations_repository,
     get_custom_agents_repository,
@@ -221,9 +223,37 @@ async def lifespan(app: FastAPI):
         cfg["auth"],
     )
 
+    # Autonomous mode startup summary (no secrets).
+    try:
+        autonomous_config = load_autonomous_config()
+        logger.info(
+            "Autonomous mode — enabled=%s directives=%d system_identity=%s",
+            autonomous_config.enabled,
+            len(autonomous_config.directives),
+            autonomous_config.system_user_id,
+        )
+    except Exception:
+        logger.warning("Failed to load autonomous config at startup", exc_info=True)
+
+    # In-process autonomous scheduler — gated, never blocks startup.
+    autonomous_scheduler = None
+    if scheduler_enabled():
+        try:
+            autonomous_scheduler = AutonomousScheduler(_session_context, logger=logger)
+            await autonomous_scheduler.start()
+            logger.info("Autonomous scheduler started (in-process, Cosmos lease)")
+        except Exception:
+            logger.error("Failed to start autonomous scheduler", exc_info=True)
+            autonomous_scheduler = None
+
     yield
 
-    # Shutdown: clean up sessions and Cosmos resources
+    # Shutdown: stop the scheduler, then clean up sessions and Cosmos resources
+    if autonomous_scheduler is not None:
+        try:
+            await autonomous_scheduler.stop()
+        except Exception:
+            logger.debug("Error stopping autonomous scheduler", exc_info=True)
     session_count = len(_sessions)
     _sessions.clear()
     await close_cosmos()
@@ -941,6 +971,75 @@ async def delete_conversation(
     # Drop any in-memory runtime session bound to this conversation
     _sessions.pop(conversation_id, None)
     return None
+
+
+# ---------------------------------------------------------------------------
+# Autonomous mode — the Duty Officer (in-process; user-authenticated API)
+# ---------------------------------------------------------------------------
+
+class AutonomousRunNowRequest(BaseModel):
+    directive_id: str | None = None
+
+
+@app.post("/api/autonomous/run-now")
+async def autonomous_run_now(
+    body: AutonomousRunNowRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Run one autonomous cycle on demand. The ONLY HTTP trigger; user-authenticated.
+
+    Scheduled cycles fire in-process (recorded as ``trigger: "timer"``); this is the
+    sole external entry point and selects only a pre-configured directive.
+    """
+    config = load_autonomous_config()
+    if not config.enabled:
+        raise HTTPException(status_code=409, detail="Autonomous mode is disabled")
+
+    if body.directive_id:
+        directive = config.find_directive(body.directive_id)
+        if directive is None or not directive.enabled:
+            raise HTTPException(status_code=404, detail="Directive not found or not enabled")
+    else:
+        enabled = config.enabled_directives()
+        if not enabled:
+            raise HTTPException(status_code=409, detail="No enabled directives are configured")
+        directive = enabled[0]
+
+    record = await run_autonomous_cycle(
+        _session_context, directive, trigger="manual", logger=logger, config=config
+    )
+    return record.to_wire()
+
+
+@app.get("/api/autonomous/runs")
+async def list_autonomous_runs(
+    user: AuthenticatedUser = Depends(get_current_user),
+    limit: int = 50,
+    directive_id: str | None = None,
+):
+    """List autonomous run history, most-recent-first (shared across all users)."""
+    bounded = max(1, min(int(limit or 50), 200))
+    try:
+        records = await get_autonomous_run_repository().list_runs(
+            limit=bounded, directive_id=directive_id
+        )
+    except Exception as e:
+        logger.error("Failed to list autonomous runs: %s", e)
+        raise HTTPException(status_code=503, detail="Autonomous run store is temporarily unavailable. Please try again.")
+    return {"runs": [r.to_wire() for r in records], "count": len(records)}
+
+
+@app.get("/api/autonomous/directives")
+async def list_autonomous_directives(
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """List the configured directives (no secrets) for all authenticated users."""
+    config = load_autonomous_config()
+    return {
+        "enabled": config.enabled,
+        "systemUserId": config.system_user_id,
+        "directives": [directive_to_wire(d) for d in config.directives],
+    }
 
 
 # ---------------------------------------------------------------------------

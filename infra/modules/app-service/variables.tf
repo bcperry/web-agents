@@ -126,6 +126,24 @@ variable "azure_cosmos_conversations_container" {
   default     = "conversations"
 }
 
+variable "azure_cosmos_autonomous_container" {
+  description = "Cosmos DB autonomous run audit container name"
+  type        = string
+  default     = "autonomous-runs"
+}
+
+variable "azure_cosmos_leases_container" {
+  description = "Cosmos DB autonomous scheduler lease container name"
+  type        = string
+  default     = "autonomous-leases"
+}
+
+variable "autonomous_scheduler_enabled" {
+  description = "Gate for the in-process autonomous scheduler. Empty string = enabled in Azure (the deployed default); 'false' disables it."
+  type        = string
+  default     = ""
+}
+
 # Entra ID / Azure AD authentication
 variable "entra_tenant_id" {
   description = "Entra ID (Azure AD) tenant ID for authentication"
