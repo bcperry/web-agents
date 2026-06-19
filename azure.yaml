@@ -29,6 +29,7 @@ infra:
     search_service_endpoint: ${SEARCH_SERVICE_ENDPOINT}
     search_index_name: ${SEARCH_INDEX_NAME}
     search_api_key: ${SEARCH_API_KEY}
+    autonomous_scheduler_enabled: ${AUTONOMOUS_SCHEDULER_ENABLED}
     entra_tenant_id: ${OAUTH_AZURE_GOV_AD_TENANT_ID}
     entra_client_id: ${OAUTH_AZURE_GOV_AD_CLIENT_ID}
     entra_client_secret: ${ENTRA_CLIENT_SECRET}

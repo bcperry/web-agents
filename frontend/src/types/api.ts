@@ -270,3 +270,75 @@ export interface SkillUpdatePayload {
   description: string;
   content: string;
 }
+
+// --- Autonomous mode (Duty Officer) ---
+
+/** A configured standing order the autonomous agent runs on a schedule. */
+export interface AutonomousDirective {
+  id: string;
+  profileId: string;
+  /** Full standing-order instruction (used by the edit form). */
+  instruction: string;
+  /** First ~160 chars of the directive instruction (no secrets). */
+  instructionSummary: string;
+  schedule: string | null;
+  /** Next scheduled fire time (UTC ISO-8601) when running autonomously, else null. */
+  nextRun: string | null;
+  enabled: boolean;
+  /** Non-secret notification descriptor: 'webhook' or 'log'. */
+  notify: string;
+  /** Configured webhook ENV-VAR NAME for editing (never a literal URL), else null. */
+  notifyWebhook: string | null;
+  /** Last edit time (UTC ISO-8601), else null. */
+  updatedAt: string | null;
+}
+
+export interface AutonomousDirectivesResponse {
+  enabled: boolean;
+  /** Whether the unattended in-process scheduler is running (else runs are manual-only). */
+  schedulerEnabled: boolean;
+  systemUserId: string;
+  directives: AutonomousDirective[];
+}
+
+/** Create payload for a new automation (snake_case to match the backend). */
+export interface AutonomousDirectiveCreate {
+  id: string;
+  profile_id: string;
+  instruction: string;
+  schedule?: string | null;
+  enabled?: boolean;
+  notify_webhook?: string | null;
+}
+
+/** Partial update for an automation; omitted fields are left unchanged. */
+export interface AutonomousDirectiveUpdate {
+  profile_id?: string;
+  instruction?: string;
+  schedule?: string | null;
+  enabled?: boolean;
+  notify_webhook?: string | null;
+}
+
+/** An audit record for one autonomous cycle (camelCase, no secrets). */
+export interface AutonomousRun {
+  id: string;
+  directiveId: string;
+  profileId: string;
+  sessionId: string;
+  status: string;
+  startedAt: string;
+  finishedAt: string;
+  responseText: string;
+  toolEvents: Array<Record<string, unknown>>;
+  usage: Partial<UsageDetails>;
+  error: string | null;
+  notifyStatus: string;
+  notifyError: string | null;
+  trigger: string;
+}
+
+export interface AutonomousRunsResponse {
+  runs: AutonomousRun[];
+  count: number;
+}

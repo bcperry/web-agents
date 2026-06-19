@@ -44,6 +44,8 @@ frontend/coverage/
 certs/
 .env.appsettings.json
 .azure/config
+# Azurite local storage emulator data
+.azurite/
 eval/traces/
 eval/results/
 

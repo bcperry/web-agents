@@ -64,6 +64,13 @@ resource "azurerm_linux_web_app" "app_service" {
     AZURE_COSMOS_CONTAINER_NAME          = var.azure_cosmos_container_name
     AZURE_COSMOS_CONVERSATIONS_CONTAINER = var.azure_cosmos_conversations_container
 
+    # Autonomous Mode (in-process scheduler + Duty Officer). An empty
+    # AUTONOMOUS_SCHEDULER_ENABLED means "enabled" in the deployed App Service.
+    AZURE_COSMOS_AUTONOMOUS_CONTAINER = var.azure_cosmos_autonomous_container
+    AZURE_COSMOS_LEASES_CONTAINER     = var.azure_cosmos_leases_container
+    AZURE_COSMOS_DIRECTIVES_CONTAINER = var.azure_cosmos_directives_container
+    AUTONOMOUS_SCHEDULER_ENABLED      = var.autonomous_scheduler_enabled
+
     # Entra ID / Azure AD authentication
     OAUTH_AZURE_GOV_AD_TENANT_ID = var.entra_tenant_id
     OAUTH_AZURE_GOV_AD_CLIENT_ID = var.entra_client_id

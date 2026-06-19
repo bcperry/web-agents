@@ -1,0 +1,45 @@
+schema_version: 1
+
+# Master switch for Autonomous Mode. Env AUTONOMOUS_ENABLED (true/false) overrides.
+enabled: true
+
+# Owner identity for all autonomous conversations and run records. Env
+# AUTONOMOUS_USER_ID overrides. This is a synthetic, non-human identity so
+# autonomous activity never pollutes interactive users' histories.
+system_user_id: autonomous-duty-officer
+
+directives:
+  - id: duty-officer-watch
+    profile_id: chief-of-staff
+    enabled: true
+    # NCRONTAB (6-field, seconds-first). Drives the in-process scheduler.
+    # Default: every 15 minutes. Omit to exclude from the schedule (still runnable
+    # via POST /api/autonomous/run-now).
+    schedule: "0 */15 * * * *"
+    instruction: |
+      You are the on-watch duty officer. Write your watch report as GitHub-flavored
+      **Markdown** (never raw JSON), suitable for a human reviewer, using exactly this
+      structure and starting with the BLUF line:
+
+      **BLUF:** <one sentence — the single most important thing the command needs to know
+      right now, e.g. "All quiet, no action required" or "1 item needs command approval">
+
+      ## Watch Summary
+      A few concise bullets on the current operational picture across the staff sections.
+
+      ## Items Requiring Command Attention
+      Bullets for anything needing a decision or awareness — or write "None." if nothing does.
+
+      ## Notification Requests
+      State explicitly what (if anything) should be routed to a human for review or approval.
+      For each request give a short **Action** (escalate / acknowledge / FYI), the
+      **Recipient** or channel, and a one-line rationale. If nothing needs to be sent,
+      write "No escalation required."
+
+      Keep the report brief and skimmable. You are in testing: do not call any other agents.
+    # Optional notification routing. The value is an ENV-VAR NAME (preferred,
+    # matches ^[A-Z][A-Z0-9_]*$) or a literal https URL. NEVER put a secret here.
+    # If unset/unresolved, falls back to AUTONOMOUS_NOTIFY_WEBHOOK_URL, then to
+    # the LoggingSink (the durable record is always the Cosmos run record).
+    notify:
+      webhook: AUTONOMOUS_NOTIFY_WEBHOOK_URL

@@ -33,12 +33,29 @@ def _cosmos_doubles(monkeypatch):
 	import cosmos_memory
 	import user_data
 	from agent_framework import InMemoryHistoryProvider
-	from tests._doubles import InMemoryConversationRepository, InMemoryUserScopedRepository
+	from tests._doubles import (
+		InMemoryAutonomousDirectiveRepository,
+		InMemoryAutonomousLeaseRepository,
+		InMemoryAutonomousRunRepository,
+		InMemoryConversationRepository,
+		InMemoryUserScopedRepository,
+	)
+
+	# Seed the directive double from the YAML defaults, mirroring the startup seed
+	# in production (so directive reads return the configured directives offline).
+	from autonomous import load_autonomous_config
+
+	seed_docs = [d.to_doc() for d in load_autonomous_config().directives]
 
 	monkeypatch.setattr(cosmos_memory, "_cosmos_client", None)
 	monkeypatch.setattr(cosmos_memory, "_async_credential", None)
 	monkeypatch.setattr(cosmos_memory, "_history_provider", InMemoryHistoryProvider(skip_excluded=True))
 	monkeypatch.setattr(cosmos_memory, "_conversation_repo", InMemoryConversationRepository())
+	monkeypatch.setattr(cosmos_memory, "_autonomous_run_repo", InMemoryAutonomousRunRepository())
+	monkeypatch.setattr(cosmos_memory, "_autonomous_lease_repo", InMemoryAutonomousLeaseRepository())
+	monkeypatch.setattr(
+		cosmos_memory, "_autonomous_directive_repo", InMemoryAutonomousDirectiveRepository(seed_docs)
+	)
 	monkeypatch.setattr(user_data, "_custom_agents_repo", InMemoryUserScopedRepository())
 	monkeypatch.setattr(user_data, "_agent_customizations_repo", InMemoryUserScopedRepository())
 	monkeypatch.setattr(user_data, "_user_profile_repo", InMemoryUserScopedRepository())

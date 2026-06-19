@@ -78,6 +78,38 @@ resource "azurerm_cosmosdb_sql_container" "user_profiles" {
   partition_key_paths = ["/user_id"]
 }
 
+# Autonomous Mode run audit log (partition key /directive_id). One durable record
+# per autonomous cycle; the dominant query is "runs for a directive" + recency.
+resource "azurerm_cosmosdb_sql_container" "autonomous_runs" {
+  name                = var.autonomous_container_name
+  resource_group_name = var.resource_group_name
+  account_name        = azurerm_cosmosdb_account.cosmos.name
+  database_name       = azurerm_cosmosdb_sql_database.db.name
+  partition_key_paths = ["/directive_id"]
+}
+
+# Autonomous Mode scheduler leases (partition key /directive_id). The atomic
+# create of "{directive_id}:{slot}" guarantees at-most-once execution per slot
+# across instances. default_ttl = -1 enables per-item TTL so leases self-expire.
+resource "azurerm_cosmosdb_sql_container" "autonomous_leases" {
+  name                = var.leases_container_name
+  resource_group_name = var.resource_group_name
+  account_name        = azurerm_cosmosdb_account.cosmos.name
+  database_name       = azurerm_cosmosdb_sql_database.db.name
+  partition_key_paths = ["/directive_id"]
+  default_ttl         = -1
+}
+
+# Autonomous Mode directive store (partition key /id). Seeded from the YAML
+# defaults at startup; holds runtime edits (enable/disable, schedule, new ones).
+resource "azurerm_cosmosdb_sql_container" "autonomous_directives" {
+  name                = var.directives_container_name
+  resource_group_name = var.resource_group_name
+  account_name        = azurerm_cosmosdb_account.cosmos.name
+  database_name       = azurerm_cosmosdb_sql_database.db.name
+  partition_key_paths = ["/id"]
+}
+
 # Grant the app's managed identity data-plane access via the built-in
 # "Cosmos DB Built-in Data Contributor" role (id ...0002).
 resource "azurerm_cosmosdb_sql_role_assignment" "data_contributor" {

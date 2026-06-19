@@ -97,6 +97,12 @@ variable "enable_dev_cosmos_access" {
   default     = "false"
 }
 
+variable "autonomous_scheduler_enabled" {
+  description = "Gate for the in-process Autonomous Mode scheduler in the App Service. Empty = enabled (the deployed default); 'false' disables the unattended schedule (run-now still works)."
+  type        = string
+  default     = ""
+}
+
 # Entra ID / Azure AD authentication
 variable "entra_tenant_id" {
   description = "Entra ID (Azure AD) tenant ID for authentication"

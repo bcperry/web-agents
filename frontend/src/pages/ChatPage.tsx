@@ -19,6 +19,7 @@ import type { CustomAgentDefinition } from '../types/api';
 
 interface ChatPageProps {
   onOpenAdmin: () => void;
+  onOpenAutonomous: () => void;
   customAgents: CustomAgentDefinition[];
   builtInOverrides: AgentCustomizationOverride[];
 }
@@ -30,7 +31,21 @@ const SPINNER_MESSAGES = [
   'FINDING THE T-1000...',
 ];
 
-export function ChatPage({ onOpenAdmin, customAgents, builtInOverrides }: ChatPageProps) {
+// Sentinel agent card that links to the dedicated Duty Officer (autonomous)
+// console instead of starting a normal chat session.
+const DUTY_OFFICER_PROFILE_ID = '__duty_officer__';
+
+const DUTY_OFFICER_PROFILE: AgentProfile = {
+  id: DUTY_OFFICER_PROFILE_ID,
+  name: 'Duty Officer',
+  description:
+    'Autonomous chief of staff. Monitors activity on a schedule and reports what needs your attention.',
+  icon: '/icons/hybrid.svg',
+  group: 'Automations',
+  starters: [],
+};
+
+export function ChatPage({ onOpenAdmin, onOpenAutonomous, customAgents, builtInOverrides }: ChatPageProps) {
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<AgentProfile | null>(null);
   const [loadingProfiles, setLoadingProfiles] = useState(true);
@@ -88,6 +103,7 @@ export function ChatPage({ onOpenAdmin, customAgents, builtInOverrides }: ChatPa
       isCustom: true as const,
       customAgent: a,
     })),
+    DUTY_OFFICER_PROFILE,
   ], [builtInOverrides, customAgents, profiles]);
 
   // Load profiles and conversation index on mount
@@ -139,6 +155,12 @@ export function ChatPage({ onOpenAdmin, customAgents, builtInOverrides }: ChatPa
   }, [messages]);
 
   const handleProfileSelect = useCallback(async (profileId: string) => {
+    // The Duty Officer card is a shortcut into the dedicated autonomous console,
+    // not a regular chat session.
+    if (profileId === DUTY_OFFICER_PROFILE_ID) {
+      onOpenAutonomous();
+      return;
+    }
     const profile = allProfiles.find((p) => p.id === profileId);
     if (profile) {
       setSelectedProfile(profile);
@@ -152,7 +174,7 @@ export function ChatPage({ onOpenAdmin, customAgents, builtInOverrides }: ChatPa
         setCreatingSession(false);
       }
     }
-  }, [allProfiles, startSession]);
+  }, [allProfiles, startSession, onOpenAutonomous]);
 
   const handleSend = (content: string, images?: File[]) => {
     send(content, images);

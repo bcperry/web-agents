@@ -29,7 +29,19 @@ from eval_trace import EvalTraceLogger
 from mcp_servers import parse_mcp_server_configs, connect_mcp_servers, cleanup_mcp_servers, get_search_service_config
 from prompt_config import get_profile_display_name, load_agents_yaml
 from session_orchestration import SessionContext, create_chat_session
-from cosmos_memory import close_cosmos, cosmos_config_summary, get_conversation_repository, get_history_provider, require_cosmos_configured
+from cosmos_memory import close_cosmos, cosmos_config_summary, get_autonomous_directive_repository, get_autonomous_run_repository, get_conversation_repository, get_history_provider, require_cosmos_configured
+from autonomous import (
+    Directive,
+    directive_to_wire,
+    get_autonomous_config,
+    run_autonomous_cycle,
+    seed_autonomous_directives,
+    validate_directive_id,
+    validate_notify_webhook,
+    validate_profile_id,
+    validate_schedule,
+)
+from autonomous_scheduler import AutonomousScheduler, scheduler_enabled
 from user_data import (
     get_agent_customizations_repository,
     get_custom_agents_repository,
@@ -221,9 +233,40 @@ async def lifespan(app: FastAPI):
         cfg["auth"],
     )
 
+    # Autonomous mode startup summary (no secrets). Seed the durable directive store
+    # from the YAML defaults (idempotent) so the runtime config is Cosmos-backed.
+    try:
+        seeded = await seed_autonomous_directives()
+        autonomous_config = await get_autonomous_config()
+        logger.info(
+            "Autonomous mode — enabled=%s directives=%d (seeded %d) system_identity=%s",
+            autonomous_config.enabled,
+            len(autonomous_config.directives),
+            seeded,
+            autonomous_config.system_user_id,
+        )
+    except Exception:
+        logger.warning("Failed to load/seed autonomous config at startup", exc_info=True)
+
+    # In-process autonomous scheduler — gated, never blocks startup.
+    autonomous_scheduler = None
+    if scheduler_enabled():
+        try:
+            autonomous_scheduler = AutonomousScheduler(_session_context, logger=logger)
+            await autonomous_scheduler.start()
+            logger.info("Autonomous scheduler started (in-process, Cosmos lease)")
+        except Exception:
+            logger.error("Failed to start autonomous scheduler", exc_info=True)
+            autonomous_scheduler = None
+
     yield
 
-    # Shutdown: clean up sessions and Cosmos resources
+    # Shutdown: stop the scheduler, then clean up sessions and Cosmos resources
+    if autonomous_scheduler is not None:
+        try:
+            await autonomous_scheduler.stop()
+        except Exception:
+            logger.debug("Error stopping autonomous scheduler", exc_info=True)
     session_count = len(_sessions)
     _sessions.clear()
     await close_cosmos()
@@ -940,6 +983,224 @@ async def delete_conversation(
         raise HTTPException(status_code=503, detail="Conversation store is temporarily unavailable. Please try again.")
     # Drop any in-memory runtime session bound to this conversation
     _sessions.pop(conversation_id, None)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Autonomous mode — the Duty Officer (in-process; user-authenticated API)
+# ---------------------------------------------------------------------------
+
+class AutonomousRunNowRequest(BaseModel):
+    directive_id: str | None = None
+
+
+@app.post("/api/autonomous/run-now")
+async def autonomous_run_now(
+    body: AutonomousRunNowRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Run one autonomous cycle on demand. The ONLY HTTP trigger; user-authenticated.
+
+    Scheduled cycles fire in-process (recorded as ``trigger: "timer"``); this is the
+    sole external entry point and selects only a pre-configured directive.
+    """
+    config = await get_autonomous_config()
+    if not config.enabled:
+        raise HTTPException(status_code=409, detail="Autonomous mode is disabled")
+
+    if body.directive_id:
+        directive = config.find_directive(body.directive_id)
+        if directive is None or not directive.enabled:
+            raise HTTPException(status_code=404, detail="Directive not found or not enabled")
+    else:
+        enabled = config.enabled_directives()
+        if not enabled:
+            raise HTTPException(status_code=409, detail="No enabled directives are configured")
+        directive = enabled[0]
+
+    record = await run_autonomous_cycle(
+        _session_context, directive, trigger="manual", logger=logger, config=config
+    )
+    return record.to_wire()
+
+
+@app.get("/api/autonomous/runs")
+async def list_autonomous_runs(
+    user: AuthenticatedUser = Depends(get_current_user),
+    limit: int = 50,
+    directive_id: str | None = None,
+):
+    """List autonomous run history, most-recent-first (shared across all users)."""
+    bounded = max(1, min(int(limit or 50), 200))
+    try:
+        records = await get_autonomous_run_repository().list_runs(
+            limit=bounded, directive_id=directive_id
+        )
+    except Exception as e:
+        logger.error("Failed to list autonomous runs: %s", e)
+        raise HTTPException(status_code=503, detail="Autonomous run store is temporarily unavailable. Please try again.")
+    return {"runs": [r.to_wire() for r in records], "count": len(records)}
+
+
+@app.get("/api/autonomous/directives")
+async def list_autonomous_directives(
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """List the configured directives (no secrets) for all authenticated users."""
+    config = await get_autonomous_config()
+    return {
+        "enabled": config.enabled,
+        "schedulerEnabled": scheduler_enabled(),
+        "systemUserId": config.system_user_id,
+        "directives": [directive_to_wire(d) for d in config.directives],
+    }
+
+
+class DirectiveCreateRequest(BaseModel):
+    id: str
+    profile_id: str
+    instruction: str
+    schedule: str | None = None
+    enabled: bool = True
+    notify_webhook: str | None = None
+
+
+class DirectiveUpdateRequest(BaseModel):
+    profile_id: str | None = None
+    instruction: str | None = None
+    schedule: str | None = None
+    enabled: bool | None = None
+    notify_webhook: str | None = None
+
+
+def _validated_schedule(raw: str | None) -> str | None:
+    """Normalize + validate an optional schedule; '' or None clears it."""
+    schedule = (raw or "").strip() or None
+    if schedule is not None:
+        try:
+            validate_schedule(schedule)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    return schedule
+
+
+def _validated_instruction(raw: str) -> str:
+    instruction = (raw or "").strip()
+    if not instruction:
+        raise HTTPException(status_code=400, detail="instruction is required")
+    if len(instruction) > DEFAULT_MAX_USER_INPUT_CHARS:
+        raise HTTPException(status_code=400, detail="instruction is too long")
+    return instruction
+
+
+def _validated_notify(raw: str | None) -> dict[str, str] | None:
+    value = (raw or "").strip()
+    if not value:
+        return None
+    try:
+        return validate_notify_webhook(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/autonomous/directives", status_code=201)
+async def create_autonomous_directive(
+    body: DirectiveCreateRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Create a new automation (directive). Authenticated users only."""
+    repo = get_autonomous_directive_repository()
+    try:
+        directive_id = validate_directive_id(body.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    try:
+        validate_profile_id(body.profile_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if await repo.get_directive(directive_id) is not None:
+        raise HTTPException(status_code=409, detail=f"Directive '{directive_id}' already exists")
+
+    now = datetime.now(timezone.utc).isoformat()
+    directive = Directive(
+        id=directive_id,
+        profile_id=body.profile_id,
+        instruction=_validated_instruction(body.instruction),
+        schedule=_validated_schedule(body.schedule),
+        enabled=bool(body.enabled),
+        notify=_validated_notify(body.notify_webhook),
+        created_at=now,
+        updated_at=now,
+    )
+    await repo.upsert_directive(directive.to_doc())
+    logger.info("Autonomous directive created: %s", directive_id)
+    return directive_to_wire(directive)
+
+
+@app.patch("/api/autonomous/directives/{directive_id}")
+async def update_autonomous_directive(
+    directive_id: str,
+    body: DirectiveUpdateRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Update an automation: enable/disable, schedule, instruction, profile, or notify."""
+    repo = get_autonomous_directive_repository()
+    existing = await repo.get_directive(directive_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Directive not found")
+    current = Directive.from_doc(existing)
+    fields = body.model_dump(exclude_unset=True)
+
+    profile_id = current.profile_id
+    if "profile_id" in fields and fields["profile_id"] is not None:
+        try:
+            validate_profile_id(fields["profile_id"])
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        profile_id = fields["profile_id"]
+
+    instruction = current.instruction
+    if "instruction" in fields and fields["instruction"] is not None:
+        instruction = _validated_instruction(fields["instruction"])
+
+    schedule = current.schedule
+    if "schedule" in fields:
+        schedule = _validated_schedule(fields["schedule"])
+
+    enabled = current.enabled
+    if "enabled" in fields and fields["enabled"] is not None:
+        enabled = bool(fields["enabled"])
+
+    notify = current.notify
+    if "notify_webhook" in fields:
+        notify = _validated_notify(fields["notify_webhook"])
+
+    now = datetime.now(timezone.utc).isoformat()
+    updated = Directive(
+        id=current.id,
+        profile_id=profile_id,
+        instruction=instruction,
+        schedule=schedule,
+        enabled=enabled,
+        notify=notify,
+        created_at=current.created_at or now,
+        updated_at=now,
+    )
+    await repo.upsert_directive(updated.to_doc())
+    logger.info("Autonomous directive updated: %s (enabled=%s)", directive_id, enabled)
+    return directive_to_wire(updated)
+
+
+@app.delete("/api/autonomous/directives/{directive_id}", status_code=204)
+async def delete_autonomous_directive(
+    directive_id: str,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    """Delete an automation. (A YAML-default directive reappears on next startup.)"""
+    deleted = await get_autonomous_directive_repository().delete_directive(directive_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Directive not found")
+    logger.info("Autonomous directive deleted: %s", directive_id)
     return None
 
 
