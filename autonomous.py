@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -32,6 +33,7 @@ from agent_framework._types import Content
 from auth import AuthenticatedUser
 from cosmos_memory import (
     AutonomousRunRecord,
+    get_autonomous_directive_repository,
     get_autonomous_run_repository,
     get_conversation_repository,
 )
@@ -54,6 +56,12 @@ DEFAULT_SYSTEM_USER_ID = "autonomous-duty-officer"
 SYSTEM_USERNAME = "Autonomous Duty Officer"
 _INSTRUCTION_SUMMARY_CHARS = 160
 
+# A directive id is a stable URL-safe slug.
+_DIRECTIVE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+# A notify.webhook value that is an env-var NAME (vs a literal URL).
+_ENV_VAR_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
+MAX_INSTRUCTION_CHARS = 8000
+
 
 # ---------------------------------------------------------------------------
 # Configuration model
@@ -61,7 +69,11 @@ _INSTRUCTION_SUMMARY_CHARS = 160
 
 @dataclass(frozen=True)
 class Directive:
-    """A standing order: one unit of autonomous work (config, not persisted)."""
+    """A standing order: one unit of autonomous work.
+
+    Seeded from ``config/autonomous.yaml`` and then stored durably in Cosmos so
+    runtime edits (enable/disable, schedule, new directives) persist.
+    """
 
     id: str
     profile_id: str
@@ -69,6 +81,36 @@ class Directive:
     schedule: str | None = None
     enabled: bool = True
     notify: dict[str, Any] | None = None
+    created_at: str = ""
+    updated_at: str = ""
+
+    def to_doc(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "profile_id": self.profile_id,
+            "instruction": self.instruction,
+            "schedule": self.schedule,
+            "enabled": self.enabled,
+            "notify": self.notify,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "doc_type": "autonomous_directive",
+            "schema_version": 1,
+        }
+
+    @classmethod
+    def from_doc(cls, doc: dict[str, Any]) -> "Directive":
+        notify = doc.get("notify")
+        return cls(
+            id=str(doc["id"]),
+            profile_id=str(doc.get("profile_id", "")),
+            instruction=str(doc.get("instruction", "")),
+            schedule=(str(doc["schedule"]).strip() if doc.get("schedule") else None),
+            enabled=bool(doc.get("enabled", True)),
+            notify=notify if isinstance(notify, dict) else None,
+            created_at=str(doc.get("created_at", "")),
+            updated_at=str(doc.get("updated_at", "")),
+        )
 
 
 @dataclass(frozen=True)
@@ -174,6 +216,104 @@ def load_directives(path: Path | None = None) -> list[Directive]:
 
 
 # ---------------------------------------------------------------------------
+# Durable (Cosmos-backed) directive store: YAML seeds defaults, Cosmos is the
+# runtime source of truth for the directive list (enable/disable, schedule, new).
+# ---------------------------------------------------------------------------
+
+async def get_autonomous_config() -> AutonomousConfig:
+    """Runtime config: global settings from YAML/env + directives from Cosmos.
+
+    The master ``enabled`` flag and system identity stay file/env controlled; the
+    directive **list** is the durable Cosmos store (seeded from YAML at startup).
+    """
+    base = load_autonomous_config()
+    docs = await get_autonomous_directive_repository().list_directives()
+    directives = [Directive.from_doc(doc) for doc in docs]
+    return AutonomousConfig(
+        enabled=base.enabled,
+        system_user_id=base.system_user_id,
+        directives=directives,
+        schema_version=base.schema_version,
+    )
+
+
+async def seed_autonomous_directives() -> int:
+    """Seed YAML default directives into Cosmos for any id not already present.
+
+    Idempotent (runs at startup): existing — possibly edited — directives are left
+    untouched so runtime edits persist; brand-new YAML directives are added. Note a
+    deleted YAML-default directive reappears on the next startup (it is a default);
+    remove it from the YAML to retire it permanently.
+    """
+    base = load_autonomous_config()
+    if not base.directives:
+        return 0
+    repo = get_autonomous_directive_repository()
+    existing = {str(doc.get("id")) for doc in await repo.list_directives()}
+    now = datetime.now(timezone.utc).isoformat()
+    seeded = 0
+    for directive in base.directives:
+        if directive.id in existing:
+            continue
+        doc = directive.to_doc()
+        doc["created_at"] = doc["created_at"] or now
+        doc["updated_at"] = doc["updated_at"] or now
+        await repo.upsert_directive(doc)
+        seeded += 1
+    return seeded
+
+
+# ---------------------------------------------------------------------------
+# Validation (used by the directive CRUD endpoints)
+# ---------------------------------------------------------------------------
+
+def validate_directive_id(directive_id: str) -> str:
+    """Return a normalized id or raise ValueError (URL-safe lowercase slug)."""
+    normalized = (directive_id or "").strip().lower()
+    if not _DIRECTIVE_ID_RE.match(normalized):
+        raise ValueError(
+            "id must be a lowercase slug (letters, digits, hyphens), e.g. 'morning-brief'"
+        )
+    return normalized
+
+
+def validate_schedule(schedule: str) -> None:
+    """Raise ValueError unless ``schedule`` is a valid 6-field seconds-first NCRONTAB."""
+    if len(schedule.split()) != 6:
+        raise ValueError(
+            "Schedule must be a 6-field NCRONTAB: 'second minute hour day month weekday'"
+        )
+    try:
+        from croniter import croniter
+
+        croniter(schedule, datetime.now(timezone.utc), second_at_beginning=True)
+    except ValueError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — surface any parse error as a clean ValueError
+        raise ValueError(f"Invalid schedule expression: {schedule}") from exc
+
+
+def validate_notify_webhook(value: str) -> dict[str, str]:
+    """Validate a notify webhook hint (env-var NAME or https URL); return notify dict."""
+    candidate = (value or "").strip()
+    if _ENV_VAR_NAME_RE.match(candidate):
+        return {"webhook": candidate}
+    if candidate.lower().startswith(("https://", "http://")):
+        return {"webhook": candidate}
+    raise ValueError(
+        "notify webhook must be an ENV VAR NAME (e.g. AUTONOMOUS_NOTIFY_WEBHOOK_URL) or an https URL"
+    )
+
+
+def validate_profile_id(profile_id: str) -> str:
+    """Return the resolved display name, or raise ValueError if the profile is unknown."""
+    name = _resolve_profile_name(profile_id)
+    if name is None:
+        raise ValueError(f"Unknown profile: {profile_id}")
+    return name
+
+
+# ---------------------------------------------------------------------------
 # System identity
 # ---------------------------------------------------------------------------
 
@@ -210,16 +350,29 @@ def _summarize_instruction(instruction: str) -> str:
     return collapsed[:_INSTRUCTION_SUMMARY_CHARS].rstrip() + "…"
 
 
+def _notify_webhook_name(directive: Directive) -> str | None:
+    """The configured webhook ENV-VAR NAME for display/editing (never a literal URL)."""
+    notify = directive.notify
+    if isinstance(notify, dict):
+        webhook = notify.get("webhook")
+        if isinstance(webhook, str) and _ENV_VAR_NAME_RE.match(webhook.strip()):
+            return webhook.strip()
+    return None
+
+
 def directive_to_wire(directive: Directive, *, now: datetime | None = None) -> dict[str, Any]:
     """Sanitized directive shape for the API (no secrets; ``notify`` is a descriptor)."""
     return {
         "id": directive.id,
         "profileId": directive.profile_id,
+        "instruction": directive.instruction,
         "instructionSummary": _summarize_instruction(directive.instruction),
         "schedule": directive.schedule,
         "nextRun": compute_next_run(directive.schedule, now=now) if directive.enabled else None,
         "enabled": directive.enabled,
         "notify": notify_descriptor(directive),
+        "notifyWebhook": _notify_webhook_name(directive),
+        "updatedAt": directive.updated_at or None,
     }
 
 
@@ -301,7 +454,7 @@ async def run_autonomous_cycle(
     failure) and delivers the result to a notification sink (failure non-fatal).
     Never raises to the caller.
     """
-    config = config or load_autonomous_config()
+    config = config or await get_autonomous_config()
     sys_user = system_user(config)
     run_id = uuid.uuid4().hex
     session_id = f"autonomous-{directive.id}"
@@ -428,8 +581,14 @@ __all__ = [
     "collect_agent_response",
     "compute_next_run",
     "directive_to_wire",
+    "get_autonomous_config",
     "load_autonomous_config",
     "load_directives",
     "run_autonomous_cycle",
+    "seed_autonomous_directives",
     "system_user",
+    "validate_directive_id",
+    "validate_notify_webhook",
+    "validate_profile_id",
+    "validate_schedule",
 ]

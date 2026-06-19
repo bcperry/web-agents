@@ -32,3 +32,8 @@ output "leases_container_name" {
   description = "Autonomous scheduler lease container name."
   value       = azurerm_cosmosdb_sql_container.autonomous_leases.name
 }
+
+output "directives_container_name" {
+  description = "Autonomous directive store container name."
+  value       = azurerm_cosmosdb_sql_container.autonomous_directives.name
+}

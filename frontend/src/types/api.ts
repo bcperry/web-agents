@@ -277,6 +277,8 @@ export interface SkillUpdatePayload {
 export interface AutonomousDirective {
   id: string;
   profileId: string;
+  /** Full standing-order instruction (used by the edit form). */
+  instruction: string;
   /** First ~160 chars of the directive instruction (no secrets). */
   instructionSummary: string;
   schedule: string | null;
@@ -285,12 +287,37 @@ export interface AutonomousDirective {
   enabled: boolean;
   /** Non-secret notification descriptor: 'webhook' or 'log'. */
   notify: string;
+  /** Configured webhook ENV-VAR NAME for editing (never a literal URL), else null. */
+  notifyWebhook: string | null;
+  /** Last edit time (UTC ISO-8601), else null. */
+  updatedAt: string | null;
 }
 
 export interface AutonomousDirectivesResponse {
   enabled: boolean;
+  /** Whether the unattended in-process scheduler is running (else runs are manual-only). */
+  schedulerEnabled: boolean;
   systemUserId: string;
   directives: AutonomousDirective[];
+}
+
+/** Create payload for a new automation (snake_case to match the backend). */
+export interface AutonomousDirectiveCreate {
+  id: string;
+  profile_id: string;
+  instruction: string;
+  schedule?: string | null;
+  enabled?: boolean;
+  notify_webhook?: string | null;
+}
+
+/** Partial update for an automation; omitted fields are left unchanged. */
+export interface AutonomousDirectiveUpdate {
+  profile_id?: string;
+  instruction?: string;
+  schedule?: string | null;
+  enabled?: boolean;
+  notify_webhook?: string | null;
 }
 
 /** An audit record for one autonomous cycle (camelCase, no secrets). */

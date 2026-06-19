@@ -463,6 +463,67 @@ class CosmosAutonomousLeaseRepository:
             return False
 
 
+class CosmosAutonomousDirectiveRepository:
+    """Cosmos-backed store of autonomous directives, partitioned by ``/id``.
+
+    Directives are global (not per-user) operational config. The YAML file seeds
+    defaults; runtime edits (enable/disable, schedule, new directives) live here so
+    they are durable and shared across all backend instances. Volume is tiny (a
+    handful of docs), so the dominant "list all" read is a cheap cross-partition
+    query and point reads/writes are partition-scoped by id.
+    """
+
+    def __init__(self, client: Any, database_name: str, container_name: str) -> None:
+        self._client = client
+        self._database_name = database_name
+        self._container_name = container_name
+        self._container: Any = None
+
+    async def _get_container(self) -> Any:
+        if self._container is None:
+            from azure.cosmos import PartitionKey
+
+            database = await self._client.create_database_if_not_exists(self._database_name)
+            self._container = await database.create_container_if_not_exists(
+                id=self._container_name,
+                partition_key=PartitionKey(path="/id"),
+            )
+        return self._container
+
+    async def list_directives(self) -> list[dict[str, Any]]:
+        container = await self._get_container()
+        items = container.query_items(query="SELECT * FROM c")
+        docs: list[dict[str, Any]] = []
+        async for item in items:
+            docs.append(item)
+        docs.sort(key=lambda d: (str(d.get("created_at") or ""), str(d.get("id") or "")))
+        return docs
+
+    async def get_directive(self, directive_id: str) -> dict[str, Any] | None:
+        from azure.cosmos.exceptions import CosmosResourceNotFoundError
+
+        container = await self._get_container()
+        try:
+            return await container.read_item(item=directive_id, partition_key=directive_id)
+        except CosmosResourceNotFoundError:
+            return None
+
+    async def upsert_directive(self, doc: dict[str, Any]) -> dict[str, Any]:
+        container = await self._get_container()
+        await container.upsert_item(doc)
+        return doc
+
+    async def delete_directive(self, directive_id: str) -> bool:
+        from azure.cosmos.exceptions import CosmosResourceNotFoundError
+
+        container = await self._get_container()
+        try:
+            await container.delete_item(item=directive_id, partition_key=directive_id)
+            return True
+        except CosmosResourceNotFoundError:
+            return False
+
+
 # ---------------------------------------------------------------------------
 # Shared Cosmos client + provider/repository singletons
 # ---------------------------------------------------------------------------
@@ -473,6 +534,7 @@ _history_provider: Any = None
 _conversation_repo: Any = None
 _autonomous_run_repo: Any = None
 _autonomous_lease_repo: Any = None
+_autonomous_directive_repo: Any = None
 
 
 def _build_cosmos_client() -> Any:
@@ -612,6 +674,23 @@ def get_autonomous_lease_repository() -> Any:
     return _autonomous_lease_repo
 
 
+def get_autonomous_directive_repository() -> Any:
+    """Return the cached Cosmos autonomous-directive repository.
+
+    Requires Cosmos to be configured; raises otherwise.
+    """
+    global _autonomous_directive_repo
+    if _autonomous_directive_repo is not None:
+        return _autonomous_directive_repo
+
+    _autonomous_directive_repo = CosmosAutonomousDirectiveRepository(
+        get_cosmos_client(),
+        (os.getenv("AZURE_COSMOS_DATABASE_NAME") or "agent-memory").strip(),
+        (os.getenv("AZURE_COSMOS_DIRECTIVES_CONTAINER") or "autonomous-directives").strip(),
+    )
+    return _autonomous_directive_repo
+
+
 def require_cosmos_configured() -> None:
     """Fail fast at startup unless Cosmos is configured (or a double was injected for tests)."""
     if _history_provider is not None or _conversation_repo is not None:
@@ -622,7 +701,7 @@ def require_cosmos_configured() -> None:
 async def close_cosmos() -> None:
     """Close the shared Cosmos client + credential (called on app shutdown)."""
     global _cosmos_client, _async_credential, _history_provider, _conversation_repo
-    global _autonomous_run_repo, _autonomous_lease_repo
+    global _autonomous_run_repo, _autonomous_lease_repo, _autonomous_directive_repo
     if _cosmos_client is not None:
         try:
             await _cosmos_client.close()
@@ -639,3 +718,4 @@ async def close_cosmos() -> None:
     _conversation_repo = None
     _autonomous_run_repo = None
     _autonomous_lease_repo = None
+    _autonomous_directive_repo = None

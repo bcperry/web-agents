@@ -92,6 +92,46 @@ def test_lease_try_acquire_is_atomic_once(cosmos_emulator):
     asyncio.run(scenario())
 
 
+@pytest.mark.emulator
+def test_directive_repo_crud_round_trip(cosmos_emulator):
+    async def scenario():
+        repo = cosmos_memory.get_autonomous_directive_repository()
+        directive_id = f"dir-{uuid4()}"
+        doc = {
+            "id": directive_id,
+            "profile_id": "chief-of-staff",
+            "instruction": "Run the watch.",
+            "schedule": "0 */15 * * * *",
+            "enabled": True,
+            "notify": {"webhook": "AUTONOMOUS_NOTIFY_WEBHOOK_URL"},
+            "created_at": "2026-06-19T12:00:00+00:00",
+            "updated_at": "2026-06-19T12:00:00+00:00",
+            "doc_type": "autonomous_directive",
+            "schema_version": 1,
+        }
+        try:
+            await repo.upsert_directive(doc)
+            got = await repo.get_directive(directive_id)
+            assert got is not None
+            assert got["profile_id"] == "chief-of-staff"
+
+            listed = await repo.list_directives()
+            assert any(d["id"] == directive_id for d in listed)
+
+            # Update (disable) round-trips.
+            doc["enabled"] = False
+            await repo.upsert_directive(doc)
+            assert (await repo.get_directive(directive_id))["enabled"] is False
+
+            assert await repo.delete_directive(directive_id) is True
+            assert await repo.get_directive(directive_id) is None
+            assert await repo.delete_directive(directive_id) is False
+        finally:
+            await cosmos_memory.close_cosmos()
+
+    asyncio.run(scenario())
+
+
 def _run(directive_id: str, started_at: str) -> AutonomousRunRecord:
     return AutonomousRunRecord(
         id=uuid4().hex,

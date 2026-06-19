@@ -21,7 +21,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from autonomous import AutonomousConfig, Directive, load_autonomous_config, run_autonomous_cycle
+from autonomous import AutonomousConfig, Directive, get_autonomous_config, run_autonomous_cycle
 from cosmos_memory import get_autonomous_lease_repository
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,7 @@ def _current_slot(schedule: str, now: datetime) -> datetime | None:
 
 
 # Injection seams (kept simple so tests can drive the loop deterministically).
-ConfigLoader = Callable[[], AutonomousConfig]
+ConfigLoader = Callable[[], Awaitable[AutonomousConfig]]
 CycleRunner = Callable[..., Awaitable[Any]]
 
 
@@ -76,7 +76,7 @@ class AutonomousScheduler:
         ctx: Any,
         *,
         poll_interval: float = DEFAULT_POLL_INTERVAL_SECONDS,
-        config_loader: ConfigLoader = load_autonomous_config,
+        config_loader: ConfigLoader = get_autonomous_config,
         lease_repo_factory: Callable[[], Any] = get_autonomous_lease_repository,
         cycle_runner: CycleRunner = run_autonomous_cycle,
         logger: logging.Logger = logger,
@@ -93,14 +93,14 @@ class AutonomousScheduler:
 
     async def start(self) -> None:
         """Seed the current slot as handled, then launch the background poll loop."""
-        self.seed_baseline()
+        await self.seed_baseline()
         self._task = asyncio.create_task(self._run_loop())
 
-    def seed_baseline(self, now: datetime | None = None) -> None:
+    async def seed_baseline(self, now: datetime | None = None) -> None:
         """Mark the current slot of every scheduled directive as already-handled."""
         now = now or datetime.now(timezone.utc)
         try:
-            config = self._load_config()
+            config = await self._load_config()
         except Exception:  # noqa: BLE001 — never block startup on a bad config
             self._logger.warning("Autonomous scheduler could not load config at start", exc_info=True)
             return
@@ -115,7 +115,7 @@ class AutonomousScheduler:
         """One scheduler tick: fire any directive whose slot has advanced."""
         now = now or datetime.now(timezone.utc)
         try:
-            config = self._load_config()
+            config = await self._load_config()
         except Exception:  # noqa: BLE001 — a transient config error skips this tick
             self._logger.warning("Autonomous scheduler could not load config", exc_info=True)
             return

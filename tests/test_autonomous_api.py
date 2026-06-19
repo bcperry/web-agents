@@ -139,7 +139,8 @@ def test_list_directives_shape_no_secrets(client):
     assert len(data["directives"]) >= 1
     directive = data["directives"][0]
     assert set(directive.keys()) == {
-        "id", "profileId", "instructionSummary", "schedule", "nextRun", "enabled", "notify",
+        "id", "profileId", "instruction", "instructionSummary", "schedule",
+        "nextRun", "enabled", "notify", "notifyWebhook", "updatedAt",
     }
     # notify is a non-secret descriptor, never a URL/secret.
     assert directive["notify"] in ("webhook", "log")
@@ -153,3 +154,104 @@ def test_list_directives_reports_disabled(client, monkeypatch):
     resp = client.get("/api/autonomous/directives")
     assert resp.status_code == 200
     assert resp.json()["enabled"] is False
+
+
+# ---------------------------------------------------------------------------
+# Directive CRUD (manage automations)
+# ---------------------------------------------------------------------------
+
+def _create(client, **overrides):
+    body = {
+        "id": "morning-brief",
+        "profile_id": "chief-of-staff",
+        "instruction": "Summarize overnight activity.",
+        "schedule": "0 0 8 * * *",
+        "enabled": True,
+    }
+    body.update(overrides)
+    return client.post("/api/autonomous/directives", json=body)
+
+
+def test_create_directive_succeeds_and_appears_in_list(client):
+    resp = _create(client)
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["id"] == "morning-brief"
+    assert data["profileId"] == "chief-of-staff"
+    assert data["enabled"] is True
+    assert data["schedule"] == "0 0 8 * * *"
+    assert data["nextRun"]  # computed from the schedule
+
+    listed = client.get("/api/autonomous/directives").json()
+    assert any(d["id"] == "morning-brief" for d in listed["directives"])
+
+
+def test_create_directive_rejects_duplicate_id(client):
+    assert _create(client).status_code == 201
+    dup = _create(client, instruction="different")
+    assert dup.status_code == 409
+
+
+def test_create_directive_rejects_unknown_profile(client):
+    resp = _create(client, id="bad-profile", profile_id="no-such-profile")
+    assert resp.status_code == 400
+
+
+def test_create_directive_rejects_bad_id(client):
+    resp = _create(client, id="Not A Slug!")
+    assert resp.status_code == 400
+
+
+def test_create_directive_rejects_invalid_schedule(client):
+    resp = _create(client, id="bad-sched", schedule="not a cron")
+    assert resp.status_code == 400
+
+
+def test_create_directive_allows_no_schedule(client):
+    resp = _create(client, id="manual-only", schedule=None)
+    assert resp.status_code == 201
+    assert resp.json()["schedule"] is None
+    assert resp.json()["nextRun"] is None
+
+
+def test_update_directive_toggles_enabled(client):
+    _create(client)
+    resp = client.patch("/api/autonomous/directives/morning-brief", json={"enabled": False})
+    assert resp.status_code == 200
+    assert resp.json()["enabled"] is False
+    # Reflected in the list.
+    listed = client.get("/api/autonomous/directives").json()
+    entry = next(d for d in listed["directives"] if d["id"] == "morning-brief")
+    assert entry["enabled"] is False
+    assert entry["nextRun"] is None  # disabled -> no next run
+
+
+def test_update_directive_changes_schedule(client):
+    _create(client)
+    resp = client.patch("/api/autonomous/directives/morning-brief", json={"schedule": "0 */30 * * * *"})
+    assert resp.status_code == 200
+    assert resp.json()["schedule"] == "0 */30 * * * *"
+
+
+def test_update_directive_rejects_invalid_schedule(client):
+    _create(client)
+    resp = client.patch("/api/autonomous/directives/morning-brief", json={"schedule": "99 99 99 99 99 99"})
+    assert resp.status_code == 400
+
+
+def test_update_directive_unknown_returns_404(client):
+    resp = client.patch("/api/autonomous/directives/ghost", json={"enabled": False})
+    assert resp.status_code == 404
+
+
+def test_delete_directive_removes_it(client):
+    _create(client)
+    resp = client.delete("/api/autonomous/directives/morning-brief")
+    assert resp.status_code == 204
+    listed = client.get("/api/autonomous/directives").json()
+    assert not any(d["id"] == "morning-brief" for d in listed["directives"])
+
+
+def test_delete_directive_unknown_returns_404(client):
+    resp = client.delete("/api/autonomous/directives/ghost")
+    assert resp.status_code == 404

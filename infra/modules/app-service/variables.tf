@@ -138,6 +138,12 @@ variable "azure_cosmos_leases_container" {
   default     = "autonomous-leases"
 }
 
+variable "azure_cosmos_directives_container" {
+  description = "Cosmos DB autonomous directive store container name"
+  type        = string
+  default     = "autonomous-directives"
+}
+
 variable "autonomous_scheduler_enabled" {
   description = "Gate for the in-process autonomous scheduler. Empty string = enabled in Azure (the deployed default); 'false' disables it."
   type        = string

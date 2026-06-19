@@ -26,6 +26,16 @@ def _config(enabled=True, schedule=SCHEDULE):
     return AutonomousConfig(enabled=enabled, system_user_id="sys", directives=[directive])
 
 
+def _loader(enabled=True, schedule=SCHEDULE):
+    """Async config loader (the scheduler awaits its config_loader)."""
+    cfg = _config(enabled, schedule)
+
+    async def _load():
+        return cfg
+
+    return _load
+
+
 class _Recorder:
     def __init__(self):
         self.calls = []
@@ -70,10 +80,10 @@ def test_scheduler_enabled_semantics(monkeypatch):
 
 def test_fires_once_per_slot_and_again_next_slot():
     recorder = _Recorder()
-    scheduler = _make_scheduler(recorder, InMemoryAutonomousLeaseRepository(), _config)
+    scheduler = _make_scheduler(recorder, InMemoryAutonomousLeaseRepository(), _loader())
 
     async def scenario():
-        scheduler.seed_baseline(now=SLOT_0)  # current slot handled on start
+        await scheduler.seed_baseline(now=SLOT_0)  # current slot handled on start
         await scheduler.poll_once(now=SLOT_0)        # same slot -> no fire
         await scheduler.poll_once(now=SLOT_1)        # advanced -> fire
         await scheduler.poll_once(now=SLOT_1 + timedelta(minutes=5))  # same slot -> no fire
@@ -85,10 +95,10 @@ def test_fires_once_per_slot_and_again_next_slot():
 
 def test_baseline_seeding_skips_current_slot_on_start():
     recorder = _Recorder()
-    scheduler = _make_scheduler(recorder, InMemoryAutonomousLeaseRepository(), _config)
+    scheduler = _make_scheduler(recorder, InMemoryAutonomousLeaseRepository(), _loader())
 
     async def scenario():
-        scheduler.seed_baseline(now=SLOT_1)
+        await scheduler.seed_baseline(now=SLOT_1)
         await scheduler.poll_once(now=SLOT_1)  # exactly the seeded slot -> no fire
 
     asyncio.run(scenario())
@@ -97,7 +107,7 @@ def test_baseline_seeding_skips_current_slot_on_start():
 
 def test_disabled_config_never_fires():
     recorder = _Recorder()
-    scheduler = _make_scheduler(recorder, InMemoryAutonomousLeaseRepository(), lambda: _config(enabled=False))
+    scheduler = _make_scheduler(recorder, InMemoryAutonomousLeaseRepository(), _loader(enabled=False))
 
     async def scenario():
         await scheduler.poll_once(now=SLOT_1)
@@ -109,10 +119,10 @@ def test_disabled_config_never_fires():
 
 def test_directive_without_schedule_is_not_scheduled():
     recorder = _Recorder()
-    scheduler = _make_scheduler(recorder, InMemoryAutonomousLeaseRepository(), lambda: _config(schedule=None))
+    scheduler = _make_scheduler(recorder, InMemoryAutonomousLeaseRepository(), _loader(schedule=None))
 
     async def scenario():
-        scheduler.seed_baseline(now=SLOT_0)
+        await scheduler.seed_baseline(now=SLOT_0)
         await scheduler.poll_once(now=SLOT_1)
         await scheduler.poll_once(now=SLOT_2)
 
@@ -124,12 +134,12 @@ def test_two_instances_sharing_lease_fire_slot_exactly_once():
     shared_lease = InMemoryAutonomousLeaseRepository()
     rec_a = _Recorder()
     rec_b = _Recorder()
-    sched_a = _make_scheduler(rec_a, shared_lease, _config)
-    sched_b = _make_scheduler(rec_b, shared_lease, _config)
+    sched_a = _make_scheduler(rec_a, shared_lease, _loader())
+    sched_b = _make_scheduler(rec_b, shared_lease, _loader())
 
     async def scenario():
-        sched_a.seed_baseline(now=SLOT_0)
-        sched_b.seed_baseline(now=SLOT_0)
+        await sched_a.seed_baseline(now=SLOT_0)
+        await sched_b.seed_baseline(now=SLOT_0)
         # Both instances see the same advanced slot; only the lease winner fires.
         await sched_a.poll_once(now=SLOT_1)
         await sched_b.poll_once(now=SLOT_1)
@@ -144,7 +154,7 @@ def test_scheduler_start_stop_is_clean():
     scheduler = AutonomousScheduler(
         SimpleNamespace(sessions={}),
         poll_interval=0.01,
-        config_loader=lambda: _config(enabled=False),
+        config_loader=_loader(enabled=False),
         lease_repo_factory=InMemoryAutonomousLeaseRepository,
         cycle_runner=recorder,
     )

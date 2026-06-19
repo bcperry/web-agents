@@ -49,6 +49,12 @@ variable "leases_container_name" {
   default     = "autonomous-leases"
 }
 
+variable "directives_container_name" {
+  description = "Container for autonomous directives / automations (partition key /id)."
+  type        = string
+  default     = "autonomous-directives"
+}
+
 variable "principal_id" {
   description = "Principal ID of the app's managed identity, granted data-plane access."
   type        = string

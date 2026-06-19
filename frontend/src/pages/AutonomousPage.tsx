@@ -20,10 +20,13 @@ import { useAuth } from '../hooks/useAuth';
 import { emitToast } from '../hooks/useToast';
 import { ChatMessage } from '../components/ChatMessage';
 import { ChatInput } from '../components/ChatInput';
+import { SettingsMenu } from '../components/SettingsMenu';
 import { getRuntimeConfigSnapshot } from '../config/runtimeConfig';
+import type { AdminOpenOptions } from './AdminPage';
 
 interface AutonomousPageProps {
   onBack: () => void;
+  onOpenAdmin: (opts?: AdminOpenOptions) => void;
 }
 
 function formatDateTime(iso: string): string {
@@ -56,8 +59,9 @@ function extractBluf(text: string): string {
   return block.replace(/[*_`#>]/g, '').replace(/\s+/g, ' ').trim();
 }
 
-export function AutonomousPage({ onBack }: AutonomousPageProps) {
+export function AutonomousPage({ onBack, onOpenAdmin }: AutonomousPageProps) {
   const [enabled, setEnabled] = useState(false);
+  const [schedulerEnabled, setSchedulerEnabled] = useState(false);
   const [directives, setDirectives] = useState<AutonomousDirective[]>([]);
   const [runs, setRuns] = useState<AutonomousRun[]>([]);
   const [dutyProfile, setDutyProfile] = useState<AgentProfile | null>(null);
@@ -71,7 +75,7 @@ export function AutonomousPage({ onBack }: AutonomousPageProps) {
   const startedRef = useRef(false);
 
   const { messages, isStreaming, session, startSession, endSession, send } = useChat();
-  const { logout, classificationBanner } = useAuth();
+  const { user, logout, classificationBanner } = useAuth();
   const { appName, appLogo } = getRuntimeConfigSnapshot();
 
   // End the chat session when leaving the page, regardless of identity churn.
@@ -92,6 +96,7 @@ export function AutonomousPage({ onBack }: AutonomousPageProps) {
         ]);
         if (cancelled) return;
         setEnabled(dir.enabled);
+        setSchedulerEnabled(dir.schedulerEnabled);
         setDirectives(dir.directives);
 
         const primary = dir.directives.find((d) => d.enabled) ?? dir.directives[0] ?? null;
@@ -231,7 +236,9 @@ export function AutonomousPage({ onBack }: AutonomousPageProps) {
           <img className="auto-header-logo" src={appLogo} alt={appName} />
           <h2 className="auto-title">DUTY OFFICER</h2>
         </div>
-        <div className="auto-header-spacer" />
+        <div className="auto-header-actions">
+          <SettingsMenu userEmail={user?.email} onOpenAdmin={onOpenAdmin} onLogout={logout} />
+        </div>
       </header>
 
       {authError ? (
@@ -245,17 +252,39 @@ export function AutonomousPage({ onBack }: AutonomousPageProps) {
       ) : (
         <div className="auto-body">
           <aside className="auto-activity">
-            <div className={`auto-status ${enabled ? 'ok' : 'off'}`}>
+            <div className={`auto-status ${!enabled ? 'off' : schedulerEnabled ? 'ok' : 'warn'}`}>
               <span className="auto-status-dot" />
-              <span>{enabled ? 'AUTONOMOUS MODE ACTIVE' : 'AUTONOMOUS MODE DISABLED'}</span>
+              <span>
+                {!enabled
+                  ? 'AUTONOMOUS MODE DISABLED'
+                  : schedulerEnabled
+                    ? 'AUTONOMOUS MODE ACTIVE — SCHEDULER RUNNING'
+                    : 'SCHEDULER OFF — MANUAL RUNS ONLY'}
+              </span>
             </div>
+            {enabled && !schedulerEnabled && (
+              <p className="auto-status-note">
+                The unattended scheduler is disabled on this server, so automations only fire when you
+                press <strong>RUN NOW</strong>. To run them on their schedule, start the backend with{' '}
+                <code>AUTONOMOUS_SCHEDULER_ENABLED=true</code>.
+              </p>
+            )}
 
             <section className="auto-section">
               <div className="auto-section-head">
                 <h3 className="auto-section-title">STANDING ORDERS</h3>
+                <button
+                  className="auto-new-btn"
+                  type="button"
+                  onClick={() => onOpenAdmin({ tab: 'automations', automationCreate: true })}
+                  title="Create a new automation in Admin"
+                >
+                  + NEW
+                </button>
               </div>
+
               {directives.length === 0 ? (
-                <div className="auto-empty-line">No directives configured.</div>
+                <div className="auto-empty-line">No automations configured.</div>
               ) : (
                 directives.map((d) => (
                   <div key={d.id} className="auto-directive">
@@ -269,21 +298,34 @@ export function AutonomousPage({ onBack }: AutonomousPageProps) {
                     <div className="auto-directive-meta">
                       <span>Agent: {d.profileId}</span>
                       {d.schedule && <span>Schedule: {d.schedule}</span>}
-                      {enabled && d.enabled && d.nextRun && (
+                      {enabled && schedulerEnabled && d.enabled && d.nextRun && (
                         <span>Next review: {formatDateTime(d.nextRun)}</span>
+                      )}
+                      {enabled && !schedulerEnabled && d.enabled && d.schedule && (
+                        <span className="auto-meta-warn">Scheduler off — RUN NOW only</span>
                       )}
                       <span>Notify: {d.notify}</span>
                     </div>
-                    {enabled && d.enabled && (
+                    <div className="auto-directive-controls">
+                      {enabled && d.enabled && (
+                        <button
+                          className="auto-run-now"
+                          type="button"
+                          onClick={() => handleRunNow(d.id)}
+                          disabled={Boolean(triggeringId)}
+                        >
+                          {triggeringId === d.id ? 'RUNNING REVIEW…' : 'RUN NOW'}
+                        </button>
+                      )}
                       <button
-                        className="auto-run-now"
+                        className="auto-btn-ghost"
                         type="button"
-                        onClick={() => handleRunNow(d.id)}
-                        disabled={Boolean(triggeringId)}
+                        onClick={() => onOpenAdmin({ tab: 'automations', automationEditId: d.id })}
+                        title="Edit this automation in Admin"
                       >
-                        {triggeringId === d.id ? 'RUNNING REVIEW…' : 'RUN NOW'}
+                        EDIT
                       </button>
-                    )}
+                    </div>
                   </div>
                 ))
               )}

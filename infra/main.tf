@@ -87,6 +87,7 @@ module "app_service" {
   # Autonomous Mode (in-process scheduler + Duty Officer audit/lease containers)
   azure_cosmos_autonomous_container = module.cosmos.autonomous_container_name
   azure_cosmos_leases_container     = module.cosmos.leases_container_name
+  azure_cosmos_directives_container = module.cosmos.directives_container_name
   autonomous_scheduler_enabled      = var.autonomous_scheduler_enabled
 
   # Entra ID / Azure AD authentication

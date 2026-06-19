@@ -6,7 +6,7 @@ import { useConversationStore } from './hooks/useConversationStore'
 import { ThemeProvider } from './hooks/useTheme'
 import { ToastProvider } from './hooks/useToast'
 import { ChatPage } from './pages/ChatPage'
-import { AdminPage } from './pages/AdminPage'
+import { AdminPage, type AdminOpenOptions } from './pages/AdminPage'
 import { AutonomousPage } from './pages/AutonomousPage'
 import { Disclaimer } from './components/Disclaimer'
 import { getRuntimeConfigSnapshot } from './config/runtimeConfig'
@@ -16,6 +16,7 @@ function AppContent() {
   const { isAuthenticated, isLoading, login, user } = useAuth()
   const { appName } = getRuntimeConfigSnapshot()
   const [currentView, setCurrentView] = useState<'chat' | 'admin' | 'autonomous'>('chat')
+  const [adminIntent, setAdminIntent] = useState<AdminOpenOptions | undefined>(undefined)
   const { agents: customAgents, save: saveCustomAgent, remove: removeCustomAgent } = useCustomAgents()
   const {
     overrides: builtInOverrides,
@@ -39,7 +40,8 @@ function AppContent() {
     return () => window.removeEventListener('popstate', handlePopState)
   }, [])
 
-  const handleOpenAdmin = useCallback(() => {
+  const handleOpenAdmin = useCallback((opts?: AdminOpenOptions) => {
+    setAdminIntent(opts)
     window.history.pushState({ view: 'admin' }, '')
     setCurrentView('admin')
   }, [])
@@ -91,6 +93,9 @@ function AppContent() {
         <AdminPage
           onBack={handleAdminBack}
           userEmail={user?.email}
+          initialTab={adminIntent?.tab}
+          automationCreate={adminIntent?.automationCreate}
+          automationEditId={adminIntent?.automationEditId}
           agents={customAgents}
           builtInOverrides={builtInOverrides}
           onSaveAgent={saveCustomAgent}
@@ -99,7 +104,7 @@ function AppContent() {
           onResetBuiltInOverride={resetBuiltInOverride}
         />
       ) : currentView === 'autonomous' ? (
-        <AutonomousPage onBack={handleAutonomousBack} />
+        <AutonomousPage onBack={handleAutonomousBack} onOpenAdmin={handleOpenAdmin} />
       ) : (
         <ChatPage
           onOpenAdmin={handleOpenAdmin}

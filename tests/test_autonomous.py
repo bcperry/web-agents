@@ -259,3 +259,87 @@ def test_enabled_directives_respects_master_gate(tmp_path):
     )
     config = load_autonomous_config(path)
     assert [d.id for d in config.enabled_directives()] == ["a"]
+
+
+# ---------------------------------------------------------------------------
+# Validators + durable directive store (manage automations)
+# ---------------------------------------------------------------------------
+
+def test_validate_directive_id():
+    from autonomous import validate_directive_id
+
+    assert validate_directive_id("Morning-Brief") == "morning-brief"
+    for bad in ("", "has space", "UPPER ONLY!", "-leading", "a" * 65):
+        with pytest.raises(ValueError):
+            validate_directive_id(bad)
+
+
+def test_validate_schedule():
+    from autonomous import validate_schedule
+
+    validate_schedule("0 */15 * * * *")  # valid 6-field seconds-first
+    for bad in ("0 0 8 * *", "not a cron", "99 99 99 99 99 99"):
+        with pytest.raises(ValueError):
+            validate_schedule(bad)
+
+
+def test_validate_notify_webhook():
+    from autonomous import validate_notify_webhook
+
+    assert validate_notify_webhook("AUTONOMOUS_NOTIFY_WEBHOOK_URL") == {
+        "webhook": "AUTONOMOUS_NOTIFY_WEBHOOK_URL"
+    }
+    assert validate_notify_webhook("https://hooks.test/in") == {"webhook": "https://hooks.test/in"}
+    with pytest.raises(ValueError):
+        validate_notify_webhook("not-a-name-or-url")
+
+
+def test_validate_profile_id():
+    from autonomous import validate_profile_id
+
+    assert validate_profile_id("chief-of-staff")  # resolves to a display name
+    with pytest.raises(ValueError):
+        validate_profile_id("no-such-profile")
+
+
+def test_get_autonomous_config_reads_from_cosmos_store():
+    import cosmos_memory
+    from autonomous import Directive, get_autonomous_config
+
+    async def scenario():
+        repo = cosmos_memory.get_autonomous_directive_repository()
+        await repo.upsert_directive(
+            Directive(id="extra", profile_id="chief-of-staff", instruction="hi").to_doc()
+        )
+        config = await get_autonomous_config()
+        return {d.id for d in config.directives}
+
+    ids = asyncio.run(scenario())
+    assert "extra" in ids
+
+
+def test_seed_autonomous_directives_is_idempotent(monkeypatch, tmp_path):
+    import cosmos_memory
+    from tests._doubles import InMemoryAutonomousDirectiveRepository
+    import autonomous
+
+    path = tmp_path / "seed.yaml"
+    path.write_text(
+        "enabled: true\n"
+        "directives:\n  - {id: seeded-one, profile_id: chief-of-staff, instruction: go}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(autonomous, "_default_config_path", lambda: path)
+    # Start from an empty store so seeding has work to do.
+    monkeypatch.setattr(cosmos_memory, "_autonomous_directive_repo", InMemoryAutonomousDirectiveRepository())
+
+    async def scenario():
+        first = await autonomous.seed_autonomous_directives()
+        second = await autonomous.seed_autonomous_directives()  # idempotent
+        docs = await cosmos_memory.get_autonomous_directive_repository().list_directives()
+        return first, second, [d["id"] for d in docs]
+
+    first, second, ids = asyncio.run(scenario())
+    assert first == 1
+    assert second == 0
+    assert ids == ["seeded-one"]

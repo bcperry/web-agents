@@ -68,6 +68,7 @@ resource "azurerm_linux_web_app" "app_service" {
     # AUTONOMOUS_SCHEDULER_ENABLED means "enabled" in the deployed App Service.
     AZURE_COSMOS_AUTONOMOUS_CONTAINER = var.azure_cosmos_autonomous_container
     AZURE_COSMOS_LEASES_CONTAINER     = var.azure_cosmos_leases_container
+    AZURE_COSMOS_DIRECTIVES_CONTAINER = var.azure_cosmos_directives_container
     AUTONOMOUS_SCHEDULER_ENABLED      = var.autonomous_scheduler_enabled
 
     # Entra ID / Azure AD authentication

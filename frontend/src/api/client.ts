@@ -1,6 +1,9 @@
 import type {
   AgentProfile,
   AgentCustomizationOverride,
+  AutonomousDirective,
+  AutonomousDirectiveCreate,
+  AutonomousDirectiveUpdate,
   AutonomousDirectivesResponse,
   AutonomousRun,
   AutonomousRunsResponse,
@@ -220,6 +223,7 @@ export async function fetchAutonomousDirectives(): Promise<AutonomousDirectivesR
   const data = await resp.json();
   return {
     enabled: Boolean(data.enabled),
+    schedulerEnabled: Boolean(data.schedulerEnabled),
     systemUserId: data.systemUserId ?? '',
     directives: data.directives ?? [],
   };
@@ -251,6 +255,45 @@ export async function triggerAutonomousRun(directiveId?: string): Promise<Autono
   assertNotUnauthorized(resp, 'Failed to trigger autonomous run');
   if (!resp.ok) await handleHttpError(resp, 'Failed to trigger autonomous run');
   return resp.json();
+}
+
+/** Create a new automation (directive). */
+export async function createAutonomousDirective(
+  body: AutonomousDirectiveCreate,
+): Promise<AutonomousDirective> {
+  const resp = await fetch(`${API_BASE}/autonomous/directives`, {
+    method: 'POST',
+    headers: jsonHeaders(),
+    body: JSON.stringify(body),
+  });
+  assertNotUnauthorized(resp, 'Failed to create automation');
+  if (!resp.ok) await handleHttpError(resp, 'Failed to create automation');
+  return resp.json();
+}
+
+/** Update an automation (enable/disable, schedule, instruction, …). */
+export async function updateAutonomousDirective(
+  id: string,
+  body: AutonomousDirectiveUpdate,
+): Promise<AutonomousDirective> {
+  const resp = await fetch(`${API_BASE}/autonomous/directives/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: jsonHeaders(),
+    body: JSON.stringify(body),
+  });
+  assertNotUnauthorized(resp, 'Failed to update automation');
+  if (!resp.ok) await handleHttpError(resp, 'Failed to update automation');
+  return resp.json();
+}
+
+/** Delete an automation. */
+export async function deleteAutonomousDirective(id: string): Promise<void> {
+  const resp = await fetch(`${API_BASE}/autonomous/directives/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(),
+  });
+  assertNotUnauthorized(resp, 'Failed to delete automation');
+  if (!resp.ok && resp.status !== 404) await handleHttpError(resp, 'Failed to delete automation');
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {

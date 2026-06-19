@@ -124,6 +124,10 @@ HTTP entry point is the user-authenticated `POST /api/autonomous/run-now`.
   enabled in the deployed App Service). `run-now` works regardless of this flag.
 - **Endpoints** (all normal-user auth): `POST /api/autonomous/run-now`,
   `GET /api/autonomous/runs`, `GET /api/autonomous/directives`.
+- **Manage automations**: directives are durable in Cosmos (seeded from the YAML the
+  first time). Enable/disable, change the schedule, and create/delete automations from
+  the **Duty Officer** page, or via `POST` / `PATCH` / `DELETE /api/autonomous/directives`.
+  (A YAML-default automation reappears on the next startup unless removed from the YAML.)
 
 ```bash
 # Trigger one cycle on demand (first enabled directive), then inspect the audit trail:

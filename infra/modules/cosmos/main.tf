@@ -100,6 +100,16 @@ resource "azurerm_cosmosdb_sql_container" "autonomous_leases" {
   default_ttl         = -1
 }
 
+# Autonomous Mode directive store (partition key /id). Seeded from the YAML
+# defaults at startup; holds runtime edits (enable/disable, schedule, new ones).
+resource "azurerm_cosmosdb_sql_container" "autonomous_directives" {
+  name                = var.directives_container_name
+  resource_group_name = var.resource_group_name
+  account_name        = azurerm_cosmosdb_account.cosmos.name
+  database_name       = azurerm_cosmosdb_sql_database.db.name
+  partition_key_paths = ["/id"]
+}
+
 # Grant the app's managed identity data-plane access via the built-in
 # "Cosmos DB Built-in Data Contributor" role (id ...0002).
 resource "azurerm_cosmosdb_sql_role_assignment" "data_contributor" {
