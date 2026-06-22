@@ -40,13 +40,6 @@ import {
 
 export { AuthError } from './helpers';
 
-export interface HistoryResponse {
-  session_id: string;
-  profile_id: string;
-  profile_name: string;
-  session_data: Record<string, unknown>;
-}
-
 export async function fetchTools(): Promise<ToolsResponse> {
   const resp = await fetch(`${API_BASE}/tools`, {
     headers: getAuthHeaders(),
@@ -303,15 +296,6 @@ export async function deleteSession(sessionId: string): Promise<void> {
   });
   assertNotUnauthorized(resp, 'Failed to delete session');
   if (!resp.ok && resp.status !== 404) await handleHttpError(resp, 'Failed to delete session');
-}
-
-export async function fetchHistory(sessionId: string): Promise<HistoryResponse> {
-  const resp = await fetch(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}/history`, {
-    headers: getAuthHeaders(),
-  });
-  assertNotUnauthorized(resp, 'Failed to fetch history');
-  if (!resp.ok) await handleHttpError(resp, 'Failed to fetch history');
-  return resp.json();
 }
 
 // --- Conversations (durable per-user chat history, Cosmos-backed) ---

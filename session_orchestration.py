@@ -4,14 +4,14 @@ import logging
 import os
 import re
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from agent_framework import AgentSession
 from fastapi import HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agent_factory import SubAgentResources, create_chat_runtime
 from cosmos_memory import get_conversation_repository
@@ -63,13 +63,12 @@ class McpServerEntryRequest(BaseModel):
 class ProfileOverrideRequest(BaseModel):
     description: str | None = None
     custom_prompt: str
-    custom_tools: list[str] = []
+    custom_tools: list[str] = Field(default_factory=list)
     custom_search_context: bool = False
     custom_temperature: float | None = None
-    custom_skills: list[str] = []
-    mcp_servers: list[McpServerEntryRequest] = []
-    agents_as_tools: list[dict[str, Any]] = []
-    agentsAsTools: list[dict[str, Any]] | None = None
+    custom_skills: list[str] = Field(default_factory=list)
+    mcp_servers: list[McpServerEntryRequest] = Field(default_factory=list)
+    agentsAsTools: list[dict[str, Any]] = Field(default_factory=list)
     override_updated_at: str | None = None
 
 
@@ -84,6 +83,18 @@ class SessionContext:
     session_data_cls: type
     build_tool_instances: Callable[..., list[Any]]
     build_user_profile_context: Callable[[dict[str, str] | None], str]
+
+
+@dataclass(frozen=True)
+class RuntimeDependencies:
+    """Runtime inputs plus cleanup-only MCP tools for one chat session."""
+
+    function_tools: list[Any]
+    mcp_tools: list[Any]
+    session_mcp_tools: list[Any]
+    mcp_results: list[Any]
+    profile_context: str
+    sub_agent_resources: dict[str, SubAgentResources]
 
 
 def _sanitize_url(value: str) -> str:
@@ -195,7 +206,7 @@ def _resolve_for_validation(agent_ref: Any) -> dict[str, Any] | None:
         return {
             "id": custom_id,
             "name": definition.get("name", custom_id),
-            "agents_as_tools": definition.get("agentsAsTools") or definition.get("agents_as_tools") or [],
+            "agentsAsTools": definition.get("agentsAsTools") or [],
         }
     return None
 
@@ -327,6 +338,48 @@ async def _resolve_builtin_sub_agent_resources(
     return resources_by_profile, all_mcp_tools
 
 
+async def _resolve_runtime_dependencies(
+    ctx: SessionContext,
+    *,
+    tool_names: Iterable[str],
+    mcp_config_source: dict[str, Any],
+    sub_agent_refs: list[SubAgentToolRef],
+    user_bearer_token: str | None,
+    user: Any,
+    session_id: str,
+    logger: logging.Logger,
+) -> RuntimeDependencies:
+    tool_name_set = set(tool_names)
+    function_tools = ctx.build_tool_instances(
+        tool_name_set,
+        session_id=session_id,
+        user_id=user.user_id,
+    )
+    mcp_configs = parse_mcp_server_configs(mcp_config_source)
+    mcp_tools, mcp_results = await connect_mcp_servers(mcp_configs, user_token=user_bearer_token)
+    profile_context = (
+        ctx.build_user_profile_context(await get_user_profile_repository().get(user.user_id, user.user_id))
+        if "get_user_profile" in tool_name_set
+        else ""
+    )
+    sub_agent_resources, sub_mcp_tools = await _resolve_builtin_sub_agent_resources(
+        sub_agent_refs,
+        ctx=ctx,
+        user_bearer_token=user_bearer_token,
+        user_id=user.user_id,
+        session_id=session_id,
+        logger=logger,
+    )
+    return RuntimeDependencies(
+        function_tools=function_tools,
+        mcp_tools=mcp_tools,
+        session_mcp_tools=[*mcp_tools, *sub_mcp_tools],
+        mcp_results=mcp_results,
+        profile_context=profile_context,
+        sub_agent_resources=sub_agent_resources,
+    )
+
+
 def _bind_session_id(session: AgentSession, session_id: str) -> AgentSession:
     """Bind the runtime session to the conversation id (Cosmos partition key)."""
     session._session_id = session_id
@@ -412,7 +465,6 @@ def _store_session(
     chat_runtime: Any,
     agent_session: AgentSession,
     mcp_tools: list[Any],
-    profile_override: "ProfileOverrideRequest | None" = None,
 ) -> None:
     session_data = ctx.session_data_cls(
         session_id=session_id,
@@ -427,9 +479,6 @@ def _store_session(
         prompt_logical_profile=chat_runtime.prompt_logical_profile,
     )
     session_data.mcp_tools = mcp_tools
-    if profile_override is not None:
-        session_data.used_profile_override = True
-        session_data.override_updated_at = profile_override.override_updated_at
     ctx.sessions[session_id] = session_data
 
 
@@ -498,41 +547,28 @@ async def _create_custom_chat_session(
     session_id, is_resume = await _resolve_session_id(conversations, user, body)
     custom_tool_set = set(custom_tools)
     try:
-        function_tools = ctx.build_tool_instances(
-            custom_tool_set,
-            session_id=session_id,
-            user_id=user.user_id,
-        )
-        mcp_configs = parse_mcp_server_configs({"mcp_servers": raw_mcp_servers})
-        mcp_tools, mcp_results = await connect_mcp_servers(mcp_configs, user_token=user_bearer_token)
-        profile_context = (
-            ctx.build_user_profile_context(await get_user_profile_repository().get(user.user_id, user.user_id))
-            if "get_user_profile" in custom_tool_set
-            else ""
-        )
-        sub_agent_resources, sub_mcp_tools = await _resolve_builtin_sub_agent_resources(
-            sub_agent_refs,
+        dependencies = await _resolve_runtime_dependencies(
             ctx=ctx,
+            tool_names=custom_tool_set,
+            mcp_config_source={"mcp_servers": raw_mcp_servers},
+            sub_agent_refs=sub_agent_refs,
             user_bearer_token=user_bearer_token,
-            user_id=user.user_id,
+            user=user,
             session_id=session_id,
             logger=logger,
         )
         chat_runtime = create_chat_runtime(
             custom_name=custom_name,
             custom_instructions=custom_prompt,
-            function_tools=function_tools,
-            mcp_servers=mcp_tools,
+            function_tools=dependencies.function_tools,
+            mcp_servers=dependencies.mcp_tools,
             temperature=custom_temperature,
             enable_search_context=custom_search_context,
             custom_skills=custom_skills or None,
-            extra_instructions=profile_context or None,
+            extra_instructions=dependencies.profile_context or None,
             agents_as_tools=sub_agent_refs,
-            sub_agent_resources=sub_agent_resources,
+            sub_agent_resources=dependencies.sub_agent_resources,
         )
-        # Sub-agent MCP connections must be cleaned up with the parent session
-        # but must NOT be exposed as direct tools to the parent agent.
-        mcp_tools = [*mcp_tools, *sub_mcp_tools]
     except HTTPException as exc:
         logger.error("Session creation failed for custom agent '%s': %s", custom_name, exc.detail)
         raise
@@ -549,7 +585,7 @@ async def _create_custom_chat_session(
         profile_name=custom_name,
         chat_runtime=chat_runtime,
         agent_session=agent_session,
-        mcp_tools=mcp_tools,
+        mcp_tools=dependencies.session_mcp_tools,
     )
     if not is_resume:
         await _create_conversation_index(
@@ -570,7 +606,7 @@ async def _create_custom_chat_session(
         "skills_loaded": list(custom_skills),
         "agents_loaded": _derive_sub_agent_tool_names(sub_agent_refs),
         "search_context": custom_search_context,
-        "mcp_results": _serialize_mcp_results(mcp_results),
+        "mcp_results": _serialize_mcp_results(dependencies.mcp_results),
     }
 
 
@@ -593,12 +629,6 @@ async def _create_profile_chat_session(
     session_id, is_resume = await _resolve_session_id(conversations, user, body)
 
     try:
-        function_tools = ctx.build_tool_instances(
-            set(profile_tool_names),
-            session_id=session_id,
-            user_id=user.user_id,
-        )
-
         if profile_override is not None:
             validate_tool_names(profile_override.custom_tools, known_tool_names_from_profiles(profiles_data))
             if profile_override.custom_skills:
@@ -608,64 +638,53 @@ async def _create_profile_chat_session(
                 profile_override.custom_skills = kept
             raw_mcp_servers = [server.model_dump(exclude_none=True) for server in profile_override.mcp_servers]
             validate_http_mcp_servers(raw_mcp_servers, override=True)
-            mcp_configs = parse_mcp_server_configs({"mcp_servers": raw_mcp_servers})
-        else:
-            mcp_configs = parse_mcp_server_configs(profile_entry)
-
-        mcp_tools, mcp_results = await connect_mcp_servers(mcp_configs, user_token=user_bearer_token)
-        profile_context = (
-            ctx.build_user_profile_context(await get_user_profile_repository().get(user.user_id, user.user_id))
-            if "get_user_profile" in profile_tool_names
-            else ""
-        )
-
-        if profile_override is not None:
-            override_sub_agent_payload = profile_override.agentsAsTools if profile_override.agentsAsTools is not None else profile_override.agents_as_tools
-            override_sub_agent_refs = _build_validated_sub_agent_refs(
+            profile_sub_agent_refs = _build_validated_sub_agent_refs(
                 parent_id=logical_profile,
-                raw_payload=override_sub_agent_payload,
+                raw_payload=profile_override.agentsAsTools,
                 logger=logger,
             )
-            sub_agent_resources, sub_mcp_tools = await _resolve_builtin_sub_agent_resources(
-                override_sub_agent_refs,
+            dependencies = await _resolve_runtime_dependencies(
                 ctx=ctx,
+                tool_names=profile_tool_names,
+                mcp_config_source={"mcp_servers": raw_mcp_servers},
+                sub_agent_refs=profile_sub_agent_refs,
                 user_bearer_token=user_bearer_token,
-                user_id=user.user_id,
+                user=user,
                 session_id=session_id,
                 logger=logger,
             )
             chat_runtime = create_chat_runtime(
                 custom_name=profile_name,
                 custom_instructions=profile_override.custom_prompt,
-                function_tools=function_tools,
-                mcp_servers=mcp_tools,
+                function_tools=dependencies.function_tools,
+                mcp_servers=dependencies.mcp_tools,
                 temperature=profile_override.custom_temperature,
                 enable_search_context=profile_override.custom_search_context,
                 custom_skills=profile_override.custom_skills or None,
-                extra_instructions=profile_context or None,
-                agents_as_tools=override_sub_agent_refs,
-                sub_agent_resources=sub_agent_resources,
+                extra_instructions=dependencies.profile_context or None,
+                agents_as_tools=profile_sub_agent_refs,
+                sub_agent_resources=dependencies.sub_agent_resources,
             )
-            mcp_tools = [*mcp_tools, *sub_mcp_tools]
         else:
             profile_sub_agent_refs = list(getattr(load_agent_profile(logical_profile), "agents_as_tools", []) or [])
-            sub_agent_resources, sub_mcp_tools = await _resolve_builtin_sub_agent_resources(
-                profile_sub_agent_refs,
+            dependencies = await _resolve_runtime_dependencies(
                 ctx=ctx,
+                tool_names=profile_tool_names,
+                mcp_config_source=profile_entry,
+                sub_agent_refs=profile_sub_agent_refs,
                 user_bearer_token=user_bearer_token,
-                user_id=user.user_id,
+                user=user,
                 session_id=session_id,
                 logger=logger,
             )
             chat_runtime = create_chat_runtime(
                 chat_profile=get_profile_display_name(logical_profile, fallback=profile_id),
-                function_tools=function_tools,
-                mcp_servers=mcp_tools,
-                extra_instructions=profile_context or None,
+                function_tools=dependencies.function_tools,
+                mcp_servers=dependencies.mcp_tools,
+                extra_instructions=dependencies.profile_context or None,
                 agents_as_tools=profile_sub_agent_refs,
-                sub_agent_resources=sub_agent_resources,
+                sub_agent_resources=dependencies.sub_agent_resources,
             )
-            mcp_tools = [*mcp_tools, *sub_mcp_tools]
     except HTTPException as exc:
         logger.error("Session creation failed for profile '%s': %s", logical_profile, exc.detail)
         raise
@@ -682,8 +701,7 @@ async def _create_profile_chat_session(
         profile_name=profile_name,
         chat_runtime=chat_runtime,
         agent_session=agent_session,
-        mcp_tools=mcp_tools,
-        profile_override=profile_override,
+        mcp_tools=dependencies.session_mcp_tools,
     )
     if not is_resume:
         await _create_conversation_index(
@@ -703,11 +721,6 @@ async def _create_profile_chat_session(
     ]
     profile_search_context = bool(profile_override.custom_search_context) if profile_override is not None else bool(profile_entry.get("search_context", False))
 
-    if profile_override is not None:
-        profile_sub_agent_refs = override_sub_agent_refs
-    else:
-        profile_sub_agent_refs = list(getattr(load_agent_profile(logical_profile), "agents_as_tools", []) or [])
-
     return {
         "session_id": session_id,
         "profile_id": logical_profile,
@@ -716,7 +729,7 @@ async def _create_profile_chat_session(
         "skills_loaded": profile_skills,
         "agents_loaded": _derive_sub_agent_tool_names(profile_sub_agent_refs),
         "search_context": profile_search_context,
-        "mcp_results": _serialize_mcp_results(mcp_results),
+        "mcp_results": _serialize_mcp_results(dependencies.mcp_results),
         "used_profile_override": profile_override is not None,
         "override_updated_at": profile_override.override_updated_at if profile_override else None,
     }

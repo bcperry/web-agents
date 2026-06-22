@@ -32,7 +32,6 @@ interface ChatState {
   endSession: () => Promise<void>;
   send: (content: string, images?: File[]) => Promise<void>;
   clearError: () => void;
-  saveCurrentConversation: () => Promise<void>;
 }
 
 export function useChat(): ChatState {
@@ -61,11 +60,6 @@ export function useChat(): ChatState {
     baseProfileId?: string;
     overrideUpdatedAt?: string;
   }>(emptyBuiltInOverride());
-
-  // History is persisted server-side (Cosmos); the client no longer saves
-  // conversations to browser storage. saveCurrentConversation is a no-op kept
-  // for call-site compatibility.
-  const saveCurrentConversation = useCallback(async () => {}, []);
 
   const startSession = useCallback(async (profile: AgentProfile, resume?: ConversationIndexEntry) => {
     try {
@@ -293,6 +287,5 @@ export function useChat(): ChatState {
     endSession,
     send,
     clearError,
-    saveCurrentConversation,
   };
 }

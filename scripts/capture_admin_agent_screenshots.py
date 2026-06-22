@@ -108,8 +108,6 @@ def setup_mock_api(page: Page) -> None:
                     'event: done\ndata: {}\n\n'
                 ),
             )
-        elif url.endswith("/api/sessions/visual-session/history"):
-            route.fulfill(json={"session_id": "visual-session", "profile_id": "visual-agent", "profile_name": "Visual Agent", "session_data": {}})
         elif url.endswith("/api/mcp/test"):
             route.fulfill(json={"results": []})
         elif url.endswith("/api/skills/generate"):

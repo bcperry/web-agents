@@ -96,7 +96,7 @@ def cosmos_emulator(monkeypatch):
 
 	from tests._doubles import clear_cosmos_singletons
 
-	endpoint = os.environ.get("AZURE_COSMOS_EMULATOR_ENDPOINT", "https://localhost:8081/")
+	endpoint = os.environ.get("AZURE_COSMOS_EMULATOR_ENDPOINT", "http://localhost:8081/")
 	parsed = urlsplit(endpoint)
 	host = parsed.hostname or "localhost"
 	port = parsed.port or 8081

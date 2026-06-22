@@ -127,7 +127,7 @@ function buildSessionRequest(
       ...(profile.customAgent.temperature !== undefined ? { custom_temperature: profile.customAgent.temperature } : {}),
       ...(profile.customAgent.skills.length > 0 ? { custom_skills: profile.customAgent.skills } : {}),
       ...(profile.customAgent.mcpServers.length > 0 ? { mcp_servers: profile.customAgent.mcpServers } : {}),
-      ...(profile.customAgent.agentsAsTools && profile.customAgent.agentsAsTools.length > 0
+      ...(profile.customAgent.agentsAsTools.length > 0
         ? { agentsAsTools: profile.customAgent.agentsAsTools.map((entry) => ({ agentRef: entry.agentRef })) }
         : {}),
       ...resumePayload,
@@ -145,7 +145,7 @@ function buildSessionRequest(
         ...(profile.builtInOverride.temperature !== undefined ? { custom_temperature: profile.builtInOverride.temperature } : {}),
         ...(profile.builtInOverride.skills.length > 0 ? { custom_skills: profile.builtInOverride.skills } : {}),
         ...(profile.builtInOverride.mcpServers.length > 0 ? { mcp_servers: profile.builtInOverride.mcpServers } : {}),
-        ...(profile.builtInOverride.agentsAsTools && profile.builtInOverride.agentsAsTools.length > 0
+        ...(profile.builtInOverride.agentsAsTools.length > 0
           ? { agentsAsTools: profile.builtInOverride.agentsAsTools.map((entry) => ({ agentRef: entry.agentRef })) }
           : {}),
         override_updated_at: profile.builtInOverride.updatedAt,
