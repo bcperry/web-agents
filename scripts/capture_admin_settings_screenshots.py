@@ -18,17 +18,6 @@ DEFAULT_PROFILE = {
     ],
 }
 
-CONVERSATION_INDEX = [
-    {
-        "id": "visual-conversation",
-        "profileId": "settings-visual-agent",
-        "profileName": "Settings Visual Agent",
-        "description": "Existing visual verification conversation",
-        "lastActivityAt": "2026-05-29T12:00:00.000Z",
-    }
-]
-
-
 def setup_mock_api(page: Page) -> None:
     def handler(route) -> None:
         request = route.request
@@ -84,8 +73,6 @@ def setup_mock_api(page: Page) -> None:
                     'event: done\ndata: {}\n\n'
                 ),
             )
-        elif url.endswith("/api/sessions/settings-visual-session/history"):
-            route.fulfill(json={"session_id": "settings-visual-session", "profile_id": "settings-visual-agent", "profile_name": "Settings Visual Agent", "session_data": {}})
         elif url.endswith("/api/mcp/test"):
             route.fulfill(json={"results": []})
         elif url.endswith("/api/skills/generate"):
@@ -99,13 +86,11 @@ def setup_mock_api(page: Page) -> None:
 def seed_storage(page: Page) -> None:
     page.evaluate(
         """
-        conversationIndex => {
-          localStorage.setItem('webagents_conversation_index', JSON.stringify(conversationIndex));
+                () => {
                     localStorage.setItem('webagents_theme', 'light');
                     sessionStorage.setItem('disclaimer_acknowledged', 'true');
         }
         """,
-        CONVERSATION_INDEX,
     )
 
 

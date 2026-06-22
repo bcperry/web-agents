@@ -529,7 +529,6 @@ _autonomous_lease_repo: Any = None
 _autonomous_directive_repo: Any = None
 _skill_repo: Any = None
 
-
 def _build_cosmos_client() -> Any:
     """Create a single shared async CosmosClient (key for local, MI for prod)."""
     from azure.cosmos.aio import CosmosClient
@@ -596,23 +595,21 @@ def get_history_provider() -> Any:
     deployed); raises otherwise.
     """
     global _history_provider
-    if _history_provider is not None:
-        return _history_provider
+    if _history_provider is None:
+        from agent_framework.azure import CosmosHistoryProvider
 
-    from agent_framework.azure import CosmosHistoryProvider
-
-    db = (os.getenv("AZURE_COSMOS_DATABASE_NAME") or "agent-memory").strip()
-    container = (os.getenv("AZURE_COSMOS_CONTAINER_NAME") or "chat-history").strip()
-    _history_provider = CosmosHistoryProvider(
-        cosmos_client=get_cosmos_client(),
-        database_name=db,
-        container_name=container,
-    )
-    logger.info(
-        "Durable Cosmos history provider enabled (db=%s, container=%s)",
-        db,
-        container,
-    )
+        database = (os.getenv("AZURE_COSMOS_DATABASE_NAME") or "agent-memory").strip()
+        container = (os.getenv("AZURE_COSMOS_CONTAINER_NAME") or "chat-history").strip()
+        _history_provider = CosmosHistoryProvider(
+            cosmos_client=get_cosmos_client(),
+            database_name=database,
+            container_name=container,
+        )
+        logger.info(
+            "Durable Cosmos history provider enabled (db=%s, container=%s)",
+            database,
+            container,
+        )
     return _history_provider
 
 
@@ -622,14 +619,14 @@ def get_conversation_repository() -> Any:
     Requires Cosmos to be configured; raises otherwise.
     """
     global _conversation_repo
-    if _conversation_repo is not None:
-        return _conversation_repo
-
-    _conversation_repo = CosmosConversationRepository(
-        get_cosmos_client(),
-        (os.getenv("AZURE_COSMOS_DATABASE_NAME") or "agent-memory").strip(),
-        (os.getenv("AZURE_COSMOS_CONVERSATIONS_CONTAINER") or "conversations").strip(),
-    )
+    if _conversation_repo is None:
+        database = (os.getenv("AZURE_COSMOS_DATABASE_NAME") or "agent-memory").strip()
+        container = (os.getenv("AZURE_COSMOS_CONVERSATIONS_CONTAINER") or "conversations").strip()
+        _conversation_repo = CosmosConversationRepository(
+            get_cosmos_client(),
+            database,
+            container,
+        )
     return _conversation_repo
 
 
@@ -639,14 +636,14 @@ def get_autonomous_run_repository() -> Any:
     Requires Cosmos to be configured; raises otherwise.
     """
     global _autonomous_run_repo
-    if _autonomous_run_repo is not None:
-        return _autonomous_run_repo
-
-    _autonomous_run_repo = CosmosAutonomousRunRepository(
-        get_cosmos_client(),
-        (os.getenv("AZURE_COSMOS_DATABASE_NAME") or "agent-memory").strip(),
-        (os.getenv("AZURE_COSMOS_AUTONOMOUS_CONTAINER") or "autonomous-runs").strip(),
-    )
+    if _autonomous_run_repo is None:
+        database = (os.getenv("AZURE_COSMOS_DATABASE_NAME") or "agent-memory").strip()
+        container = (os.getenv("AZURE_COSMOS_AUTONOMOUS_CONTAINER") or "autonomous-runs").strip()
+        _autonomous_run_repo = CosmosAutonomousRunRepository(
+            get_cosmos_client(),
+            database,
+            container,
+        )
     return _autonomous_run_repo
 
 
@@ -656,14 +653,14 @@ def get_autonomous_lease_repository() -> Any:
     Requires Cosmos to be configured; raises otherwise.
     """
     global _autonomous_lease_repo
-    if _autonomous_lease_repo is not None:
-        return _autonomous_lease_repo
-
-    _autonomous_lease_repo = CosmosAutonomousLeaseRepository(
-        get_cosmos_client(),
-        (os.getenv("AZURE_COSMOS_DATABASE_NAME") or "agent-memory").strip(),
-        (os.getenv("AZURE_COSMOS_LEASES_CONTAINER") or "autonomous-leases").strip(),
-    )
+    if _autonomous_lease_repo is None:
+        database = (os.getenv("AZURE_COSMOS_DATABASE_NAME") or "agent-memory").strip()
+        container = (os.getenv("AZURE_COSMOS_LEASES_CONTAINER") or "autonomous-leases").strip()
+        _autonomous_lease_repo = CosmosAutonomousLeaseRepository(
+            get_cosmos_client(),
+            database,
+            container,
+        )
     return _autonomous_lease_repo
 
 
@@ -673,14 +670,14 @@ def get_autonomous_directive_repository() -> Any:
     Requires Cosmos to be configured; raises otherwise.
     """
     global _autonomous_directive_repo
-    if _autonomous_directive_repo is not None:
-        return _autonomous_directive_repo
-
-    _autonomous_directive_repo = _CosmosByIdRepository(
-        get_cosmos_client(),
-        (os.getenv("AZURE_COSMOS_DATABASE_NAME") or "agent-memory").strip(),
-        (os.getenv("AZURE_COSMOS_DIRECTIVES_CONTAINER") or "autonomous-directives").strip(),
-    )
+    if _autonomous_directive_repo is None:
+        database = (os.getenv("AZURE_COSMOS_DATABASE_NAME") or "agent-memory").strip()
+        container = (os.getenv("AZURE_COSMOS_DIRECTIVES_CONTAINER") or "autonomous-directives").strip()
+        _autonomous_directive_repo = _CosmosByIdRepository(
+            get_cosmos_client(),
+            database,
+            container,
+        )
     return _autonomous_directive_repo
 
 
@@ -690,14 +687,14 @@ def get_skill_repository() -> Any:
     Requires Cosmos to be configured; raises otherwise.
     """
     global _skill_repo
-    if _skill_repo is not None:
-        return _skill_repo
-
-    _skill_repo = _CosmosByIdRepository(
-        get_cosmos_client(),
-        (os.getenv("AZURE_COSMOS_DATABASE_NAME") or "agent-memory").strip(),
-        (os.getenv("AZURE_COSMOS_SKILLS_CONTAINER") or "skills").strip(),
-    )
+    if _skill_repo is None:
+        database = (os.getenv("AZURE_COSMOS_DATABASE_NAME") or "agent-memory").strip()
+        container = (os.getenv("AZURE_COSMOS_SKILLS_CONTAINER") or "skills").strip()
+        _skill_repo = _CosmosByIdRepository(
+            get_cosmos_client(),
+            database,
+            container,
+        )
     return _skill_repo
 
 
@@ -712,6 +709,7 @@ async def close_cosmos() -> None:
     """Close the shared Cosmos client + credential (called on app shutdown)."""
     global _cosmos_client, _async_credential, _history_provider, _conversation_repo
     global _autonomous_run_repo, _autonomous_lease_repo, _autonomous_directive_repo, _skill_repo
+
     if _cosmos_client is not None:
         try:
             await _cosmos_client.close()

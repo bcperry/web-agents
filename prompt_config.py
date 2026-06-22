@@ -57,8 +57,8 @@ class AgentProfile:
 def _parse_agent_ref(raw: Any) -> AgentRef:
     """Parse a raw ``agent_ref`` mapping into a tagged ``AgentRef``.
 
-    YAML supports ``kind: builtin`` only (custom agents live in frontend
-    localStorage and cannot be referenced from agents.yaml).
+    Built-in YAML normally uses ``kind: builtin``; custom references are only
+    valid when a full inline definition is supplied by the agent-builder flow.
     """
     if not isinstance(raw, dict):
         raise ValueError("agent_ref must be a mapping")
@@ -82,9 +82,9 @@ def _parse_agent_ref(raw: Any) -> AgentRef:
 def _parse_sub_agent_tool_refs(raw: Any) -> list[SubAgentToolRef]:
     """Parse a raw ``agents_as_tools`` list into ``SubAgentToolRef`` objects.
 
-    Returns an empty list if ``raw`` is missing or empty (FR-004 backward
-    compatibility). Raises ``ValueError`` on malformed input so loading
-    fails loudly rather than silently dropping configuration.
+    Returns an empty list when the optional field is absent. Raises
+    ``ValueError`` on malformed input so loading fails loudly rather than
+    silently dropping configuration.
     """
     if not raw:
         return []

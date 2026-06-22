@@ -6,7 +6,7 @@ import yaml
 
 
 AGENTS_YAML_PATH = Path(__file__).resolve().parent.parent / "config" / "agents.yaml"
-ALLOWED_PROFILES = {"sql", "search", "hybrid", "faa", "azure-gov", "drone", "orchestrator"}
+REQUIRED_PROFILES = {"sql", "search", "hybrid", "faa", "azure-gov", "drone", "orchestrator"}
 REQUIRED_PROFILE_FIELDS = {"name", "description", "tools", "system_prompt"}
 
 
@@ -34,9 +34,6 @@ def test_each_profile_has_required_fields() -> None:
     profiles = payload["profiles"]
 
     for profile_key, entry in profiles.items():
-        assert profile_key in ALLOWED_PROFILES, (
-            f"Profile key '{profile_key}' not in allowed profiles: {ALLOWED_PROFILES}"
-        )
         assert isinstance(entry, dict), f"profiles.{profile_key} must be an object"
 
         missing = sorted(REQUIRED_PROFILE_FIELDS - set(entry.keys()))
@@ -63,8 +60,8 @@ def test_each_profile_has_required_fields() -> None:
 def test_all_expected_profiles_present() -> None:
     payload = _load_agents_yaml()
     profiles = set(payload["profiles"].keys())
-    assert ALLOWED_PROFILES.issubset(profiles), (
-        f"Missing expected profiles: {ALLOWED_PROFILES - profiles}"
+    assert REQUIRED_PROFILES.issubset(profiles), (
+        f"Missing expected profiles: {REQUIRED_PROFILES - profiles}"
     )
 
 

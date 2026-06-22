@@ -3,6 +3,7 @@ import type {
   AgentCustomizationOverride,
   AgentProfile,
   AgentRef,
+  BuiltInAgentDefinition,
   ToolInfo,
   CustomAgentDefinition,
   StandardAgentCandidate,
@@ -81,6 +82,7 @@ export function AgentBuilder({
   const [candidate, setCandidate] = useState<StandardAgentCandidate | null>(null);
   const [builtInsCollapsed, setBuiltInsCollapsed] = useState(false);
   const [customAgentsCollapsed, setCustomAgentsCollapsed] = useState(false);
+  const [builtInDefinitionsById, setBuiltInDefinitionsById] = useState<Record<string, BuiltInAgentDefinition>>({});
 
   useEffect(() => {
     fetchTools()
@@ -125,13 +127,14 @@ export function AgentBuilder({
       icon: agent.icon,
       starters: [...agent.starters],
       temperature: agent.temperature !== undefined ? String(agent.temperature) : '',
-      agentsAsTools: [...(agent.agentsAsTools || [])],
+      agentsAsTools: [...agent.agentsAsTools],
     });
   };
 
   const handleEditBuiltIn = async (profile: AgentProfile) => {
     try {
       const definition = await fetchBuiltInProfileDefinition(profile.id);
+      setBuiltInDefinitionsById((prev) => ({ ...prev, [definition.id]: definition }));
       const override = builtInOverrides.find((item) => item.baseProfileId === definition.id);
       const source = override ?? definition;
       const availableToolNames = new Set(availableTools.map((tool) => tool.name));
@@ -151,7 +154,7 @@ export function AgentBuilder({
         icon: source.icon,
         starters: [...source.starters],
         temperature: source.temperature !== undefined ? String(source.temperature) : '',
-        agentsAsTools: [...((source.agentsAsTools as SubAgentToolRef[] | undefined) || (definition.agentsAsTools || []))],
+        agentsAsTools: [...source.agentsAsTools],
       });
     } catch (err) {
       console.error('Failed to load built-in agent definition:', err);
@@ -218,16 +221,15 @@ export function AgentBuilder({
   const subAgentValidationErrors = useMemo(() => {
     const optionsById = new Map(availableAgentOptions.map((o) => [o.id, o]));
     const customById = new Map(agents.map((a) => [a.id, a]));
+    const overrideByProfileId = new Map(builtInOverrides.map((override) => [override.baseProfileId, override]));
     return validateSubAgentTools(parentAgentId, form.agentsAsTools, (ref: AgentRef): ResolvedAgentTarget | null => {
       const targetId = ref.kind === 'builtin' ? ref.profileId : ref.customAgentId;
       const opt = optionsById.get(targetId);
       if (!opt) return null;
-      // For cycle detection, look up the target's own agentsAsTools.
-      // Built-ins: the local cache won't have it (only loaded on edit) → treat as []
-      //   so we don't false-positive. Backend has authoritative cycle check.
-      // Custom: read from local store.
       const targetRefs: SubAgentToolRef[] =
-        opt.kind === 'custom' ? (customById.get(targetId)?.agentsAsTools || []) : [];
+        opt.kind === 'custom'
+          ? (customById.get(targetId)?.agentsAsTools ?? [])
+          : (overrideByProfileId.get(targetId)?.agentsAsTools ?? builtInDefinitionsById[targetId]?.agentsAsTools ?? []);
       return {
         id: targetId,
         name: opt.name,
@@ -235,7 +237,7 @@ export function AgentBuilder({
         agentsAsTools: targetRefs,
       };
     });
-  }, [parentAgentId, form.agentsAsTools, availableAgentOptions, agents]);
+  }, [parentAgentId, form.agentsAsTools, availableAgentOptions, agents, builtInOverrides, builtInDefinitionsById]);
 
   const handleAgentsAsToolsChange = (next: SubAgentToolRef[]) => {
     setForm((prev) => ({ ...prev, agentsAsTools: next }));

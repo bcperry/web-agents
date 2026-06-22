@@ -1,0 +1,289 @@
+.admin-page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100%;
+  max-width: 100vw;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  overflow: hidden;
+}
+
+.admin-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 20px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.admin-back-btn {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  padding: 6px 14px;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  border-radius: var(--radius);
+  transition: background 0.15s, color 0.15s;
+}
+
+.admin-back-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.admin-title {
+  font-family: var(--font-mono);
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--accent-color);
+  margin: 0;
+}
+
+.admin-tabs {
+  display: flex;
+  gap: 0;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.admin-tab {
+  background: transparent;
+  border: none;
+  border-bottom: 3px solid transparent;
+  color: var(--text-secondary);
+  padding: 10px 24px;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.admin-tab:hover {
+  color: var(--text-primary);
+}
+
+.admin-tab.active {
+  color: var(--accent-color);
+  border-bottom-color: var(--accent-color);
+  font-weight: 700;
+}
+
+.admin-content {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0;
+  min-width: 0;
+}
+
+.admin-settings {
+  max-width: 960px;
+  padding: 32px;
+  display: grid;
+  gap: 24px;
+}
+
+.admin-settings-section {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  padding: 20px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.08);
+}
+
+.admin-settings-section-header {
+  margin-bottom: 16px;
+}
+
+.admin-settings-heading {
+  margin: 0 0 6px;
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  color: var(--text-gold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.admin-settings-copy {
+  margin: 0;
+  max-width: 620px;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.admin-theme-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.admin-theme-option {
+  min-height: 104px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.admin-theme-option:hover {
+  border-color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent-gold) 8%, transparent);
+}
+
+.admin-theme-option.active {
+  border-color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent-gold) 12%, var(--bg-panel));
+}
+
+.admin-theme-option-label {
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  color: var(--text-gold);
+}
+
+.admin-theme-option-description {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.admin-account-summary {
+  max-width: 520px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+  .admin-header {
+    padding: 10px 12px;
+  }
+
+  .admin-tabs {
+    overflow-x: auto;
+  }
+
+  .admin-tab {
+    padding: 10px 16px;
+    white-space: nowrap;
+  }
+
+  .admin-settings {
+    padding: 16px;
+  }
+
+  .admin-theme-options {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+.skill-builder {
+  height: 100%;
+}
+
+.skill-hint {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.skill-list-actions {
+  display: flex;
+  margin-bottom: 8px;
+}
+
+.skill-delete-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.3;
+}
+
+.skill-form {
+  display: flex;
+  flex-direction: column;
+}
+
+.skill-textarea {
+  width: 100%;
+  min-height: 320px;
+  line-height: 1.6;
+}
+
+.skill-empty {
+  padding: 16px 12px;
+  text-align: center;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  border: 1px dashed var(--border-olive);
+  border-radius: var(--radius);
+}
+
+.skill-error {
+  padding: 10px 14px;
+  background: rgba(220, 53, 69, 0.12);
+  border: 1px solid rgba(220, 53, 69, 0.4);
+  border-radius: var(--radius);
+  color: #f08080;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  margin-bottom: 16px;
+}
+
+.skill-success {
+  padding: 10px 14px;
+  background: rgba(40, 167, 69, 0.12);
+  border: 1px solid rgba(40, 167, 69, 0.4);
+  border-radius: var(--radius);
+  color: #7fbf7f;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  margin-bottom: 16px;
+}
+
+.skill-list-new:disabled,
+.skill-btn-ai:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.skill-ai-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+/* --- Autonomous (Duty Officer) page --- */

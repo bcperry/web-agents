@@ -39,9 +39,9 @@ export interface McpConnectionResult {
 
 // Agents-as-Tools (feature 008) ---------------------------------------------
 //
-// Tagged union — `kind` discriminates built-in (references a YAML profile by
-// id) from custom (inlines the full local CustomAgentDefinition because the
-// backend has no custom-agent persistence layer).
+// Tagged union — `kind` discriminates built-in references from custom agents.
+// Custom refs inline the definition so the parent can call the exact draft the
+// user selected, even before it is promoted into the shared built-in catalog.
 export interface BuiltinAgentRefWire {
   kind: 'builtin';
   profileId: string;
@@ -83,7 +83,7 @@ export interface CustomAgentDefinition {
   icon: string;
   starters: StarterQuestion[];
   temperature?: number;
-  agentsAsTools?: SubAgentToolRef[];
+  agentsAsTools: SubAgentToolRef[];
   createdAt: string;
   updatedAt: string;
 }
@@ -100,7 +100,7 @@ export interface AgentCustomizationOverride {
   icon: string;
   starters: StarterQuestion[];
   temperature?: number;
-  agentsAsTools?: SubAgentToolRef[];
+  agentsAsTools: SubAgentToolRef[];
   source: 'builtin-override';
   createdAt: string;
   updatedAt: string;
@@ -120,7 +120,7 @@ export interface BuiltInAgentDefinition {
   icon: string;
   starters: StarterQuestion[];
   temperature?: number;
-  agentsAsTools?: SubAgentToolRef[];
+  agentsAsTools: SubAgentToolRef[];
   source: 'builtin';
 }
 

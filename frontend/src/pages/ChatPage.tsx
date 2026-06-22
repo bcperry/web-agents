@@ -72,7 +72,6 @@ export function ChatPage({ onOpenAdmin, onOpenAutonomous, customAgents, builtInO
     startSession,
     endSession,
     send,
-    saveCurrentConversation,
   } = useChat();
 
   const { loadIndex, deleteConversation } = useConversationStore();
@@ -184,8 +183,6 @@ export function ChatPage({ onOpenAdmin, onOpenAutonomous, customAgents, builtInO
     if (isEndingSessionRef.current) return;
     isEndingSessionRef.current = true;
     try {
-      // Save current conversation before switching
-      await saveCurrentConversation();
       await endSession();
       setSelectedProfile(null);
       void loadIndex().then(setConversationIndex);
@@ -197,7 +194,7 @@ export function ChatPage({ onOpenAdmin, onOpenAutonomous, customAgents, builtInO
     } finally {
       isEndingSessionRef.current = false;
     }
-  }, [saveCurrentConversation, endSession, loadIndex]);
+  }, [endSession, loadIndex]);
 
   // Handle browser back/forward button navigation for active sessions.
   useEffect(() => {

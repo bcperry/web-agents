@@ -275,12 +275,6 @@ def test_builtin_profile_override_session_preserves_canonical_name(client, monke
     assert data["used_profile_override"] is True
     assert data["override_updated_at"] == "2026-05-06T12:00:00.000Z"
 
-    history_resp = client.get(f"/api/sessions/{data['session_id']}/history")
-    assert history_resp.status_code == 200
-    history_data = history_resp.json()
-    assert history_data["used_profile_override"] is True
-    assert history_data["override_updated_at"] == "2026-05-06T12:00:00.000Z"
-
 
 def test_builtin_profile_override_rejects_name_change(client):
     resp = client.post(
