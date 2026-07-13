@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type {
   AgentRef,
   CustomAgentDefinition,
@@ -51,6 +52,9 @@ export function AgentAsToolPicker({
   validationErrors,
   onChange,
 }: AgentAsToolPickerProps) {
+  const [expanded, setExpanded] = useState(value.length > 0);
+  const [query, setQuery] = useState('');
+
   // Self is always excluded; everything else is selectable via checkbox.
   const selectableAgents = availableAgents.filter((opt) => opt.id !== parentAgentId);
   const selectedById = new Map(value.map((entry, idx) => [refTargetId(entry.agentRef), idx]));
@@ -86,25 +90,51 @@ export function AgentAsToolPicker({
     }
   };
 
-  return (
-    <div className="agent-builder-section">
-      <h3 className="agent-builder-section-title">AGENTS AS TOOLS</h3>
-      <span className="agent-builder-tool-desc" style={{ display: 'block', marginBottom: '0.5rem' }}>
-        Other agents this agent can call as tools. Tool name and description are derived automatically
-        from the target agent and recomputed by the server.
-      </span>
+  const visibleAgents = (() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    return [...selectableAgents]
+      .sort((a, b) => Number(selectedById.has(b.id)) - Number(selectedById.has(a.id)))
+      .filter((agent) => !normalizedQuery || `${agent.name} ${agent.description}`.toLowerCase().includes(normalizedQuery));
+  })();
 
-      {selectableAgents.length === 0 ? (
-        <div className="agent-builder-tool-desc">No other agents available</div>
-      ) : (
-        <div className="agent-builder-tools">
-          {selectableAgents.map((opt) => {
+  return (
+    <div className="agent-builder-section agent-builder-capability-section">
+      <button
+        className="agent-builder-capability-header"
+        type="button"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <span className="agent-builder-section-title">AGENTS AS TOOLS</span>
+        <span className="agent-builder-capability-summary">
+          {value.length} selected
+          <span aria-hidden="true">{expanded ? '−' : '+'}</span>
+        </span>
+      </button>
+      {expanded && (
+        <div className="agent-builder-capability-content">
+          <span className="agent-builder-tool-desc">Other agents this agent can call as tools.</span>
+          {selectableAgents.length > 8 && (
+            <input
+              className="agent-builder-input agent-builder-capability-search"
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search agents"
+              aria-label="Search agents"
+            />
+          )}
+          {selectableAgents.length === 0 ? (
+            <div className="agent-builder-tool-desc">No other agents available</div>
+          ) : (
+            <div className="agent-builder-tools">
+              {visibleAgents.map((opt) => {
             const idx = selectedById.get(opt.id);
             const isSelected = idx !== undefined;
             const finalName = isSelected ? finalToolNameByTargetId.get(opt.id) : undefined;
             const rowErrors = isSelected ? (errorsByIndex.get(idx!) ?? []) : [];
             return (
-              <label key={`${opt.kind}:${opt.id}`} className="agent-builder-tool-item">
+              <label key={`${opt.kind}:${opt.id}`} className="agent-builder-tool-item" title={opt.description || 'No description'}>
                 <input
                   type="checkbox"
                   checked={isSelected}
@@ -112,19 +142,9 @@ export function AgentAsToolPicker({
                 />
                 <span className="agent-builder-tool-name">
                   {opt.name}
-                  <span className="agent-builder-tool-desc" style={{ marginLeft: '0.5rem' }}>
-                    ({opt.kind === 'builtin' ? 'built-in' : 'custom'})
-                  </span>
                 </span>
-                <span className="agent-builder-tool-desc">
-                  {opt.description || 'No description'}
-                  {finalName && (
-                    <>
-                      {' — tool: '}
-                      <code>{finalName}</code>
-                    </>
-                  )}
-                </span>
+                <span className="agent-builder-tool-kind">{opt.kind === 'builtin' ? 'built-in' : 'custom'}</span>
+                {finalName && <code className="agent-builder-tool-preview">{finalName}</code>}
                 {rowErrors.length > 0 && (
                   <span className="agent-builder-error-text" style={{ display: 'block' }}>
                     {rowErrors.map((e) => e.message).join(' ')}
@@ -132,7 +152,10 @@ export function AgentAsToolPicker({
                 )}
               </label>
             );
-          })}
+              })}
+              {visibleAgents.length === 0 && <div className="agent-builder-tool-desc">No matches</div>}
+            </div>
+          )}
         </div>
       )}
     </div>

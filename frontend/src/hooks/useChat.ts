@@ -34,7 +34,7 @@ interface ChatState {
   clearError: () => void;
 }
 
-export function useChat(): ChatState {
+export function useChat(onCustomAgentsChanged?: () => void): ChatState {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [session, setSession] = useState<ChatSession | null>(null);
@@ -250,6 +250,11 @@ export function useChat(): ChatState {
           },
           onDone: () => {
             setIsStreaming(false);
+            if (toolsRef.current.some((tool) =>
+              tool.name === 'create_agent' || tool.name === 'edit_agent'
+            )) {
+              onCustomAgentsChanged?.();
+            }
             // The backend already persisted this turn to Cosmos and updated the
             // conversation index; bump the save counter so the sidebar reloads
             // the server-sourced conversation list.
@@ -266,7 +271,7 @@ export function useChat(): ChatState {
       // Non-auth errors already emitted as toasts by client.ts
       setIsStreaming(false);
     }
-  }, [session, messages.length]);
+  }, [session, messages.length, onCustomAgentsChanged]);
 
   const clearError = useCallback(() => setError(null), []);
 

@@ -294,16 +294,20 @@
 }
 
 .agent-builder-tools {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .agent-builder-tool-item {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
-  padding: 8px 10px;
+  min-width: 0;
+  padding: 7px 9px;
   border: 1px solid var(--border-olive);
   border-radius: var(--radius);
   cursor: pointer;
@@ -325,6 +329,8 @@
   font-size: 0.9rem;
   color: var(--text-gold);
   letter-spacing: 0.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -333,6 +339,69 @@
   font-size: 0.85rem;
   color: var(--text-muted);
   line-height: 1.4;
+}
+
+.agent-builder-capability-section {
+  padding: 0;
+  overflow: hidden;
+}
+
+.agent-builder-capability-header {
+  width: 100%;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.agent-builder-capability-header .agent-builder-section-title {
+  margin: 0;
+}
+
+.agent-builder-capability-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.agent-builder-capability-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+
+.agent-builder-capability-search {
+  width: min(100%, 360px);
+}
+
+.agent-builder-tool-kind,
+.agent-builder-tool-preview {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .agent-builder-tools {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-builder-tool-preview {
+    display: none;
+  }
 }
 
 .agent-builder-search-toggle {
@@ -351,11 +420,20 @@
 .agent-builder-starter-item {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   padding: 6px 10px;
   border: 1px solid var(--border-olive);
   border-radius: var(--radius);
   background-color: var(--bg-input);
+}
+
+.agent-builder-starter-item .agent-builder-input {
+  flex: 0 1 240px;
+  min-width: 0;
+}
+
+.agent-builder-starter-item .agent-builder-starter-message {
+  flex: 1 1 360px;
 }
 
 .agent-builder-starter-label {

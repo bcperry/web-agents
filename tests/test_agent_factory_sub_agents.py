@@ -80,6 +80,7 @@ class _FakeClient:
             "description": description,
             "tools": tools or [],
             "default_options": default_options or {},
+            "context_providers": context_providers or [],
         })
         agent = _FakeAgent(name=name, instructions=instructions, description=description, default_options=default_options)
         agent.context_providers = context_providers or []
@@ -172,6 +173,38 @@ def test_custom_sub_agent_ref_uses_inlined_definition(fake_clients: _FakeClient)
     assert len(fake_clients.as_agent_calls) == 2
     sub_call = next(c for c in fake_clients.as_agent_calls if c["instructions"] == "You are Blaine.")
     assert sub_call["default_options"] == {"temperature": 0.7}
+
+
+def test_custom_sub_agent_receives_owner_bound_selected_skills(
+    fake_clients: _FakeClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sentinel_provider = object()
+    calls: list[tuple[list[str] | None, str | None]] = []
+
+    def fake_skills_provider(skill_names=None, user_id=None):
+        calls.append((skill_names, user_id))
+        return sentinel_provider
+
+    monkeypatch.setattr(agent_factory, "_build_skills_provider", fake_skills_provider)
+    runtime = agent_factory.create_chat_runtime(
+        custom_name="Parent",
+        custom_instructions="Coordinate.",
+        user_id="user-a",
+        agents_as_tools=[SubAgentToolRef(agent_ref=CustomAgentRef(
+            custom_agent_id="child",
+            definition={
+                "id": "child",
+                "name": "Child",
+                "systemPrompt": "Use the selected skill.",
+                "skills": ["owner-skill"],
+            },
+        ))],
+    )
+
+    assert runtime.sub_agent_tool_names == ["child"]
+    assert (["owner-skill"], "user-a") in calls
+    child_call = next(call for call in fake_clients.as_agent_calls if call["instructions"] == "Use the selected skill.")
+    assert child_call["context_providers"] == [sentinel_provider]
 
 
 def test_disambiguates_colliding_derived_tool_names(

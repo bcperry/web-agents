@@ -7,16 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
 from auth import AuthenticatedUser, get_current_user
+from definition_creation import SkillCreationRequest
 from skills_manager import SkillManager
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-
-class SkillCreateRequest(BaseModel):
-    name: str
-    description: str
-    content: str
 
 
 class SkillUpdateRequest(BaseModel):
@@ -41,7 +36,7 @@ class SkillGenerateResponse(BaseModel):
 
 @router.get("/api/skills")
 async def get_skills(user: AuthenticatedUser = Depends(get_current_user)):
-    return {"skills": await SkillManager().list_summaries()}
+    return {"skills": await SkillManager(user_id=user.user_id).list_summaries()}
 
 
 @router.post("/api/skills/generate", response_model=SkillGenerateResponse)
@@ -102,11 +97,11 @@ async def generate_skill_content(
 
 @router.get("/api/skills/{name}", response_model=SkillResponse)
 async def get_skill(name: str, user: AuthenticatedUser = Depends(get_current_user)):
-    return SkillResponse(**await SkillManager().get(name))
+    return SkillResponse(**await SkillManager(user_id=user.user_id).get(name))
 
 
 @router.post("/api/skills", response_model=SkillResponse, status_code=201)
-async def create_skill(body: SkillCreateRequest, user: AuthenticatedUser = Depends(get_current_user)):
+async def create_skill(body: SkillCreationRequest, user: AuthenticatedUser = Depends(get_current_user)):
     return SkillResponse(**await SkillManager().create(body.name, body.description, body.content))
 
 

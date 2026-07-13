@@ -61,6 +61,12 @@ variable "skills_container_name" {
   default     = "skills"
 }
 
+variable "user_skills_container_name" {
+  description = "Container for user-owned agent skills (partition key /user_id)."
+  type        = string
+  default     = "user-skills"
+}
+
 variable "principal_id" {
   description = "Principal ID of the app's managed identity, granted data-plane access."
   type        = string

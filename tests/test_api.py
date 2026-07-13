@@ -8,6 +8,7 @@ os.environ.setdefault("AUTH_DISABLED", "true")
 os.environ.setdefault("AZURE_SQL_CONNECTIONSTRING", "")
 
 import user_data
+from auth import AuthenticatedUser, get_current_user
 from main import _sessions
 from prompt_config import load_agents_yaml
 
@@ -416,6 +417,40 @@ def test_openapi_docs(client):
     assert "/api/health" in data["paths"]
 
 
+def test_tool_inventory_advertises_definition_tools_without_default_grants(client):
+    response = client.get("/api/tools")
+    assert response.status_code == 200
+    tools = {item["name"]: item["description"] for item in response.json()["tools"]}
+    assert "durable user-owned skill" in tools["create_skill"]
+    assert "durable user-owned custom agent" in tools["create_agent"]
+    assert "existing user-owned skill" in tools["edit_skill"]
+    assert "existing user-owned custom agent" in tools["edit_agent"]
+
+
+def test_authenticated_skill_catalog_includes_only_current_users_created_skills(client):
+    from main import app
+
+    asyncio.run(user_data.get_user_skills_repository().create("catalog-a", "private-skill", {
+        "id": "private-skill", "name": "private-skill", "description": "Private", "content": "body"
+    }))
+    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
+        user_id="catalog-a", username="catalog-a"
+    )
+    try:
+        owner_names = {item["name"] for item in client.get("/api/skills").json()["skills"]}
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser(
+        user_id="catalog-b", username="catalog-b"
+    )
+    try:
+        other_names = {item["name"] for item in client.get("/api/skills").json()["skills"]}
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+    assert "private-skill" in owner_names
+    assert "private-skill" not in other_names
+
+
 def test_custom_session_binds_all_selected_tools(client):
     resp = client.post(
         "/api/sessions",
@@ -452,6 +487,51 @@ def test_custom_session_binds_all_selected_tools(client):
     session_data = _sessions[session_id]
     tool_names = {getattr(tool, "name", None) or getattr(tool, "__name__", None) for tool in session_data.tools}
     assert {"get_user_profile", "save_user_profile"}.issubset(tool_names)
+
+
+def test_custom_session_creation_tool_grants_are_exact(client, monkeypatch):
+    import session_orchestration
+
+    class DummySession:
+        def to_dict(self):
+            return {"items": []}
+
+    def fake_create_chat_runtime(**kwargs):
+        return SimpleNamespace(
+            agent=object(),
+            session=DummySession(),
+            tools=kwargs.get("function_tools", []),
+            prompt_manifest={},
+            prompt_logical_profile="custom",
+        )
+
+    async def fake_connect_mcp_servers(configs, *, user_token=None):
+        return [], []
+
+    monkeypatch.setattr(session_orchestration, "create_chat_runtime", fake_create_chat_runtime)
+    monkeypatch.setattr(session_orchestration, "connect_mcp_servers", fake_connect_mcp_servers)
+
+    for selected in (
+        [],
+        ["create_skill"],
+        ["create_agent"],
+        ["edit_skill"],
+        ["edit_agent"],
+        ["create_skill", "create_agent", "edit_skill", "edit_agent"],
+    ):
+        response = client.post("/api/sessions", json={
+            "profile_id": "custom",
+            "custom_name": "Grant Test",
+            "custom_prompt": "Test exact grants.",
+            "custom_tools": selected,
+        })
+        assert response.status_code == 201
+        assert response.json()["tools_loaded"] == selected
+        loaded = {
+            getattr(tool, "name", None) or getattr(tool, "__name__", None)
+            for tool in _sessions[response.json()["session_id"]].tools
+        }
+        assert loaded == set(selected)
 
 
 def test_custom_session_rejects_sql_when_database_is_unconfigured(client, monkeypatch):
@@ -508,6 +588,13 @@ def _stub_runtime(monkeypatch):
 
 def test_custom_session_with_valid_custom_sub_agent_succeeds(client, monkeypatch):
     captured = _stub_runtime(monkeypatch)
+    asyncio.run(user_data.get_custom_agents_repository().create("dev-user", "child-1", {
+        "id": "child-1",
+        "name": "Child Agent",
+        "description": "Child does things.",
+        "systemPrompt": "You are the child.",
+        "agentsAsTools": [],
+    }))
 
     payload = {
         "profile_id": "custom",

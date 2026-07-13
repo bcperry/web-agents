@@ -76,7 +76,9 @@ def validate_prompt(value: object, *, max_chars: int, field_name: str = "custom_
 
 
 def known_tool_names_from_profiles(profiles_data: dict) -> set[str]:
-	known_tools: set[str] = {"get_user_profile", "save_user_profile"}
+	from app_context import function_tool_registry
+
+	known_tools: set[str] = set(function_tool_registry())
 	for entry in profiles_data.values():
 		if isinstance(entry, dict):
 			for tool_name in entry.get("tools") or []:
@@ -94,11 +96,11 @@ def validate_tool_names(raw_tools: object, known_tools: set[str], field_name: st
 	return list(raw_tools)
 
 
-async def available_skill_names() -> set[str]:
-	import cosmos_memory
+async def available_skill_names(user_id: str | None = None) -> set[str]:
+	from skills_manager import SkillManager
 
-	docs = await cosmos_memory.get_skill_repository().list_all()
-	return {doc["id"] for doc in docs}
+	docs = await SkillManager(user_id=user_id).list_documents()
+	return {str(doc.get("name") or doc["id"]) for doc in docs}
 
 
 def filter_known_skill_names(raw_skills: object, available_skills: set[str], field_name: str = "custom_skills") -> tuple[list[str], list[str]]:

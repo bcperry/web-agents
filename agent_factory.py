@@ -89,18 +89,22 @@ class CosmosSkillsSource(SkillsSource):
     body); invalid documents are skipped rather than failing the run.
     """
 
+    def __init__(self, user_id: str | None = None) -> None:
+        self._user_id = user_id
+
     async def get_skills(self) -> list[Any]:
         from agent_framework import InlineSkill, SkillFrontmatter
-        from cosmos_memory import get_skill_repository
+        from skills_manager import SkillManager
 
-        docs = await get_skill_repository().list_all()
+        docs = await SkillManager(user_id=self._user_id).list_documents()
         skills: list[Any] = []
         for doc in docs:
             try:
                 skills.append(
                     InlineSkill(
                         frontmatter=SkillFrontmatter(
-                            name=doc["id"], description=str(doc.get("description") or "")
+                            name=str(doc.get("name") or doc["id"]),
+                            description=str(doc.get("description") or ""),
                         ),
                         instructions=str(doc.get("content") or ""),
                     )
@@ -112,6 +116,7 @@ class CosmosSkillsSource(SkillsSource):
 
 def _build_skills_provider(
     skill_names: list[str] | None = None,
+    user_id: str | None = None,
 ) -> SkillsProvider | None:
     """Build a SkillsProvider filtered to the requested skill names.
 
@@ -126,7 +131,7 @@ def _build_skills_provider(
 
     selected = set(skill_names)
     source = FilteringSkillsSource(
-        CosmosSkillsSource(),
+        CosmosSkillsSource(user_id),
         predicate=lambda skill: skill.frontmatter.name in selected,
     )
     return SkillsProvider(source)
@@ -151,6 +156,7 @@ def _build_context_providers(
     logical_profile: str | None = None,
     enable_search_context: bool = False,
     skill_names: list[str] | None = None,
+    user_id: str | None = None,
 ) -> list[Any]:
     summarizer = summarizer_client or OpenAIChatClient()
     tokenizer = CharacterEstimatorTokenizer()
@@ -177,7 +183,7 @@ def _build_context_providers(
     if enable_search_context:
         providers.append(get_search_context_provider())
 
-    skills_provider = _build_skills_provider(skill_names)
+    skills_provider = _build_skills_provider(skill_names, user_id)
     if skills_provider is not None:
         providers.append(skills_provider)
 
@@ -223,8 +229,8 @@ def _build_openai_clients() -> tuple[OpenAIChatClient, OpenAIChatClient]:
 
 def _resolve_sub_agent_definition(
     ref: SubAgentToolRef,
-) -> tuple[str, str, str, float | None] | None:
-    """Resolve a SubAgentToolRef to ``(name, description, instructions, temperature)``.
+) -> tuple[str, str, str, float | None, list[str]] | None:
+    """Resolve a SubAgentToolRef to runtime identity, behavior, and selected skills.
 
     Returns ``None`` if the reference cannot be resolved (e.g., a built-in
     profile id no longer exists, a custom-agent definition is malformed).
@@ -239,6 +245,7 @@ def _resolve_sub_agent_definition(
                 profile.description,
                 profile.system_prompt,
                 profile.temperature,
+                list(profile.skills),
             )
         if isinstance(agent_ref, CustomAgentRef):
             definition = agent_ref.definition or {}
@@ -249,13 +256,14 @@ def _resolve_sub_agent_definition(
                 return None
             description = str(definition.get("description") or "").strip()
             raw_temp = definition.get("temperature")
+            skills = [str(value) for value in (definition.get("skills") or []) if isinstance(value, str)]
             temperature: float | None = None
             if raw_temp is not None:
                 try:
                     temperature = float(raw_temp)
                 except (TypeError, ValueError):
                     temperature = None
-            return name, description, instructions, temperature
+            return name, description, instructions, temperature, skills
     except Exception as exc:  # noqa: BLE001 — broad: orphans must not crash parent
         logger.warning("Failed to resolve sub-agent ref %r: %s", agent_ref, exc)
         return None
@@ -266,6 +274,7 @@ def _build_sub_agent_tools(
     refs,
     primary_client,
     sub_agent_resources=None,
+    user_id=None,
 ):
     """Wrap each resolved sub-agent ref as a FunctionTool via Agent.as_tool.
 
@@ -292,7 +301,7 @@ def _build_sub_agent_tools(
         return [], [], []
 
     derivations = []
-    for ref, (name, description, _instructions, _temp) in resolved:
+    for ref, (name, description, _instructions, _temp, _skills) in resolved:
         agent_ref = ref.agent_ref
         if isinstance(agent_ref, BuiltinAgentRef):
             fallback_id = agent_ref.profile_id
@@ -307,7 +316,7 @@ def _build_sub_agent_tools(
     tools = []
     final_names = []
     aggregated_mcp_tools = []
-    for (ref, (name, description, instructions, sub_temp)), (_orig_tool_name, tool_description, _arg_desc), final_tool_name in zip(
+    for (ref, (name, description, instructions, sub_temp, sub_skills)), (_orig_tool_name, tool_description, _arg_desc), final_tool_name in zip(
         resolved, derivations, tool_names
     ):
         sub_tools_extra = []
@@ -325,10 +334,13 @@ def _build_sub_agent_tools(
                     providers = []
                     if resources.enable_search_context:
                         providers.append(get_search_context_provider())
-                    skills_provider = _build_skills_provider(resources.skill_names or None)
+                    skills_provider = _build_skills_provider(resources.skill_names or None, user_id)
                     if skills_provider is not None:
                         providers.append(skills_provider)
                     sub_context_providers = providers or None
+            elif sub_skills:
+                skills_provider = _build_skills_provider(sub_skills, user_id)
+                sub_context_providers = [skills_provider] if skills_provider is not None else None
 
             as_agent_kwargs = {
                 "name": _sanitize_agent_name(name or final_tool_name),
@@ -379,6 +391,7 @@ def create_chat_runtime(
     extra_instructions: str | None = None,
     agents_as_tools: Sequence[SubAgentToolRef] = (),
     sub_agent_resources: dict[str, SubAgentResources] | None = None,
+    user_id: str | None = None,
 ) -> ChatRuntime:
     is_custom = custom_name is not None and custom_instructions is not None
 
@@ -421,7 +434,7 @@ def create_chat_runtime(
     resolved_temperature = temperature if temperature is not None else _get_default_temperature()
 
     sub_agent_tools, sub_agent_tool_names, sub_agent_mcp_tools = _build_sub_agent_tools(
-        sub_agent_refs, primary_client, sub_agent_resources
+        sub_agent_refs, primary_client, sub_agent_resources, user_id
     )
     if sub_agent_tools:
         all_tools = [*all_tools, *sub_agent_tools]
@@ -438,6 +451,7 @@ def create_chat_runtime(
             logical_profile=logical_profile,
             enable_search_context=enable_search_context,
             skill_names=skill_names,
+            user_id=user_id,
         ),
     )
 

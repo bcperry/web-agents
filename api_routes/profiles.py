@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from app_context import build_tool_instances
+from app_context import build_tool_instances, function_tool_registry
 from auth import AuthenticatedUser, get_current_user
 from mcp_servers import cleanup_mcp_servers, connect_mcp_servers, get_search_service_config, parse_mcp_server_configs
 from profile_definitions import (
@@ -41,32 +41,7 @@ def _check_profile_health(profile_id: str, profile_entry: dict) -> str | None:
 
 @router.get("/api/tools")
 async def get_tools(user: AuthenticatedUser = Depends(get_current_user)):
-    agents_doc = load_agents_yaml()
-    profiles_data = agents_doc.get("profiles") or {}
-
-    tool_names: set[str] = set()
-    for entry in profiles_data.values():
-        if isinstance(entry, dict):
-            for tool_name in entry.get("tools") or []:
-                if isinstance(tool_name, str):
-                    tool_names.add(tool_name)
-
-    desc_map: dict[str, str] = {}
-    unavailable_tools: list[dict[str, str]] = []
-    available_names: set[str] = set()
-    for tool_name in sorted(tool_names):
-        try:
-            tool_objects = build_tool_instances({tool_name}, session_id="discovery")
-        except HTTPException as exc:
-            unavailable_tools.append({"name": tool_name, "reason": exc.detail})
-            continue
-
-        available_names.add(tool_name)
-        for tool_object in tool_objects:
-            name = getattr(tool_object, "name", None) or getattr(tool_object, "__name__", None)
-            doc = getattr(tool_object, "description", None) or getattr(tool_object, "__doc__", None) or ""
-            if name:
-                desc_map[name] = doc.strip().split("\n")[0]
+    registry = function_tool_registry()
 
     cfg = get_search_service_config()
     search_available = bool(cfg.endpoint and cfg.index_name)
@@ -81,10 +56,10 @@ async def get_tools(user: AuthenticatedUser = Depends(get_current_user)):
 
     return {
         "tools": [
-            {"name": name, "description": desc_map.get(name, "")}
-            for name in sorted(available_names)
+            {"name": name, "description": registration.description}
+            for name, registration in sorted(registry.items())
         ],
-        "unavailable": unavailable_tools,
+        "unavailable": [],
         "search_context_available": search_available,
         "search_context_reason": search_reason,
     }

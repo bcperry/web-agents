@@ -17,7 +17,12 @@ function AppContent() {
   const { appName } = getRuntimeConfigSnapshot()
   const [currentView, setCurrentView] = useState<'chat' | 'admin' | 'autonomous'>('chat')
   const [adminIntent, setAdminIntent] = useState<AdminOpenOptions | undefined>(undefined)
-  const { agents: customAgents, save: saveCustomAgent, remove: removeCustomAgent } = useCustomAgents()
+  const {
+    agents: customAgents,
+    save: saveCustomAgent,
+    remove: removeCustomAgent,
+    reload: reloadCustomAgents,
+  } = useCustomAgents()
   const {
     overrides: builtInOverrides,
     save: saveBuiltInOverride,
@@ -109,6 +114,7 @@ function AppContent() {
         <ChatPage
           onOpenAdmin={handleOpenAdmin}
           onOpenAutonomous={handleOpenAutonomous}
+          onCustomAgentsChanged={reloadCustomAgents}
           customAgents={customAgents}
           builtInOverrides={builtInOverrides}
         />

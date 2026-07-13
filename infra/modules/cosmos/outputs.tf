@@ -42,3 +42,8 @@ output "skills_container_name" {
   description = "Global agent skills store container name."
   value       = azurerm_cosmosdb_sql_container.skills.name
 }
+
+output "user_skills_container_name" {
+  description = "User-owned agent skills container name."
+  value       = azurerm_cosmosdb_sql_container.user_skills.name
+}

@@ -70,6 +70,7 @@ def _cosmos_doubles(monkeypatch):
 	monkeypatch.setattr(user_data, "_custom_agents_repo", InMemoryUserScopedRepository())
 	monkeypatch.setattr(user_data, "_agent_customizations_repo", InMemoryUserScopedRepository())
 	monkeypatch.setattr(user_data, "_user_profile_repo", InMemoryUserScopedRepository())
+	monkeypatch.setattr(user_data, "_user_skills_repo", InMemoryUserScopedRepository())
 	yield
 
 

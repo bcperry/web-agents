@@ -17,7 +17,7 @@ from agent_factory import SubAgentResources, create_chat_runtime
 from cosmos_memory import get_conversation_repository
 from eval_trace import EvalTraceLogger
 from mcp_servers import connect_mcp_servers, parse_mcp_server_configs
-from user_data import get_user_profile_repository
+from user_data import get_custom_agents_repository, get_user_profile_repository
 from prompt_config import (
     SubAgentToolRef,
     _parse_sub_agent_tool_refs,
@@ -200,8 +200,12 @@ def _resolve_for_validation(agent_ref: Any) -> dict[str, Any] | None:
         return {"id": profile_id, "name": profile.name, "agents_as_tools": nested}
     if kind == "custom":
         custom_id = getattr(agent_ref, "custom_agent_id", None)
-        definition = getattr(agent_ref, "definition", None) or {}
-        if not custom_id or not isinstance(definition, dict):
+        definition = getattr(agent_ref, "definition", None)
+        if (
+            not custom_id
+            or not isinstance(definition, dict)
+            or not str(definition.get("systemPrompt") or definition.get("system_prompt") or "").strip()
+        ):
             return None
         return {
             "id": custom_id,
@@ -209,6 +213,35 @@ def _resolve_for_validation(agent_ref: Any) -> dict[str, Any] | None:
             "agentsAsTools": definition.get("agentsAsTools") or [],
         }
     return None
+
+
+async def _owner_scoped_sub_agent_payload(raw_payload: object, user_id: str) -> list[dict[str, Any]]:
+    """Replace client-supplied custom definitions with owner-scoped durable records."""
+    normalized = _normalize_sub_agent_tool_payload(raw_payload)
+    owner_repo = get_custom_agents_repository()
+    scoped: list[dict[str, Any]] = []
+    for entry in normalized:
+        ref = entry["agent_ref"]
+        if ref.get("kind") != "custom":
+            scoped.append(entry)
+            continue
+        custom_id = str(ref.get("custom_agent_id") or "")
+        definition = await owner_repo.get(user_id, custom_id) if custom_id else None
+        supplied = ref.get("definition")
+        if (
+            isinstance(supplied, dict)
+            and supplied.get("id") is not None
+            and str(supplied["id"]) != custom_id
+        ):
+            definition = supplied
+        scoped.append({
+            "agent_ref": {
+                "kind": "custom",
+                "custom_agent_id": custom_id,
+                "definition": definition or {"id": custom_id},
+            }
+        })
+    return scoped
 
 
 def _build_validated_sub_agent_refs(
@@ -533,13 +566,17 @@ async def _create_custom_chat_session(
     custom_search_context = bool(body.get("custom_search_context", False))
     custom_temperature = validate_temperature(body.get("custom_temperature"))
     custom_tools = validate_tool_names(body.get("custom_tools", []), known_tool_names_from_profiles(profiles_data))
-    custom_skills, dropped_skills = filter_known_skill_names(body.get("custom_skills", []), await available_skill_names())
+    custom_skills, dropped_skills = filter_known_skill_names(
+        body.get("custom_skills", []), await available_skill_names(user.user_id)
+    )
     if dropped_skills:
         logger.warning("Custom agent '%s' references unknown skills, dropping: %s", custom_name, dropped_skills)
     raw_mcp_servers = validate_http_mcp_servers(body.get("mcp_servers", []), override=False)
     sub_agent_refs = _build_validated_sub_agent_refs(
         parent_id=str(body.get("custom_id") or custom_name),
-        raw_payload=body.get("agents_as_tools") or body.get("agentsAsTools"),
+        raw_payload=await _owner_scoped_sub_agent_payload(
+            body.get("agents_as_tools") or body.get("agentsAsTools"), user.user_id
+        ),
         logger=logger,
     )
 
@@ -568,6 +605,7 @@ async def _create_custom_chat_session(
             extra_instructions=dependencies.profile_context or None,
             agents_as_tools=sub_agent_refs,
             sub_agent_resources=dependencies.sub_agent_resources,
+            user_id=user.user_id,
         )
     except HTTPException as exc:
         logger.error("Session creation failed for custom agent '%s': %s", custom_name, exc.detail)
@@ -632,7 +670,9 @@ async def _create_profile_chat_session(
         if profile_override is not None:
             validate_tool_names(profile_override.custom_tools, known_tool_names_from_profiles(profiles_data))
             if profile_override.custom_skills:
-                kept, dropped = filter_known_skill_names(profile_override.custom_skills, await available_skill_names())
+                kept, dropped = filter_known_skill_names(
+                    profile_override.custom_skills, await available_skill_names(user.user_id)
+                )
                 if dropped:
                     logger.warning("Profile override for '%s' references unknown skills, dropping: %s", logical_profile, dropped)
                 profile_override.custom_skills = kept
@@ -640,7 +680,9 @@ async def _create_profile_chat_session(
             validate_http_mcp_servers(raw_mcp_servers, override=True)
             profile_sub_agent_refs = _build_validated_sub_agent_refs(
                 parent_id=logical_profile,
-                raw_payload=profile_override.agentsAsTools,
+                raw_payload=await _owner_scoped_sub_agent_payload(
+                    profile_override.agentsAsTools, user.user_id
+                ),
                 logger=logger,
             )
             dependencies = await _resolve_runtime_dependencies(
@@ -664,6 +706,7 @@ async def _create_profile_chat_session(
                 extra_instructions=dependencies.profile_context or None,
                 agents_as_tools=profile_sub_agent_refs,
                 sub_agent_resources=dependencies.sub_agent_resources,
+                user_id=user.user_id,
             )
         else:
             profile_sub_agent_refs = list(getattr(load_agent_profile(logical_profile), "agents_as_tools", []) or [])
@@ -684,6 +727,7 @@ async def _create_profile_chat_session(
                 extra_instructions=dependencies.profile_context or None,
                 agents_as_tools=profile_sub_agent_refs,
                 sub_agent_resources=dependencies.sub_agent_resources,
+                user_id=user.user_id,
             )
     except HTTPException as exc:
         logger.error("Session creation failed for profile '%s': %s", logical_profile, exc.detail)

@@ -113,15 +113,13 @@ export function AgentBuilder({
     setEditingId(agent.id);
     setEditingBuiltInDefinition(null);
     setTouched({});
-    const availableToolNames = new Set(availableTools.map((tool) => tool.name));
-    const availableSkillNames = new Set(availableSkills.map((skill) => skill.name));
     setForm({
       name: agent.name,
       description: agent.description,
       group: agent.group ?? '',
       systemPrompt: agent.systemPrompt,
-      tools: agent.tools.filter((tool) => availableToolNames.has(tool)),
-      skills: (agent.skills || []).filter((skill) => availableSkillNames.has(skill)),
+      tools: [...agent.tools],
+      skills: [...(agent.skills || [])],
       mcpServers: [...(agent.mcpServers || [])],
       useSearchContext: searchContextAvailable ? agent.useSearchContext : false,
       icon: agent.icon,
@@ -137,8 +135,6 @@ export function AgentBuilder({
       setBuiltInDefinitionsById((prev) => ({ ...prev, [definition.id]: definition }));
       const override = builtInOverrides.find((item) => item.baseProfileId === definition.id);
       const source = override ?? definition;
-      const availableToolNames = new Set(availableTools.map((tool) => tool.name));
-      const availableSkillNames = new Set(availableSkills.map((skill) => skill.name));
       setEditingId(null);
       setEditingBuiltInDefinition(definition);
       setTouched({});
@@ -147,8 +143,8 @@ export function AgentBuilder({
         description: source.description,
         group: (override?.group ?? profile.group) ?? '',
         systemPrompt: source.systemPrompt,
-        tools: source.tools.filter((tool) => availableToolNames.has(tool)),
-        skills: source.skills.filter((skill) => availableSkillNames.has(skill)),
+        tools: [...source.tools],
+        skills: [...source.skills],
         mcpServers: [...source.mcpServers],
         useSearchContext: searchContextAvailable ? source.useSearchContext : false,
         icon: source.icon,
@@ -193,6 +189,15 @@ export function AgentBuilder({
     setForm((prev) => ({
       ...prev,
       starters: prev.starters.filter((_, i) => i !== index),
+    }));
+  };
+
+  const handleUpdateStarter = (index: number, field: 'label' | 'message', value: string) => {
+    setForm((prev) => ({
+      ...prev,
+      starters: prev.starters.map((starter, i) =>
+        i === index ? { ...starter, [field]: value } : starter
+      ),
     }));
   };
 
@@ -612,6 +617,7 @@ export function AgentBuilder({
             newStarterMessage={newStarterMessage}
             onAdd={handleAddStarter}
             onRemove={handleRemoveStarter}
+            onUpdate={handleUpdateStarter}
             onLabelChange={setNewStarterLabel}
             onMessageChange={setNewStarterMessage}
           />
