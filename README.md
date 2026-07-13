@@ -12,6 +12,7 @@ AI agent framework using [agent-framework](https://pypi.org/project/agent-framew
 - Azure AD authentication with local dev bypass
 - Token usage tracking per turn and per session
 - User profile persistence across sessions
+- Optional create/edit tools for durable, user-owned skills and agents
 - Profile-specific starter questions
 
 ## Architecture
@@ -79,6 +80,9 @@ AUTH_DISABLED=true
 # App branding (runtime config served by the backend)
 APP_NAME=Web-Agents
 APP_TAGLINE=AI Agent Framework
+
+# Cosmos user-owned skills container (partition key /user_id)
+AZURE_COSMOS_USER_SKILLS_CONTAINER=user-skills
 ```
 
 Frontend environment variables (for Azure AD auth in the browser) go in `frontend/.env`:
@@ -102,6 +106,27 @@ Open `http://localhost:8000` in your browser.
 
 ```bash
 uv run pytest
+```
+
+## Agent Definition Tools
+
+`create_skill`, `edit_skill`, `create_agent`, and `edit_agent` are independent
+optional capabilities in the Admin Agent Builder. None is granted to existing or
+new agents by default. Each runtime function is bound to the authenticated user
+and validates the complete definition before writing. Creation uses atomic Cosmos
+semantics so retries or concurrent calls never overwrite existing work; editing
+requires an existing definition owned by the same user.
+
+User-created skills appear alongside global skills only for their owner. Global
+skill names remain reserved, and another user's skills or custom agents resolve
+as nonexistent. The user skill store is configured with
+`AZURE_COSMOS_USER_SKILLS_CONTAINER` (default `user-skills`) and is partitioned by
+`/user_id`.
+
+After building the frontend, run the focused Agent Builder browser contract with:
+
+```bash
+uv run pytest -q tests/test_agent_builder_ui.py
 ```
 
 ## Autonomous Mode (Duty Officer)

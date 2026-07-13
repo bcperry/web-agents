@@ -14,6 +14,10 @@ import {
 export function useCustomAgents() {
   const [agents, setAgents] = useState<CustomAgentDefinition[]>([]);
 
+  const reload = useCallback(async () => {
+    setAgents(await listCustomAgents());
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     void listCustomAgents()
@@ -35,5 +39,5 @@ export function useCustomAgents() {
     void deleteCustomAgentApi(id).catch(() => { /* surfaced by the API layer */ });
   }, []);
 
-  return { agents, save, remove } as const;
+  return { agents, save, remove, reload } as const;
 }

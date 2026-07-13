@@ -33,6 +33,8 @@ from validators import ALLOWED_IMAGE_MIMES, MAX_IMAGE_SIZE_BYTES, MAX_IMAGES_PER
 load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
+logging.getLogger("azure.cosmos").setLevel(logging.WARNING)
+logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 

@@ -64,6 +64,7 @@ resource "azurerm_linux_web_app" "app_service" {
     AZURE_COSMOS_CONTAINER_NAME          = var.azure_cosmos_container_name
     AZURE_COSMOS_CONVERSATIONS_CONTAINER = var.azure_cosmos_conversations_container
     AZURE_COSMOS_SKILLS_CONTAINER        = var.azure_cosmos_skills_container
+    AZURE_COSMOS_USER_SKILLS_CONTAINER   = var.azure_cosmos_user_skills_container
 
     # Autonomous Mode (in-process scheduler + Duty Officer). An empty
     # AUTONOMOUS_SCHEDULER_ENABLED means "enabled" in the deployed App Service.

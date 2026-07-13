@@ -6,13 +6,17 @@ interface Props {
 }
 
 export function StarterQuestions({ starters, onSelect }: Props) {
-  if (starters.length === 0) return null;
+  const validStarters = starters.filter((starter) =>
+    typeof starter.label === 'string' && starter.label.trim()
+    && typeof starter.message === 'string' && starter.message.trim()
+  );
+  if (validStarters.length === 0) return null;
 
   return (
     <div className="starter-questions">
       <div className="starter-questions-label">SUGGESTED QUERIES</div>
       <div className="starter-questions-list">
-        {starters.map((starter, i) => (
+        {validStarters.map((starter, i) => (
           <button
             key={i}
             className="starter-question-btn"

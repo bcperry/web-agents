@@ -127,3 +127,123 @@ def build_user_profile_tools(user_id: str) -> dict[str, Any]:
         return f"User profile saved successfully: {json.dumps(profile)}"
 
     return {"get_user_profile": get_user_profile, "save_user_profile": save_user_profile}
+
+
+def build_create_skill_tool(user_id: str) -> Any:
+    """Build the skill-creation tool bound to an authenticated owner."""
+    from definition_creation import SkillCreationRequest, SkillCreationService
+
+    async def create_skill(name: str, description: str, content: str) -> dict[str, Any]:
+        """Create a durable user-owned skill without overwriting an existing definition."""
+        result = await SkillCreationService(user_id).create(SkillCreationRequest(
+            name=name, description=description, content=content
+        ))
+        return result.model_dump(exclude_none=True)
+
+    return create_skill
+
+
+def build_edit_skill_tool(user_id: str) -> Any:
+    """Build the skill-editing tool bound to an authenticated owner."""
+    from definition_creation import SkillCreationRequest, SkillCreationService
+
+    async def edit_skill(name: str, description: str, content: str) -> dict[str, Any]:
+        """Replace an existing user-owned skill's description and instructions."""
+        result = await SkillCreationService(user_id).update(SkillCreationRequest(
+            name=name, description=description, content=content
+        ))
+        return result.model_dump(exclude_none=True)
+
+    return edit_skill
+
+
+def build_create_agent_tool(user_id: str) -> Any:
+    """Build the custom-agent creation tool bound to an authenticated owner."""
+    from definition_creation import (
+        AgentCreationRequest,
+        AgentCreationService,
+        AgentToolRefRequest,
+        HttpMcpServerRequest,
+        StarterQuestionRequest,
+    )
+
+    async def create_agent(
+        id: str,
+        name: str,
+        systemPrompt: str,
+        description: str = "",
+        group: str = "",
+        tools: list[str] | None = None,
+        skills: list[str] | None = None,
+        mcpServers: list[HttpMcpServerRequest] | None = None,
+        useSearchContext: bool = False,
+        icon: str = "/favicon.png",
+        starters: list[StarterQuestionRequest] | None = None,
+        temperature: float = 0.2,
+        agentsAsTools: list[AgentToolRefRequest] | None = None,
+    ) -> dict[str, Any]:
+        """Create a durable user-owned custom agent without overwriting an existing definition."""
+        result = await AgentCreationService(user_id).create(AgentCreationRequest(
+            id=id,
+            name=name,
+            description=description,
+            group=group,
+            systemPrompt=systemPrompt,
+            tools=tools or [],
+            skills=skills or [],
+            mcpServers=mcpServers or [],
+            useSearchContext=useSearchContext,
+            icon=icon,
+            starters=starters or [],
+            temperature=temperature,
+            agentsAsTools=agentsAsTools or [],
+        ))
+        return result.model_dump(exclude_none=True)
+
+    return create_agent
+
+
+def build_edit_agent_tool(user_id: str) -> Any:
+    """Build the custom-agent editing tool bound to an authenticated owner."""
+    from definition_creation import (
+        AgentCreationRequest,
+        AgentCreationService,
+        AgentToolRefRequest,
+        HttpMcpServerRequest,
+        StarterQuestionRequest,
+    )
+
+    async def edit_agent(
+        id: str,
+        name: str,
+        systemPrompt: str,
+        description: str = "",
+        group: str = "",
+        tools: list[str] | None = None,
+        skills: list[str] | None = None,
+        mcpServers: list[HttpMcpServerRequest] | None = None,
+        useSearchContext: bool = False,
+        icon: str = "/favicon.png",
+        starters: list[StarterQuestionRequest] | None = None,
+        temperature: float = 0.2,
+        agentsAsTools: list[AgentToolRefRequest] | None = None,
+    ) -> dict[str, Any]:
+        """Replace an existing user-owned custom agent using its complete definition."""
+        result = await AgentCreationService(user_id).update(AgentCreationRequest(
+            id=id,
+            name=name,
+            description=description,
+            group=group,
+            systemPrompt=systemPrompt,
+            tools=tools or [],
+            skills=skills or [],
+            mcpServers=mcpServers or [],
+            useSearchContext=useSearchContext,
+            icon=icon,
+            starters=starters or [],
+            temperature=temperature,
+            agentsAsTools=agentsAsTools or [],
+        ))
+        return result.model_dump(exclude_none=True)
+
+    return edit_agent

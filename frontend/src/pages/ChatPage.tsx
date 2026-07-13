@@ -20,6 +20,7 @@ import type { CustomAgentDefinition } from '../types/api';
 interface ChatPageProps {
   onOpenAdmin: () => void;
   onOpenAutonomous: () => void;
+  onCustomAgentsChanged: () => void;
   customAgents: CustomAgentDefinition[];
   builtInOverrides: AgentCustomizationOverride[];
 }
@@ -45,7 +46,7 @@ const DUTY_OFFICER_PROFILE: AgentProfile = {
   starters: [],
 };
 
-export function ChatPage({ onOpenAdmin, onOpenAutonomous, customAgents, builtInOverrides }: ChatPageProps) {
+export function ChatPage({ onOpenAdmin, onOpenAutonomous, onCustomAgentsChanged, customAgents, builtInOverrides }: ChatPageProps) {
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
   const [selectedProfile, setSelectedProfile] = useState<AgentProfile | null>(null);
   const [loadingProfiles, setLoadingProfiles] = useState(true);
@@ -72,7 +73,7 @@ export function ChatPage({ onOpenAdmin, onOpenAutonomous, customAgents, builtInO
     startSession,
     endSession,
     send,
-  } = useChat();
+  } = useChat(onCustomAgentsChanged);
 
   const { loadIndex, deleteConversation } = useConversationStore();
   const { user, logout, classificationBanner } = useAuth();

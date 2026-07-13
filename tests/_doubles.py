@@ -186,6 +186,15 @@ class InMemoryUserScopedRepository:
     async def get(self, user_id: str, item_id: str) -> dict | None:
         return self._by_user.get(user_id, {}).get(item_id)
 
+    async def create(self, user_id: str, item_id: str, data: dict) -> dict:
+        from azure.cosmos.exceptions import CosmosResourceExistsError
+
+        items = self._by_user.setdefault(user_id, {})
+        if item_id in items:
+            raise CosmosResourceExistsError(message=f"Item already exists: {item_id}")
+        items[item_id] = data
+        return data
+
     async def upsert(self, user_id: str, item_id: str, data: dict) -> dict:
         self._by_user.setdefault(user_id, {})[item_id] = data
         return data
@@ -211,5 +220,6 @@ def clear_cosmos_singletons(monkeypatch) -> None:
                  "_autonomous_run_repo", "_autonomous_lease_repo", "_autonomous_directive_repo",
                  "_skill_repo"):
         monkeypatch.setattr(cosmos_memory, name, None)
-    for name in ("_custom_agents_repo", "_agent_customizations_repo", "_user_profile_repo"):
+    for name in ("_custom_agents_repo", "_agent_customizations_repo", "_user_profile_repo",
+                 "_user_skills_repo"):
         monkeypatch.setattr(user_data, name, None)

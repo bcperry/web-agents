@@ -1,5 +1,5 @@
-"""Per-user Cosmos repositories for custom agents, agent customizations, and the
-user memory profile.
+"""Per-user Cosmos repositories for custom agents, agent customizations, skills,
+and the user memory profile.
 
 Each datum is a small per-user collection partitioned by ``/user_id`` and stored
 in its own container. The shared async ``CosmosClient`` is reused from
@@ -79,6 +79,18 @@ class CosmosUserScopedRepository:
         data = doc.get("data")
         return data if isinstance(data, dict) else None
 
+    async def create(self, user_id: str, item_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        container = await self._get_container()
+        now = _utcnow_iso()
+        await container.create_item({
+            "id": item_id,
+            "user_id": user_id,
+            "data": data,
+            "created_at": now,
+            "updated_at": now,
+        })
+        return data
+
     async def upsert(self, user_id: str, item_id: str, data: dict[str, Any]) -> dict[str, Any]:
         from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
@@ -117,6 +129,7 @@ class CosmosUserScopedRepository:
 _custom_agents_repo: Any = None
 _agent_customizations_repo: Any = None
 _user_profile_repo: Any = None
+_user_skills_repo: Any = None
 
 
 def get_custom_agents_repository() -> Any:
@@ -144,3 +157,12 @@ def get_user_profile_repository() -> Any:
             _container_name("AZURE_COSMOS_USER_PROFILES_CONTAINER", "user-profiles")
         )
     return _user_profile_repo
+
+
+def get_user_skills_repository() -> Any:
+    global _user_skills_repo
+    if _user_skills_repo is None:
+        _user_skills_repo = CosmosUserScopedRepository(
+            _container_name("AZURE_COSMOS_USER_SKILLS_CONTAINER", "user-skills")
+        )
+    return _user_skills_repo

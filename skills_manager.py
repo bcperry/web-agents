@@ -18,8 +18,20 @@ from typing import Any
 from fastapi import HTTPException
 
 import cosmos_memory
+import user_data
 
 _SKILL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+
+def skill_validation_issues(name: str, description: str, content: str) -> list[dict[str, str]]:
+	issues: list[dict[str, str]] = []
+	if not name or not _SKILL_NAME_RE.fullmatch(name) or len(name) > 64:
+		issues.append({"field": "name", "reason": "Use a lowercase slug of at most 64 characters."})
+	if not description or len(description) > 256:
+		issues.append({"field": "description", "reason": "Description must be non-empty and at most 256 characters."})
+	if not content or len(content) > 65536:
+		issues.append({"field": "content", "reason": "Content must be non-empty and at most 65,536 characters."})
+	return issues
 
 
 def _utcnow_iso() -> str:
@@ -72,11 +84,18 @@ class SkillManager:
 	skill repository); pass an explicit ``repo`` in tests to inject a double.
 	"""
 
-	def __init__(self, repo: Any = None) -> None:
+	def __init__(
+		self, repo: Any = None, *, user_id: str | None = None, user_repo: Any = None
+	) -> None:
 		self._repo = repo
+		self._user_id = user_id
+		self._user_repo = user_repo
 
 	def _repository(self) -> Any:
 		return self._repo if self._repo is not None else cosmos_memory.get_skill_repository()
+
+	def _user_repository(self) -> Any:
+		return self._user_repo if self._user_repo is not None else user_data.get_user_skills_repository()
 
 	def validate_name(self, name: str, status_on_error: int = 400) -> str:
 		if not name or not _SKILL_NAME_RE.match(name) or len(name) > 64:
@@ -84,19 +103,28 @@ class SkillManager:
 		return name
 
 	async def list_summaries(self) -> list[dict[str, str]]:
-		docs = await self._repository().list_all()
+		docs = await self.list_documents()
 		return [
-			{"name": d["id"], "description": str(d.get("description") or "")}
+			{"name": str(d.get("name") or d["id"]), "description": str(d.get("description") or "")}
 			for d in docs
 		]
+
+	async def list_documents(self) -> list[dict[str, Any]]:
+		global_docs = [dict(doc) for doc in await self._repository().list_all()]
+		if not self._user_id:
+			return global_docs
+		user_docs = [dict(doc) for doc in await self._user_repository().list_for_user(self._user_id)]
+		return [*global_docs, *user_docs]
 
 	async def get(self, name: str) -> dict[str, str]:
 		safe_name = self.validate_name(name)
 		doc = await self._repository().get(safe_name)
+		if not doc and self._user_id:
+			doc = await self._user_repository().get(self._user_id, safe_name)
 		if not doc:
 			raise HTTPException(status_code=404, detail=f"Skill not found: {safe_name}")
 		return {
-			"name": doc["id"],
+			"name": str(doc.get("name") or doc["id"]),
 			"description": str(doc.get("description") or ""),
 			"content": str(doc.get("content") or ""),
 		}
@@ -104,30 +132,44 @@ class SkillManager:
 	async def create(self, name: str, description: str, content: str) -> dict[str, str]:
 		from azure.cosmos.exceptions import CosmosResourceExistsError
 
-		safe_name = self.validate_name(name, status_on_error=422)
-		self._validate_description(description)
-		self._validate_content(content)
+		issues = skill_validation_issues(name, description, content)
+		if issues:
+			raise HTTPException(status_code=422, detail=issues)
+		safe_name = name
 		now = _utcnow_iso()
 		doc = _skill_doc(safe_name, description, content, created_at=now, updated_at=now)
 		try:
-			await self._repository().create(doc)
+			if self._user_id:
+				if await self._repository().get(safe_name):
+					raise HTTPException(status_code=409, detail=f"Skill already exists: {safe_name}")
+				await self._user_repository().create(self._user_id, safe_name, doc)
+			else:
+				await self._repository().create(doc)
 		except CosmosResourceExistsError:
 			raise HTTPException(status_code=409, detail=f"Skill already exists: {safe_name}")
 		return {"name": safe_name, "description": description, "content": content}
 
 	async def update(self, name: str, description: str, content: str) -> dict[str, str]:
-		safe_name = self.validate_name(name)
-		self._validate_description(description)
-		self._validate_content(content)
-		repo = self._repository()
-		existing = await repo.get(safe_name)
+		issues = skill_validation_issues(name, description, content)
+		if issues:
+			raise HTTPException(status_code=422, detail=issues)
+		safe_name = name
+		repo = self._user_repository() if self._user_id else self._repository()
+		existing = (
+			await repo.get(self._user_id, safe_name)
+			if self._user_id
+			else await repo.get(safe_name)
+		)
 		if not existing:
 			raise HTTPException(status_code=404, detail=f"Skill not found: {safe_name}")
 		created_at = str(existing.get("created_at") or _utcnow_iso())
 		doc = _skill_doc(
 			safe_name, description, content, created_at=created_at, updated_at=_utcnow_iso()
 		)
-		await repo.upsert(doc)
+		if self._user_id:
+			await repo.upsert(self._user_id, safe_name, doc)
+		else:
+			await repo.upsert(doc)
 		return {"name": safe_name, "description": description, "content": content}
 
 	async def delete(self, name: str) -> None:
@@ -135,21 +177,6 @@ class SkillManager:
 		deleted = await self._repository().delete(safe_name)
 		if not deleted:
 			raise HTTPException(status_code=404, detail=f"Skill not found: {safe_name}")
-
-	@staticmethod
-	def _validate_description(description: str) -> None:
-		if not description or len(description) > 256:
-			raise HTTPException(
-				status_code=422, detail="Description must be non-empty (max 256 chars)"
-			)
-
-	@staticmethod
-	def _validate_content(content: str) -> None:
-		if not content or len(content) > 65536:
-			raise HTTPException(
-				status_code=422, detail="Content must be non-empty (max 65536 chars)"
-			)
-
 
 async def seed_skills(skills_dir: Path) -> int:
 	"""Seed filesystem default skills into Cosmos for any id not already present.
@@ -206,4 +233,4 @@ def filesystem_skill_docs(skills_dir: Path) -> list[dict[str, Any]]:
 	return docs
 
 
-__all__ = ["SkillManager", "seed_skills", "filesystem_skill_docs"]
+__all__ = ["SkillManager", "filesystem_skill_docs", "seed_skills", "skill_validation_issues"]

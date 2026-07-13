@@ -150,6 +150,12 @@ variable "azure_cosmos_skills_container" {
   default     = "skills"
 }
 
+variable "azure_cosmos_user_skills_container" {
+  description = "Cosmos DB user-owned agent skills container name"
+  type        = string
+  default     = "user-skills"
+}
+
 variable "autonomous_scheduler_enabled" {
   description = "Gate for the in-process autonomous scheduler. Empty string = enabled in Azure (the deployed default); 'false' disables it."
   type        = string

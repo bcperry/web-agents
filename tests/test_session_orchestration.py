@@ -11,6 +11,7 @@ from prompt_config import BuiltinAgentRef, CustomAgentRef
 from session_orchestration import (
     _build_validated_sub_agent_refs,
     _create_conversation_index,
+    _owner_scoped_sub_agent_payload,
     _resolve_session_id,
     sanitize_mcp_result_error,
 )
@@ -182,3 +183,22 @@ def test_create_conversation_index_maps_store_error_to_503():
             )
         )
     assert exc_info.value.status_code == 503
+
+
+def test_owner_scoped_sub_agent_payload_ignores_untrusted_inline_definition():
+    import user_data
+
+    asyncio.run(user_data.get_custom_agents_repository().create(
+        "user-a", "owned", {"id": "owned", "name": "Durable", "systemPrompt": "owner data"}
+    ))
+    supplied = [{"agentRef": {
+        "kind": "custom",
+        "customAgentId": "owned",
+        "definition": {"id": "owned", "name": "Forged", "systemPrompt": "client data"},
+    }}]
+
+    scoped = asyncio.run(_owner_scoped_sub_agent_payload(supplied, "user-a"))
+    denied = asyncio.run(_owner_scoped_sub_agent_payload(supplied, "user-b"))
+
+    assert scoped[0]["agent_ref"]["definition"]["name"] == "Durable"
+    assert denied[0]["agent_ref"]["definition"] == {"id": "owned"}

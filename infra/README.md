@@ -28,6 +28,13 @@ infra/
 - **Managed Identity**: User-assigned identity for the app
 - **App Service Plan**: Linux-based hosting plan
 - **App Service**: Web app for running the Chainlit application
+- **Cosmos DB**: Durable chat/configuration database, including global `skills`
+  and owner-isolated `user-skills` containers
+
+The `user-skills` container uses partition key `/user_id`. Its Terraform output
+is wired to App Service as `AZURE_COSMOS_USER_SKILLS_CONTAINER`; runtime-created
+skills use atomic create operations and never overwrite an existing owner/name
+pair.
 
 ## Deployment with Azure Developer CLI
 

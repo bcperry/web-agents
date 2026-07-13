@@ -12,10 +12,39 @@ import pytest
 import cosmos_memory
 import user_data
 from auth import AuthenticatedUser, get_current_user
+from tests._doubles import InMemoryUserScopedRepository
 
 
 def _as_user(uid: str):
     return lambda: AuthenticatedUser(user_id=uid, username=uid)
+
+
+def test_user_scoped_create_preserves_same_owner_duplicate():
+    async def scenario():
+        repo = InMemoryUserScopedRepository()
+        original = {"id": "shared-id", "name": "Original"}
+
+        await repo.create("userA", "shared-id", original)
+        with pytest.raises(Exception) as exc_info:
+            await repo.create("userA", "shared-id", {"id": "shared-id", "name": "Replacement"})
+
+        assert exc_info.type.__name__ == "CosmosResourceExistsError"
+        assert await repo.get("userA", "shared-id") == original
+
+    asyncio.run(scenario())
+
+
+def test_user_scoped_create_allows_same_id_for_different_owners():
+    async def scenario():
+        repo = InMemoryUserScopedRepository()
+
+        await repo.create("userA", "shared-id", {"id": "shared-id", "name": "Alpha"})
+        await repo.create("userB", "shared-id", {"id": "shared-id", "name": "Beta"})
+
+        assert (await repo.get("userA", "shared-id"))["name"] == "Alpha"
+        assert (await repo.get("userB", "shared-id"))["name"] == "Beta"
+
+    asyncio.run(scenario())
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +104,61 @@ def test_save_rejects_non_object_body(client):
         assert client.put("/api/custom-agents/a1", json=["not", "an", "object"]).status_code == 400
     finally:
         app.dependency_overrides.pop(get_current_user, None)
+
+
+def test_custom_agent_save_is_strict_matches_id_and_preserves_created_at(client):
+    body = {
+        "id": "planner",
+        "name": "Planner",
+        "description": "Plans work",
+        "systemPrompt": "Plan carefully.",
+        "tools": [],
+        "skills": [],
+        "mcpServers": [],
+        "useSearchContext": False,
+        "icon": "/favicon.png",
+        "starters": [],
+        "agentsAsTools": [],
+        "temperature": 0.2,
+        "createdAt": "2000-01-01T00:00:00Z",
+        "updatedAt": "2000-01-01T00:00:00Z",
+    }
+    created = client.put("/api/custom-agents/planner", json=body)
+    assert created.status_code == 200
+    server_created_at = created.json()["createdAt"]
+    assert server_created_at != body["createdAt"]
+
+    body["name"] = "Updated Planner"
+    body["createdAt"] = "forged"
+    updated = client.put("/api/custom-agents/planner", json=body)
+    assert updated.status_code == 200
+    assert updated.json()["createdAt"] == server_created_at
+    assert updated.json()["name"] == "Updated Planner"
+
+    mismatch = client.put("/api/custom-agents/other", json=body)
+    assert mismatch.status_code == 400
+
+    body["tools"] = ["unknown-tool"]
+    invalid = client.put("/api/custom-agents/planner", json=body)
+    assert invalid.status_code == 422
+    assert invalid.json()["detail"][0]["field"] == "tools[0]"
+
+
+def test_custom_agent_save_sanitizes_store_failures(client, monkeypatch):
+    class FailingRepository:
+        async def get(self, *_args, **_kwargs):
+            raise RuntimeError("credential=SECRET provider diagnostics")
+
+    monkeypatch.setattr(user_data, "_custom_agents_repo", FailingRepository())
+    response = client.put("/api/custom-agents/planner", json={
+        "id": "planner", "name": "Planner", "systemPrompt": "Plan.",
+    })
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "User data store is temporarily unavailable. Please try again."
+    }
+    assert "SECRET" not in response.text
 
 
 # ---------------------------------------------------------------------------

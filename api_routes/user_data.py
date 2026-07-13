@@ -3,8 +3,10 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import ValidationError
 
 from auth import AuthenticatedUser, get_current_user
+from definition_creation import AgentCreationRequest, AgentCreationService
 from user_data import get_agent_customizations_repository, get_custom_agents_repository
 
 logger = logging.getLogger(__name__)
@@ -28,11 +30,26 @@ async def save_custom_agent(agent_id: str, request: Request, user: Authenticated
     body = await request.json()
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="Body must be a JSON object")
+    if str(body.get("id") or "") != agent_id:
+        raise HTTPException(status_code=400, detail="Path agent_id must match body id")
     try:
-        saved = await get_custom_agents_repository().upsert(user.user_id, agent_id, body)
+        definition = AgentCreationRequest.model_validate(body)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=[{
+            "field": ".".join(str(part) for part in error["loc"]),
+            "reason": error["msg"],
+        } for error in exc.errors()]) from exc
+    try:
+        saved, issues = await AgentCreationService(user.user_id).upsert(definition)
     except Exception as exc:  # noqa: BLE001 - route maps store errors to HTTP
-        logger.error("Failed to save custom agent %s: %s", agent_id, exc)
+        logger.error("Failed to save custom agent %s exception=%s", agent_id, exc.__class__.__name__)
         raise HTTPException(status_code=503, detail=_USER_DATA_UNAVAILABLE) from exc
+    if issues:
+        raise HTTPException(
+            status_code=422,
+            detail=[issue.model_dump() for issue in issues],
+        )
+    assert saved is not None
     return saved
 
 

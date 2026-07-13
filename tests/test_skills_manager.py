@@ -6,7 +6,7 @@ import pytest
 from fastapi import HTTPException
 
 from skills_manager import SkillManager
-from tests._doubles import InMemoryByIdRepository
+from tests._doubles import InMemoryByIdRepository, InMemoryUserScopedRepository
 
 
 def test_list_and_get_skills(make_skill):
@@ -90,3 +90,46 @@ def test_validation_rejects_empty_and_oversized_fields():
     with pytest.raises(HTTPException) as empty_content:
         asyncio.run(manager.create("ok-name", "desc", ""))
     assert empty_content.value.status_code == 422
+
+
+def test_owner_catalog_combines_globals_and_only_current_users_skills():
+    global_repo = InMemoryByIdRepository([{
+        "id": "global-skill", "description": "Global", "content": "global body"
+    }])
+    user_repo = InMemoryUserScopedRepository()
+    asyncio.run(user_repo.create("user-a", "owned-skill", {
+        "id": "owned-skill", "name": "owned-skill", "description": "Owned", "content": "private"
+    }))
+
+    owner = SkillManager(global_repo, user_id="user-a", user_repo=user_repo)
+    other = SkillManager(global_repo, user_id="user-b", user_repo=user_repo)
+
+    assert {item["name"] for item in asyncio.run(owner.list_summaries())} == {
+        "global-skill", "owned-skill"
+    }
+    assert {item["name"] for item in asyncio.run(other.list_summaries())} == {"global-skill"}
+    assert asyncio.run(owner.get("owned-skill"))["content"] == "private"
+    with pytest.raises(HTTPException) as missing:
+        asyncio.run(other.get("owned-skill"))
+    assert missing.value.status_code == 404
+
+
+def test_global_and_owner_creation_share_validation_and_document_shape():
+    global_repo = InMemoryByIdRepository()
+    user_repo = InMemoryUserScopedRepository()
+
+    asyncio.run(SkillManager(global_repo).create("global-skill", "Global", "global body"))
+    asyncio.run(SkillManager(
+        global_repo, user_id="user-a", user_repo=user_repo
+    ).create("owner-skill", "Owner", "owner body"))
+
+    global_doc = asyncio.run(global_repo.get("global-skill"))
+    owner_doc = asyncio.run(user_repo.get("user-a", "owner-skill"))
+    assert set(owner_doc) == set(global_doc)
+    assert owner_doc["doc_type"] == global_doc["doc_type"] == "skill"
+
+    with pytest.raises(HTTPException) as reserved:
+        asyncio.run(SkillManager(
+            global_repo, user_id="user-a", user_repo=user_repo
+        ).create("global-skill", "Duplicate", "body"))
+    assert reserved.value.status_code == 409

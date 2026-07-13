@@ -6,6 +6,7 @@ interface StarterQuestionEditorProps {
   newStarterMessage: string;
   onAdd: () => void;
   onRemove: (index: number) => void;
+  onUpdate: (index: number, field: keyof StarterQuestion, value: string) => void;
   onLabelChange: (value: string) => void;
   onMessageChange: (value: string) => void;
 }
@@ -16,6 +17,7 @@ export function StarterQuestionEditor({
   newStarterMessage,
   onAdd,
   onRemove,
+  onUpdate,
   onLabelChange,
   onMessageChange,
 }: StarterQuestionEditorProps) {
@@ -26,7 +28,22 @@ export function StarterQuestionEditor({
         <div className="agent-builder-starters-list">
           {starters.map((starter, index) => (
             <div key={index} className="agent-builder-starter-item">
-              <span className="agent-builder-starter-label">{starter.label}</span>
+              <input
+                className="agent-builder-input"
+                type="text"
+                value={starter.label}
+                onChange={(event) => onUpdate(index, 'label', event.target.value)}
+                aria-label={`Starter ${index + 1} button label`}
+                maxLength={80}
+              />
+              <input
+                className="agent-builder-input agent-builder-starter-message"
+                type="text"
+                value={starter.message}
+                onChange={(event) => onUpdate(index, 'message', event.target.value)}
+                aria-label={`Starter ${index + 1} message`}
+                maxLength={500}
+              />
               <button onClick={() => onRemove(index)} type="button" title="Remove">x</button>
             </div>
           ))}
