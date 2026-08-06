@@ -38,10 +38,10 @@ def _auth_disabled() -> bool:
 _DEFAULT_DEV_USER = AuthenticatedUser(user_id="dev-user", username="developer")
 
 
-async def _fetch_jwks(tenant_id: str, authority: str) -> dict:
+async def _fetch_jwks(tenant_id: str, authority: str, *, force_refresh: bool = False) -> dict:
     """Fetch JWKS keys from Azure AD's OpenID configuration."""
     global _jwks_cache
-    if _jwks_cache is not None:
+    if _jwks_cache is not None and not force_refresh:
         return _jwks_cache
 
     openid_url = f"{authority}/{tenant_id}/v2.0/.well-known/openid-configuration"
@@ -104,7 +104,16 @@ async def get_current_user(
         logger.error("Failed to fetch JWKS: %s", exc)
         raise HTTPException(status_code=500, detail="Failed to validate token signing keys")
 
-    signing_key = _get_signing_key(jwks, kid)
+    try:
+        signing_key = _get_signing_key(jwks, kid)
+    except HTTPException:
+        logger.info("Signing key %s not found in cached JWKS; refreshing keys", kid)
+        try:
+            jwks = await _fetch_jwks(tenant_id, authority, force_refresh=True)
+        except httpx.HTTPError as exc:
+            logger.error("Failed to refresh JWKS: %s", exc)
+            raise HTTPException(status_code=500, detail="Failed to validate token signing keys")
+        signing_key = _get_signing_key(jwks, kid)
 
     # Accept both v1 and v2 token issuers
     v2_issuer = f"{authority}/{tenant_id}/v2.0"

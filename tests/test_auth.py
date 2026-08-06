@@ -1,11 +1,16 @@
 """Tests for auth middleware."""
 
+import asyncio
 import os
+from unittest.mock import AsyncMock
+
 import pytest
+from fastapi.security import HTTPAuthorizationCredentials
 
 os.environ.setdefault("AUTH_DISABLED", "true")
 os.environ.setdefault("AZURE_SQL_CONNECTIONSTRING", "")
 
+import auth
 from auth import AuthenticatedUser, get_current_user, clear_jwks_cache, _auth_disabled
 
 
@@ -38,6 +43,33 @@ def test_authenticated_user_dataclass():
 def test_clear_jwks_cache():
     """clear_jwks_cache runs without error."""
     clear_jwks_cache()
+
+
+def test_missing_signing_key_refreshes_jwks(monkeypatch):
+    """A key rotation refreshes stale JWKS before rejecting the token."""
+    monkeypatch.setenv("AUTH_DISABLED", "false")
+    monkeypatch.setenv("AZURE_AD_TENANT_ID", "tenant-id")
+    monkeypatch.setenv("AZURE_AD_CLIENT_ID", "client-id")
+    fetch_jwks = AsyncMock(
+        side_effect=[
+            {"keys": [{"kid": "old-key"}]},
+            {"keys": [{"kid": "new-key"}]},
+        ]
+    )
+    monkeypatch.setattr(auth, "_fetch_jwks", fetch_jwks)
+    monkeypatch.setattr(auth.jwt, "get_unverified_header", lambda token: {"kid": "new-key"})
+    monkeypatch.setattr(
+        auth.jwt,
+        "decode",
+        lambda *args, **kwargs: {"oid": "user-id", "preferred_username": "user@example.com"},
+    )
+
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="token")
+    user = asyncio.run(get_current_user(None, credentials))
+
+    assert user.user_id == "user-id"
+    assert fetch_jwks.await_count == 2
+    assert fetch_jwks.await_args_list[1].kwargs == {"force_refresh": True}
 
 
 def test_auth_disabled_health_no_token():
