@@ -95,6 +95,11 @@ APP_TAGLINE=AI Agent Framework
 AZURE_COSMOS_USER_SKILLS_CONTAINER=user-skills
 ```
 
+The feature 015 SAP force-equipment emulator can provision a real Azure SQL database and load the
+workbook-derived schema with synthetic records. See
+[database_emulator/README.md](database_emulator/README.md) for its data assumptions, opt-in
+Terraform settings, migration commands, and verification query.
+
 Frontend environment variables (for Azure AD auth in the browser) go in `frontend/.env`:
 
 ```env

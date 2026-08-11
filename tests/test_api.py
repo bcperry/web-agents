@@ -166,6 +166,54 @@ def test_standard_profile_session_preserves_runtime_request_and_response(client,
     assert data["session_id"] in _sessions
 
 
+def test_sap_session_reports_authorized_database_tools(client, monkeypatch):
+    import session_orchestration
+
+    class DummySession:
+        def to_dict(self):
+            return {"items": []}
+
+    async def database_schema():
+        return {}
+
+    async def database_query():
+        return {}
+
+    async def fake_authorized_database_tools(ctx, *, user, agent_id, session_id, logger):
+        assert agent_id == "sap_force_equipment"
+        return [database_schema, database_query]
+
+    def fake_create_chat_runtime(**kwargs):
+        return SimpleNamespace(
+            agent=object(),
+            session=DummySession(),
+            tools=kwargs.get("function_tools", []),
+            prompt_manifest={},
+            prompt_logical_profile="sap_force_equipment",
+        )
+
+    async def fake_connect_mcp_servers(configs, *, user_token=None):
+        return [], []
+
+    monkeypatch.setattr(
+        session_orchestration,
+        "_authorized_database_tools",
+        fake_authorized_database_tools,
+    )
+    monkeypatch.setattr(session_orchestration, "create_chat_runtime", fake_create_chat_runtime)
+    monkeypatch.setattr(session_orchestration, "connect_mcp_servers", fake_connect_mcp_servers)
+
+    response = client.post("/api/sessions", json={"profile_id": "sap_force_equipment"})
+
+    assert response.status_code == 201
+    assert response.json()["tools_loaded"] == [
+        "get_user_profile",
+        "save_user_profile",
+        "database_schema",
+        "database_query",
+    ]
+
+
 def test_custom_session_preserves_runtime_request_and_response(client, monkeypatch):
     import session_orchestration
 
@@ -534,22 +582,53 @@ def test_custom_session_creation_tool_grants_are_exact(client, monkeypatch):
         assert loaded == set(selected)
 
 
-def test_custom_session_rejects_sql_when_database_is_unconfigured(client, monkeypatch):
-    monkeypatch.setenv("AZURE_SQL_CONNECTIONSTRING", "")
-
-    resp = client.post(
-        "/api/sessions",
-        json={
-            "profile_id": "custom",
-            "custom_name": "SQL Custom",
-            "custom_prompt": "Use sql_read_query when needed.",
-            "custom_tools": ["sql_read_query"],
-            "custom_search_context": False,
-        },
+def test_database_tools_require_matching_grant_and_registered_provider():
+    from app_context import DatabaseProviderRegistry, build_tool_instances
+    from database import (
+        AgentDatabaseGrant,
+        Capability,
+        Environment,
+        ProviderId,
+        QueryResult,
+        SchemaDiscoveryResult,
+        new_correlation_id,
     )
 
-    assert resp.status_code == 400
-    assert resp.json()["detail"] == "Unknown tools: sql_read_query"
+    class Provider:
+        provider_id = ProviderId.SYNAPSE
+
+        async def connect(self):
+            pass
+
+        async def close(self):
+            pass
+
+        async def discover_schema(self, request):
+            return SchemaDiscoveryResult(
+                provider=self.provider_id, correlation_id=new_correlation_id()
+            )
+
+        async def execute_query(self, request):
+            return QueryResult(
+                provider=self.provider_id, correlation_id=new_correlation_id()
+            )
+
+    registry = DatabaseProviderRegistry([Provider()])
+    assert build_tool_instances(set(), session_id="ordinary", database_registry=registry) == []
+
+    grant = AgentDatabaseGrant(
+        provider_id=ProviderId.SYNAPSE,
+        capabilities={Capability.DATABASE_QUERY},
+        entitled_groups=["test-group"],
+        environment=Environment.LOCAL,
+    )
+    tools = build_tool_instances(
+        set(),
+        session_id="granted",
+        database_grant=grant,
+        database_registry=registry,
+    )
+    assert [tool.__name__ for tool in tools] == ["database_query"]
 
 
 # ---------------------------------------------------------------------------

@@ -74,6 +74,66 @@ variable "azure_sql_connectionstring" {
   sensitive   = true
 }
 
+variable "sap_emulator_enabled" {
+  description = "Set to 'true' to provision the Azure SQL SAP force-equipment emulator"
+  type        = string
+  default     = "false"
+}
+
+variable "sap_emulator_sql_server_name" {
+  description = "Optional globally unique Azure SQL server name; empty derives one from the environment"
+  type        = string
+  default     = ""
+}
+
+variable "sap_emulator_database_sku" {
+  description = "Azure SQL database SKU; empty uses Basic"
+  type        = string
+  default     = ""
+}
+
+variable "sap_emulator_admin_object_id" {
+  description = "Entra object ID for the Azure SQL administrator; empty uses principal_id"
+  type        = string
+  default     = ""
+}
+
+variable "sap_emulator_admin_login" {
+  description = "Display name for the Azure SQL Entra administrator"
+  type        = string
+  default     = ""
+}
+
+variable "sap_emulator_public_network_access_enabled" {
+  description = "Set to 'true' for exact-IP-restricted application or trusted developer access"
+  type        = string
+  default     = "false"
+}
+
+variable "sap_emulator_allowed_ip_start" {
+  description = "First trusted developer IPv4 address allowed when public access is enabled"
+  type        = string
+  default     = ""
+}
+
+variable "sap_emulator_allowed_ip_end" {
+  description = "Last trusted developer IPv4 address; empty reuses sap_emulator_allowed_ip_start"
+  type        = string
+  default     = ""
+}
+
+variable "sap_emulator_app_outbound_ips" {
+  description = "Comma-separated App Service possible outbound IPv4 addresses allowed to reach the emulator"
+  type        = string
+  default     = ""
+}
+
+variable "sap_emulator_entitled_group_ids" {
+  description = "Comma-separated Entra security group object IDs entitled to the SAP emulator agent"
+  type        = string
+  default     = ""
+}
+
 variable "search_service_endpoint" {
   description = "Azure AI Search service endpoint: 'https://{your-custom-endpoint}.search.azure.us'"
   type        = string

@@ -29,6 +29,12 @@ class AuthenticatedUser:
     """Represents a validated user from an Azure AD token."""
     user_id: str
     username: str
+    tenant_id: str | None = None
+    group_ids: tuple[str, ...] = ()
+    groups_overage: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "group_ids", tuple(str(group) for group in self.group_ids))
 
 
 def _auth_disabled() -> bool:
@@ -36,6 +42,26 @@ def _auth_disabled() -> bool:
 
 
 _DEFAULT_DEV_USER = AuthenticatedUser(user_id="dev-user", username="developer")
+
+
+def _authenticated_user_from_payload(payload: dict) -> AuthenticatedUser:
+    user_id = payload.get("oid", payload.get("sub", ""))
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Token missing user identifier")
+
+    raw_groups = payload.get("groups", ())
+    group_ids = tuple(str(group) for group in raw_groups) if isinstance(raw_groups, list) else ()
+    claim_names = payload.get("_claim_names")
+    groups_overage = bool(payload.get("hasgroups")) or (
+        isinstance(claim_names, dict) and "groups" in claim_names
+    )
+    return AuthenticatedUser(
+        user_id=str(user_id),
+        username=str(payload.get("preferred_username", payload.get("name", "unknown"))),
+        tenant_id=str(payload.get("tid") or "") or None,
+        group_ids=group_ids,
+        groups_overage=groups_overage,
+    )
 
 
 async def _fetch_jwks(tenant_id: str, authority: str, *, force_refresh: bool = False) -> dict:
@@ -144,13 +170,7 @@ async def get_current_user(
             logger.warning("Token validation failed: %s", exc)
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
-    user_id = payload.get("oid", payload.get("sub", ""))
-    username = payload.get("preferred_username", payload.get("name", "unknown"))
-
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Token missing user identifier")
-
-    return AuthenticatedUser(user_id=user_id, username=username)
+    return _authenticated_user_from_payload(payload)
 
 
 def clear_jwks_cache() -> None:

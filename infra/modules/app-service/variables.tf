@@ -85,6 +85,30 @@ variable "azure_sql_connectionstring" {
   sensitive   = true
 }
 
+variable "sap_emulator_enabled" {
+  description = "Whether the native SAP emulator database provider is enabled"
+  type        = bool
+  default     = false
+}
+
+variable "sap_emulator_server_fqdn" {
+  description = "Azure SQL server FQDN for the SAP emulator provider"
+  type        = string
+  default     = ""
+}
+
+variable "sap_emulator_database_name" {
+  description = "Azure SQL database name for the SAP emulator provider"
+  type        = string
+  default     = ""
+}
+
+variable "sap_emulator_entitled_group_ids" {
+  description = "Comma-separated Entra group object IDs entitled to the SAP emulator agent"
+  type        = string
+  default     = ""
+}
+
 variable "search_service_endpoint" {
   description = "Azure AI Search service endpoint"
   type        = string

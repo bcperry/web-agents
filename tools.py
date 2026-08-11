@@ -86,6 +86,68 @@ def _sanitize_cell_value(value: Any) -> Any:
         return _truncate_text(value, MAX_SQL_CELL_CHARS, "SQL CELL")
     return value
 
+
+def build_database_tools(provider: Any, grant: Any) -> dict[str, Any]:
+    """Build model-facing database tools bound to one provider grant."""
+    from database import (
+        Capability,
+        DatabaseError,
+        QueryRequest,
+        SchemaDiscoveryResult,
+        SchemaRequest,
+        new_correlation_id,
+    )
+
+    if provider.provider_id is not grant.provider_id:
+        return {}
+
+    tools: dict[str, Any] = {}
+
+    if grant.allows(Capability.DATABASE_SCHEMA):
+        async def database_schema(
+            schema: str | None = None,
+            object_name: str | None = None,
+            continuation: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            """Return bounded metadata from the database provider configured for this agent."""
+            try:
+                request = SchemaRequest(
+                    schema=schema,
+                    object_name=object_name,
+                    continuation=continuation,
+                )
+                return (await provider.discover_schema(request)).to_dict()
+            except DatabaseError as error:
+                return SchemaDiscoveryResult(
+                    provider=provider.provider_id,
+                    correlation_id=new_correlation_id(),
+                    status=error.status,
+                    message=error.message,
+                ).to_dict()
+
+        tools["database_schema"] = database_schema
+
+    if grant.allows(Capability.DATABASE_QUERY):
+        async def database_query(
+            sql: str,
+            parameters: list[Any] | None = None,
+            continuation: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            """Execute one bounded read query using the database provider configured for this agent."""
+            try:
+                request = QueryRequest(
+                    sql=sql,
+                    parameters=parameters,
+                    continuation=continuation,
+                )
+                return (await provider.execute_query(request)).to_dict()
+            except DatabaseError as error:
+                return error.to_result(provider=provider.provider_id).to_dict()
+
+        tools["database_query"] = database_query
+
+    return tools
+
 def build_user_profile_tools(user_id: str) -> dict[str, Any]:
     """Build the user-profile memory tools bound to a specific user.
 

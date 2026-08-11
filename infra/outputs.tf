@@ -77,9 +77,19 @@ output "AZURE_OPENAI_API_VERSION" {
 }
 
 output "AZURE_SQL_CONNECTIONSTRING" {
-  description = "Azure SQL connection string (empty indicates managed identity)"
-  value       = var.azure_sql_connectionstring
+  description = "Azure SQL connection string"
+  value       = local.azure_sql_connectionstring
   sensitive   = true
+}
+
+output "SAP_EMULATOR_SERVER_FQDN" {
+  description = "Azure SQL SAP emulator server FQDN; null when disabled"
+  value       = local.sap_emulator_enabled ? module.sap_emulator[0].server_fqdn : null
+}
+
+output "SAP_EMULATOR_DATABASE_NAME" {
+  description = "Azure SQL SAP emulator database name; null when disabled"
+  value       = local.sap_emulator_enabled ? module.sap_emulator[0].database_name : null
 }
 
 output "SEARCH_SERVICE_ENDPOINT" {

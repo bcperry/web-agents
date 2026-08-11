@@ -77,3 +77,4 @@ test-results/
 eval_traces/
 *.png
 .envazd
+ovpn/*.ovpn
