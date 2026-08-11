@@ -1,5 +1,6 @@
 """Session creation helpers for FastAPI routes."""
 
+import inspect
 import logging
 import os
 import re
@@ -83,6 +84,8 @@ class SessionContext:
     session_data_cls: type
     build_tool_instances: Callable[..., list[Any]]
     build_user_profile_context: Callable[[dict[str, str] | None], str]
+    database_authorizer: Any | None = None
+    database_grant_resolver: Callable[..., Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -146,6 +149,14 @@ def _serialize_mcp_results(results: list[Any]) -> list[dict[str, Any]]:
             "error": sanitize_mcp_result_error(result.error),
         }
         for result in results
+    ]
+
+
+def _loaded_tool_names(tools: Iterable[Any]) -> list[str]:
+    return [
+        str(name)
+        for tool in tools
+        if (name := getattr(tool, "name", None) or getattr(tool, "__name__", None))
     ]
 
 
@@ -371,6 +382,52 @@ async def _resolve_builtin_sub_agent_resources(
     return resources_by_profile, all_mcp_tools
 
 
+async def _authorized_database_tools(
+    ctx: SessionContext,
+    *,
+    user: Any,
+    agent_id: str,
+    session_id: str,
+    logger: logging.Logger,
+) -> list[Any]:
+    """Expose provider-bound database tools only to entitled users.
+
+    Returns an empty list unless the app wired both a grant resolver and an
+    authorizer, so sessions without a database grant behave exactly as before.
+    Each exposed tool is guarded so membership is re-evaluated per invocation.
+    """
+    authorizer = ctx.database_authorizer
+    grant_resolver = ctx.database_grant_resolver
+    if authorizer is None or grant_resolver is None:
+        return []
+
+    from database_authorization import guard_database_tools, subject_from_user
+
+    try:
+        grant = grant_resolver(user, agent_id)
+        if inspect.isawaitable(grant):
+            grant = await grant
+    except Exception:  # noqa: BLE001 — an unresolvable grant means no database tools
+        logger.exception("Database grant resolution failed for agent '%s'", agent_id)
+        return []
+    if grant is None:
+        return []
+
+    subject = subject_from_user(user, agent_id=agent_id, grant=grant)
+    if not await authorizer.authorize_grant(subject):
+        logger.warning(
+            "Database capability denied for user %s on agent '%s'", user.user_id, agent_id
+        )
+        return []
+    tools = ctx.build_tool_instances(
+        set(),
+        session_id=session_id,
+        user_id=user.user_id,
+        database_grant=grant,
+    )
+    return list(guard_database_tools(tools, authorizer=authorizer, subject=subject))
+
+
 async def _resolve_runtime_dependencies(
     ctx: SessionContext,
     *,
@@ -381,12 +438,18 @@ async def _resolve_runtime_dependencies(
     user: Any,
     session_id: str,
     logger: logging.Logger,
+    agent_id: str = "",
 ) -> RuntimeDependencies:
     tool_name_set = set(tool_names)
     function_tools = ctx.build_tool_instances(
         tool_name_set,
         session_id=session_id,
         user_id=user.user_id,
+    )
+    function_tools.extend(
+        await _authorized_database_tools(
+            ctx, user=user, agent_id=agent_id, session_id=session_id, logger=logger
+        )
     )
     mcp_configs = parse_mcp_server_configs(mcp_config_source)
     mcp_tools, mcp_results = await connect_mcp_servers(mcp_configs, user_token=user_bearer_token)
@@ -593,6 +656,7 @@ async def _create_custom_chat_session(
             user=user,
             session_id=session_id,
             logger=logger,
+            agent_id=str(body.get("custom_id") or custom_name),
         )
         chat_runtime = create_chat_runtime(
             custom_name=custom_name,
@@ -640,7 +704,7 @@ async def _create_custom_chat_session(
         "session_id": session_id,
         "profile_id": "custom",
         "profile_name": custom_name,
-        "tools_loaded": list(custom_tools),
+        "tools_loaded": _loaded_tool_names(dependencies.function_tools),
         "skills_loaded": list(custom_skills),
         "agents_loaded": _derive_sub_agent_tool_names(sub_agent_refs),
         "search_context": custom_search_context,
@@ -694,6 +758,7 @@ async def _create_profile_chat_session(
                 user=user,
                 session_id=session_id,
                 logger=logger,
+                agent_id=logical_profile,
             )
             chat_runtime = create_chat_runtime(
                 custom_name=profile_name,
@@ -719,6 +784,7 @@ async def _create_profile_chat_session(
                 user=user,
                 session_id=session_id,
                 logger=logger,
+                agent_id=logical_profile,
             )
             chat_runtime = create_chat_runtime(
                 chat_profile=get_profile_display_name(logical_profile, fallback=profile_id),
@@ -769,7 +835,7 @@ async def _create_profile_chat_session(
         "session_id": session_id,
         "profile_id": logical_profile,
         "profile_name": profile_name,
-        "tools_loaded": list(profile_tool_names),
+        "tools_loaded": _loaded_tool_names(dependencies.function_tools),
         "skills_loaded": profile_skills,
         "agents_loaded": _derive_sub_agent_tool_names(profile_sub_agent_refs),
         "search_context": profile_search_context,

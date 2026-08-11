@@ -1,0 +1,1 @@
+"""Azure SQL SAP force-equipment emulator assets."""

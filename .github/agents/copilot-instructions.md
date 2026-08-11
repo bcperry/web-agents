@@ -32,6 +32,7 @@
 - Azure Cosmos DB for NoSQL — one database, two containers: `chat-history` (messages, partition key `/session_id`, managed by `CosmosHistoryProvider`) and `conversations` (per-user index, partition key `/user_id`, managed by new backend code). Local dev/tests use a Cosmos key/emulator or an in-memory fallback (011-cosmos-agent-memory)
 - Python 3.12.6 backend; existing TypeScript/React frontend contracts remain + FastAPI, Pydantic, Agent Framework function tools, async Azure Cosmos DB (014-agent-creation-tools)
 - Existing `agent-memory` Cosmos database. Custom agents remain in `custom-agents` (014-agent-creation-tools)
+- Python 3.12.6; Terraform with AzureRM ~> 4.0; Google Cloud IaC language/repository to be confirmed with its network owner. + Existing FastAPI and Agent Framework runtime; one SAP HANA client selected by the driver spike (`hdbcli` or SAP HANA Client ODBC + existing `pyodbc`); no frontend dependency. (015-sap-hana-private-connectivity)
 
 ## Project Structure
 
@@ -64,6 +65,6 @@ uv run pytest                      # Run tests
 - Package manager: uv only (never pip)
 
 ## Recent Changes
+- 015-sap-hana-private-connectivity: Added Python 3.12.6; Terraform with AzureRM ~> 4.0; Google Cloud IaC language/repository to be confirmed with its network owner. + Existing FastAPI and Agent Framework runtime; one SAP HANA client selected by the driver spike (`hdbcli` or SAP HANA Client ODBC + existing `pyodbc`); no frontend dependency.
 - 014-agent-creation-tools: Added Python 3.12.6 backend; existing TypeScript/React frontend contracts remain + FastAPI, Pydantic, Agent Framework function tools, async Azure Cosmos DB
 - 011-cosmos-agent-memory: Added Python 3.12.6 (FastAPI backend); TypeScript 5.9.x + React 19.x (frontend) + `agent-framework-core`/`agent-framework-openai` (existing); NEW `agent-framework-azure-cosmos` (provides `CosmosHistoryProvider`, re-exported as `agent_framework.azure.CosmosHistoryProvider`); `azure-cosmos` (async SDK, pulled in by the provider); `azure-identity` (`DefaultAzureCredential`, already used)
-- 010-admin-settings-page: Added TypeScript 5.9.x and React 19.x for frontend; Python 3.12.6/FastAPI backend unchanged + React, Vite, existing `useTheme` and `useAuth` hooks; no new dependencies
