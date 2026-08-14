@@ -5,6 +5,7 @@ import type {
   ChatSession,
   ConversationIndexEntry,
   McpConnectionResult,
+  SSEAgentViewEvent,
   ToolInvocation,
   UsageDetails,
 } from '../types/api';
@@ -34,7 +35,10 @@ interface ChatState {
   clearError: () => void;
 }
 
-export function useChat(onCustomAgentsChanged?: () => void): ChatState {
+export function useChat(
+  onCustomAgentsChanged?: () => void,
+  onAgentView?: (event: SSEAgentViewEvent) => void,
+): ChatState {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [session, setSession] = useState<ChatSession | null>(null);
@@ -248,6 +252,9 @@ export function useChat(onCustomAgentsChanged?: () => void): ChatState {
               type: isRetryable ? 'warning' : 'error',
             });
           },
+          onAgentView: (data) => {
+            onAgentView?.(data);
+          },
           onDone: () => {
             setIsStreaming(false);
             if (toolsRef.current.some((tool) =>
@@ -271,7 +278,7 @@ export function useChat(onCustomAgentsChanged?: () => void): ChatState {
       // Non-auth errors already emitted as toasts by client.ts
       setIsStreaming(false);
     }
-  }, [session, messages.length, onCustomAgentsChanged]);
+  }, [session, messages.length, onCustomAgentsChanged, onAgentView]);
 
   const clearError = useCallback(() => setError(null), []);
 

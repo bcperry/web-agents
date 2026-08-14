@@ -8,6 +8,7 @@ from streaming import (
     USAGE_INPUT_KEY,
     USAGE_OUTPUT_KEY,
     USAGE_TOTAL_KEY,
+    agent_view_payload,
     convert_content_items,
     create_usage,
     extract_usage_from_payload,
@@ -77,3 +78,32 @@ def test_render_tool_result_matches_current_display_behavior():
     assert render_tool_result([{"type": "text", "text": "a"}, {"type": "text", "text": "b"}]) == "a\nb"
     assert render_tool_result({"ok": True}) == '{"ok": true}'
     assert render_tool_result(None) == ""
+
+
+def test_agent_view_payload_maps_a_rendered_result():
+    result = json.dumps({
+        "status": "rendered",
+        "view_id": "v-1",
+        "title": "Readiness",
+        "chars": 42,
+        "created_at": "2026-08-14T00:00:00+00:00",
+    })
+
+    payload = agent_view_payload("render_agent_view", "call-1", result)
+
+    assert payload == {
+        "view_id": "v-1",
+        "title": "Readiness",
+        "call_id": "call-1",
+        "created_at": "2026-08-14T00:00:00+00:00",
+    }
+
+
+def test_agent_view_payload_skips_rejections_and_other_tools():
+    rejected = json.dumps({"status": "rejected", "reason": "too_large"})
+
+    assert agent_view_payload("render_agent_view", "call-1", rejected) is None
+    assert agent_view_payload("get_user_profile", "call-1", '{"status": "rendered", "view_id": "v"}') is None
+    assert agent_view_payload("render_agent_view", None, '{"status": "rendered", "view_id": "v"}') is None
+    assert agent_view_payload("render_agent_view", "call-1", "not json") is None
+    assert agent_view_payload("render_agent_view", "call-1", '{"status": "rendered"}') is None

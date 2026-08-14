@@ -1,0 +1,50 @@
+<!--
+  Isolation probe for the agent dynamic UI pane.
+
+  Rendered through the same sandboxed frame an agent-authored view uses. All four
+  probes MUST fail: the opaque origin blocks host DOM and storage access, the
+  host CSP blocks network egress, and the backend broker refuses a tool the
+  rendering agent does not have.
+
+  Used by scripts/capture_agent_view_screenshots.py and by the quickstart
+  security walkthrough (specs/016-agent-ui-pane/quickstart.md section 5).
+-->
+<style>
+  .probe { padding: 6px 0; border-bottom: 1px solid #3b3a39; font-family: monospace; }
+  .pass { color: #13a10e; }
+  .fail { color: #d13438; }
+</style>
+<h3>Isolation probes</h3>
+<div id="probes"></div>
+<script>
+  function record(name, blocked, detail) {
+    var el = document.createElement('div');
+    el.className = 'probe ' + (blocked ? 'pass' : 'fail');
+    el.setAttribute('data-probe', name);
+    el.setAttribute('data-blocked', String(blocked));
+    el.textContent = (blocked ? '[BLOCKED] ' : '[LEAKED] ') + name + ' - ' + detail;
+    document.getElementById('probes').appendChild(el);
+  }
+
+  try {
+    var title = parent.document.title;
+    record('host-dom', false, 'read parent title: ' + title);
+  } catch (e) {
+    record('host-dom', true, 'cross-origin access denied');
+  }
+
+  try {
+    var count = localStorage.length;
+    record('host-storage', false, 'read localStorage, ' + count + ' keys');
+  } catch (e) {
+    record('host-storage', true, 'storage access denied');
+  }
+
+  fetch('https://example.com/probe')
+    .then(function () { record('network', false, 'external fetch completed'); })
+    .catch(function (e) { record('network', true, 'blocked by content security policy'); });
+
+  window.agentData('delete_everything', {})
+    .then(function () { record('permission', false, 'non-permitted tool executed'); })
+    .catch(function (err) { record('permission', true, 'refused: ' + (err && err.code)); });
+</script>

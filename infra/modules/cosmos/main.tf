@@ -78,6 +78,17 @@ resource "azurerm_cosmosdb_sql_container" "user_profiles" {
   partition_key_paths = ["/user_id"]
 }
 
+# Agent-authored UI views (partition key /user_id). Bounded per conversation by
+# MAX_AGENT_VIEWS_PER_CONVERSATION; the dominant query is "views for this
+# conversation" within a single user partition.
+resource "azurerm_cosmosdb_sql_container" "agent_views" {
+  name                = "agent-views"
+  resource_group_name = var.resource_group_name
+  account_name        = azurerm_cosmosdb_account.cosmos.name
+  database_name       = azurerm_cosmosdb_sql_database.db.name
+  partition_key_paths = ["/user_id"]
+}
+
 # Autonomous Mode run audit log (partition key /directive_id). One durable record
 # per autonomous cycle; the dominant query is "runs for a directive" + recency.
 resource "azurerm_cosmosdb_sql_container" "autonomous_runs" {

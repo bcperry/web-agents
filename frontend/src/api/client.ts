@@ -1,6 +1,9 @@
 import type {
   AgentProfile,
   AgentCustomizationOverride,
+  AgentView,
+  AgentViewDataResponse,
+  AgentViewSummary,
   AutonomousDirective,
   AutonomousDirectiveCreate,
   AutonomousDirectiveUpdate,
@@ -26,6 +29,7 @@ import type {
   SSEFunctionResultEvent,
   SSEUsageEvent,
   SSEErrorEvent,
+  SSEAgentViewEvent,
 } from '../types/api';
 import { emitToast } from '../hooks/useToast';
 import {
@@ -335,6 +339,61 @@ export async function deleteConversation(id: string): Promise<void> {
   if (!resp.ok && resp.status !== 404) await handleHttpError(resp, 'Failed to delete conversation');
 }
 
+// --- Agent views (dynamic UI pane) ---
+
+export async function listAgentViews(sessionId: string): Promise<AgentViewSummary[]> {
+  const data = await requestJson<{ views: AgentViewSummary[] }>(
+    `${API_BASE}/sessions/${encodeURIComponent(sessionId)}/views`,
+    { headers: getAuthHeaders() },
+    'Failed to load agent views',
+  );
+  return data.views || [];
+}
+
+export async function getAgentView(sessionId: string, viewId: string): Promise<AgentView> {
+  return requestJson<AgentView>(
+    `${API_BASE}/sessions/${encodeURIComponent(sessionId)}/views/${encodeURIComponent(viewId)}`,
+    { headers: getAuthHeaders() },
+    'Failed to load agent view',
+  );
+}
+
+/**
+ * Broker one data request on behalf of a rendered view.
+ *
+ * Returns the structured outcome instead of throwing: refusals are a normal,
+ * expected result that the view itself has to render.
+ */
+export async function requestAgentViewData(
+  sessionId: string,
+  viewId: string,
+  tool: string,
+  args: Record<string, unknown>,
+): Promise<AgentViewDataResponse> {
+  try {
+    const resp = await fetch(
+      `${API_BASE}/sessions/${encodeURIComponent(sessionId)}/views/${encodeURIComponent(viewId)}/data`,
+      {
+        method: 'POST',
+        headers: jsonHeaders(),
+        body: JSON.stringify({ tool, arguments: args }),
+      },
+    );
+    if (resp.ok) return (await resp.json()) as AgentViewDataResponse;
+    const body = await resp.json().catch(() => null);
+    if (body?.error?.code) return { ok: false, error: body.error };
+    return {
+      ok: false,
+      error: {
+        code: 'tool_failed',
+        message: resp.status === 401 ? 'Your session has expired.' : 'That request could not be completed.',
+      },
+    };
+  } catch {
+    return { ok: false, error: { code: 'tool_failed', message: 'That request could not be completed.' } };
+  }
+}
+
 // --- Custom agents, agent customizations, user profile (durable per-user, Cosmos) ---
 
 export async function listCustomAgents(): Promise<CustomAgentDefinition[]> {
@@ -397,6 +456,7 @@ export interface SSECallback {
   onFunctionResult?: (data: SSEFunctionResultEvent) => void;
   onUsage?: (data: SSEUsageEvent) => void;
   onError?: (data: SSEErrorEvent) => void;
+  onAgentView?: (data: SSEAgentViewEvent) => void;
   onDone?: () => void;
 }
 
@@ -519,6 +579,9 @@ function dispatchSSEEvent(
       break;
     case 'error':
       callbacks.onError?.(data as SSEErrorEvent);
+      break;
+    case 'agent_view':
+      callbacks.onAgentView?.(data as SSEAgentViewEvent);
       break;
     case 'done':
       callbacks.onDone?.();

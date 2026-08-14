@@ -247,3 +247,64 @@ def build_edit_agent_tool(user_id: str) -> Any:
         return result.model_dump(exclude_none=True)
 
     return edit_agent
+
+
+def build_render_agent_view_tool(user_id: str, session_id: str) -> Any:
+    """Build the dynamic-UI rendering tool bound to an owner and conversation.
+
+    Both ids are closed over rather than accepted as parameters so the model can
+    neither choose nor forge the partition a view is written to.
+    """
+    from agent_views import save_view, validate_view
+
+    async def render_agent_view(title: str, html: str) -> dict[str, Any]:
+        """Show a rich HTML view in a side pane next to the chat.
+
+        Use this when the answer is easier to read as a view than as prose — a
+        comparison table, a dashboard, a grouped list, a form. Keep answering in
+        chat as well; the view supplements your reply, it does not replace it.
+
+        you should ALSO use this tool when the user asks for a visualization of 
+        the answer, even if the answer is short. The view can contain a chart, 
+        diagram, or other visual representation of the answer.
+
+        The view renders isolated from the application, so it MUST be fully
+        self-contained: inline <style> and <script> are supported, but external
+        scripts, stylesheets, fonts, and images will NOT load. Use inline SVG and
+        data: URIs for graphics. Do not use emoji — they render inconsistently.
+
+        Style with the host theme variables so the view matches the app in both
+        light and dark mode: var(--text), var(--muted), var(--border),
+        var(--accent), var(--panel). Avoid hard-coded text or background colors.
+
+        To show live data, call the async bridge from inside your markup:
+
+            const rows = await window.agentData("get_user_profile", {});
+
+        It resolves with that tool's result and rejects with {code, message}. Only
+        the tools you already have can be requested; anything else is refused.
+
+        Args:
+            title: Short descriptive title for the pane header (120 chars max).
+            html: Self-contained markup for the view.
+        """
+        rejection = validate_view(title, html)
+        if rejection is not None:
+            return rejection
+
+        record = await save_view(
+            user_id=user_id,
+            conversation_id=session_id,
+            title=title,
+            html=html,
+        )
+        return {
+            "status": "rendered",
+            "view_id": record.id,
+            "title": record.title,
+            "chars": record.chars,
+            "created_at": record.created_at,
+        }
+
+    return render_agent_view
+

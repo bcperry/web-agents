@@ -8,6 +8,7 @@ from agent_framework._types import Content
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
+from agent_views import clear_view_data_budget, delete_views_for_conversation
 from app_context import DEFAULT_MAX_USER_INPUT_CHARS, session_context
 from auth import AuthenticatedUser, get_current_user
 from cosmos_memory import get_conversation_repository, get_history_provider
@@ -183,6 +184,8 @@ async def delete_session(
     if session_data is None:
         raise HTTPException(status_code=404, detail="Session not found or already ended")
 
+    clear_view_data_budget(session_id)
+
     if session_data.mcp_tools:
         await cleanup_mcp_servers(session_data.mcp_tools)
 
@@ -261,10 +264,12 @@ async def delete_conversation(
         clear = getattr(history_provider, "clear", None)
         if clear is not None:
             await clear(conversation_id)
+        await delete_views_for_conversation(user.user_id, conversation_id)
         await repo.delete(user.user_id, conversation_id)
     except Exception as exc:  # noqa: BLE001 - route maps store errors to HTTP
         logger.error("Failed to delete conversation %s: %s", conversation_id, exc)
         raise HTTPException(status_code=503, detail="Conversation store is temporarily unavailable. Please try again.") from exc
 
+    clear_view_data_budget(conversation_id)
     _sessions.pop(conversation_id, None)
     return None

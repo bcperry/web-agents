@@ -1,5 +1,7 @@
 """Validation helpers for request, tool, skill, and image handling."""
 
+import json
+import re
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
@@ -8,6 +10,9 @@ from fastapi import HTTPException, UploadFile
 ALLOWED_IMAGE_MIMES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 MAX_IMAGE_SIZE_BYTES = 400 * 1024 * 1024
 MAX_IMAGES_PER_MESSAGE = 5
+MAX_VIEW_DATA_ARG_COUNT = 20
+MAX_VIEW_DATA_ARGS_CHARS = 4000
+_TOOL_NAME_RE = re.compile(r"[A-Za-z0-9_.-]{1,100}")
 
 _MAGIC_BYTES: dict[str, list[bytes]] = {
 	"image/jpeg": [b"\xff\xd8\xff"],
@@ -94,6 +99,31 @@ def validate_tool_names(raw_tools: object, known_tools: set[str], field_name: st
 	if invalid_tools:
 		raise HTTPException(status_code=400, detail=f"Unknown tools: {', '.join(invalid_tools)}")
 	return list(raw_tools)
+
+
+def validate_view_data_request(tool: object, arguments: object) -> Optional[str]:
+	"""Return an error message for a view-originated data request, or None if valid.
+
+	Shape only. Whether the tool may be called at all is decided by the broker
+	against the rendering agent's live tool set.
+	"""
+	if not isinstance(tool, str) or not tool.strip():
+		return "A tool name is required."
+	if not _TOOL_NAME_RE.fullmatch(tool):
+		return "That tool name is not valid."
+	if not isinstance(arguments, dict):
+		return "Arguments must be a JSON object."
+	if len(arguments) > MAX_VIEW_DATA_ARG_COUNT:
+		return f"Too many arguments (maximum {MAX_VIEW_DATA_ARG_COUNT})."
+	if any(not isinstance(key, str) for key in arguments):
+		return "Argument names must be strings."
+	try:
+		encoded = json.dumps(arguments)
+	except (TypeError, ValueError):
+		return "Arguments must be JSON-serializable."
+	if len(encoded) > MAX_VIEW_DATA_ARGS_CHARS:
+		return f"Arguments exceed {MAX_VIEW_DATA_ARGS_CHARS} characters."
+	return None
 
 
 async def available_skill_names(user_id: str | None = None) -> set[str]:
@@ -333,6 +363,8 @@ __all__ = [
 	"ALLOWED_IMAGE_MIMES",
 	"MAX_IMAGE_SIZE_BYTES",
 	"MAX_IMAGES_PER_MESSAGE",
+	"MAX_VIEW_DATA_ARGS_CHARS",
+	"MAX_VIEW_DATA_ARG_COUNT",
 	"SubAgentRefValidationError",
 	"available_skill_names",
 	"filter_known_skill_names",
@@ -345,4 +377,5 @@ __all__ = [
 	"validate_temperature",
 	"validate_tool_names",
 	"validate_uploaded_images",
+	"validate_view_data_request",
 ]

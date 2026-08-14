@@ -124,6 +124,34 @@ def render_tool_result(result: object) -> str:
 	return str(result or "")
 
 
+AGENT_VIEW_TOOL_NAME = "render_agent_view"
+
+
+def agent_view_payload(tool_name: object, call_id: object, rendered_result: str) -> Optional[dict[str, Any]]:
+	"""Map a ``render_agent_view`` result to an ``agent_view`` SSE payload.
+
+	Returns None for other tools and for rejected renders — a rejection stays visible
+	in the normal tool step so the agent can retry, but opens no pane.
+	"""
+	if tool_name != AGENT_VIEW_TOOL_NAME or not call_id:
+		return None
+	try:
+		payload = json.loads(rendered_result)
+	except (TypeError, ValueError):
+		return None
+	if not isinstance(payload, dict) or payload.get("status") != "rendered":
+		return None
+	view_id = payload.get("view_id")
+	if not view_id:
+		return None
+	return {
+		"view_id": str(view_id),
+		"title": str(payload.get("title") or ""),
+		"call_id": str(call_id),
+		"created_at": str(payload.get("created_at") or ""),
+	}
+
+
 _USER_TIME_OPEN = "[Current date and time: "
 _USER_TIME_CLOSE = "]\n\n"
 _USER_TIME_RE = re.compile(r"^\[Current date and time: [^\]]*\]\n\n")
@@ -255,6 +283,12 @@ async def stream_agent_response(
 					}.items() if value is not None
 				})
 
+				view_payload = agent_view_payload(
+					(tool_event_by_call_id.get(call_id) or {}).get("name"), call_id, rendered_result
+				)
+				if view_payload:
+					yield sse_event("agent_view", view_payload)
+
 			elif content_type == "usage":
 				usage = extract_usage_from_payload(content)
 				request_usage = merge_usage(request_usage, usage)
@@ -289,6 +323,7 @@ __all__ = [
 	"USAGE_INPUT_KEY",
 	"USAGE_OUTPUT_KEY",
 	"USAGE_TOTAL_KEY",
+	"agent_view_payload",
 	"convert_content_items",
 	"create_usage",
 	"extract_usage_from_payload",
