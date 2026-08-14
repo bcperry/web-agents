@@ -122,6 +122,71 @@ class CosmosUserScopedRepository:
             return False
 
 
+class CosmosAgentViewRepository:
+    """Agent-authored UI views, partitioned by ``/user_id``.
+
+    Unlike ``CosmosUserScopedRepository`` the document is stored flat rather than
+    wrapped in ``data``, because ``conversation_id`` has to be a top-level field
+    for the dominant "views for this conversation" read to stay a single-partition
+    query.
+    """
+
+    def __init__(self, container_name: str) -> None:
+        self._container_name = container_name
+        self._container: Any = None
+
+    async def _get_container(self) -> Any:
+        if self._container is None:
+            from azure.cosmos import PartitionKey
+
+            client = cosmos_memory.get_cosmos_client()
+            database = await client.create_database_if_not_exists(_database_name())
+            self._container = await database.create_container_if_not_exists(
+                id=self._container_name,
+                partition_key=PartitionKey(path="/user_id"),
+            )
+        return self._container
+
+    async def list_for_conversation(self, user_id: str, conversation_id: str) -> list[dict[str, Any]]:
+        container = await self._get_container()
+        items = container.query_items(
+            query=(
+                "SELECT * FROM c WHERE c.user_id = @uid AND c.conversation_id = @cid "
+                "ORDER BY c.created_at ASC"
+            ),
+            parameters=[
+                {"name": "@uid", "value": user_id},
+                {"name": "@cid", "value": conversation_id},
+            ],
+            partition_key=user_id,
+        )
+        return [item async for item in items]
+
+    async def get(self, user_id: str, view_id: str) -> dict[str, Any] | None:
+        from azure.cosmos.exceptions import CosmosResourceNotFoundError
+
+        container = await self._get_container()
+        try:
+            return await container.read_item(item=view_id, partition_key=user_id)
+        except CosmosResourceNotFoundError:
+            return None
+
+    async def create(self, document: dict[str, Any]) -> dict[str, Any]:
+        container = await self._get_container()
+        await container.create_item(document)
+        return document
+
+    async def delete(self, user_id: str, view_id: str) -> bool:
+        from azure.cosmos.exceptions import CosmosResourceNotFoundError
+
+        container = await self._get_container()
+        try:
+            await container.delete_item(item=view_id, partition_key=user_id)
+            return True
+        except CosmosResourceNotFoundError:
+            return False
+
+
 # ---------------------------------------------------------------------------
 # Cached singletons (tests monkeypatch these with in-memory doubles)
 # ---------------------------------------------------------------------------
@@ -130,6 +195,7 @@ _custom_agents_repo: Any = None
 _agent_customizations_repo: Any = None
 _user_profile_repo: Any = None
 _user_skills_repo: Any = None
+_agent_views_repo: Any = None
 
 
 def get_custom_agents_repository() -> Any:
@@ -166,3 +232,12 @@ def get_user_skills_repository() -> Any:
             _container_name("AZURE_COSMOS_USER_SKILLS_CONTAINER", "user-skills")
         )
     return _user_skills_repo
+
+
+def get_agent_views_repository() -> Any:
+    global _agent_views_repo
+    if _agent_views_repo is None:
+        _agent_views_repo = CosmosAgentViewRepository(
+            _container_name("AZURE_COSMOS_AGENT_VIEWS_CONTAINER", "agent-views")
+        )
+    return _agent_views_repo

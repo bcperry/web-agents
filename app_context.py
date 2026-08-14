@@ -14,6 +14,7 @@ from tools import (
     build_create_skill_tool,
     build_edit_agent_tool,
     build_edit_skill_tool,
+    build_render_agent_view_tool,
     build_user_profile_tools,
 )
 
@@ -25,7 +26,9 @@ DEFAULT_MAX_USER_INPUT_CHARS = int(os.getenv("MAX_USER_INPUT_CHARS", "8000"))
 @dataclass(frozen=True)
 class FunctionToolRegistration:
     description: str
-    factory: Callable[[str], Any]
+    factory: Callable[..., Any]
+    session_scoped: bool = False
+    """Session-scoped factories are called with ``(user_id, session_id)``."""
 
 
 def function_tool_registry() -> dict[str, FunctionToolRegistration]:
@@ -55,6 +58,11 @@ def function_tool_registry() -> dict[str, FunctionToolRegistration]:
             "Edit an existing user-owned custom agent using its complete definition.",
             build_edit_agent_tool,
         ),
+        "render_agent_view": FunctionToolRegistration(
+            "Show a rich HTML view in a side pane beside the chat.",
+            build_render_agent_view_tool,
+            session_scoped=True,
+        ),
     }
 
 
@@ -67,7 +75,9 @@ def build_tool_instances(
     """Instantiate the selected backend tools for a session or inventory call."""
     registry = function_tool_registry()
     return [
-        registration.factory(user_id or "")
+        registration.factory(user_id or "", session_id)
+        if registration.session_scoped
+        else registration.factory(user_id or "")
         for name, registration in registry.items()
         if name in tool_names
     ]

@@ -16,10 +16,12 @@ import {
   triggerAutonomousRun,
 } from '../api/client';
 import { useChat } from '../hooks/useChat';
+import { useAgentViews } from '../hooks/useAgentViews';
 import { useAuth } from '../hooks/useAuth';
 import { emitToast } from '../hooks/useToast';
 import { ChatMessage } from '../components/ChatMessage';
 import { ChatInput } from '../components/ChatInput';
+import { AgentViewPane } from '../components/AgentViewPane';
 import { SettingsMenu } from '../components/SettingsMenu';
 import { getRuntimeConfigSnapshot } from '../config/runtimeConfig';
 import type { AdminOpenOptions } from './AdminPage';
@@ -74,9 +76,19 @@ export function AutonomousPage({ onBack, onOpenAdmin }: AutonomousPageProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const startedRef = useRef(false);
 
-  const { messages, isStreaming, session, startSession, endSession, send } = useChat();
+  const agentViews = useAgentViews();
+  const { messages, isStreaming, session, startSession, endSession, send } = useChat(
+    undefined,
+    agentViews.handleAgentViewEvent,
+  );
   const { user, logout, classificationBanner } = useAuth();
   const { appName, appLogo } = getRuntimeConfigSnapshot();
+
+  // Views rendered by an unattended run are stored against the directive's own
+  // conversation, so they load when that session is attached here.
+  useEffect(() => {
+    agentViews.setSessionId(session?.session_id ?? null);
+  }, [session?.session_id, agentViews]);
 
   // End the chat session when leaving the page, regardless of identity churn.
   const endSessionRef = useRef(endSession);
@@ -419,22 +431,46 @@ export function AutonomousPage({ onBack, onOpenAdmin }: AutonomousPageProps) {
               <h3 className="auto-chat-title">ASK THE DUTY OFFICER</h3>
               {dutyProfile && <span className="auto-chat-sub">{dutyProfile.name}</span>}
             </div>
-            <div className="chat-messages auto-chat-messages">
-              {!canChat ? (
-                <div className="auto-empty">
-                  <p>The autonomous agent is not configured, so chat is unavailable.</p>
-                </div>
-              ) : messages.length === 0 ? (
-                <div className="auto-empty">
-                  <p>
-                    Ask the autonomous Duty Officer about its standing orders, recent activity,
-                    or anything else on your mind.
-                  </p>
-                </div>
-              ) : (
-                messages.map((msg, i) => <ChatMessage key={i} message={msg} />)
+            <div className="chat-body">
+              <div className="chat-messages auto-chat-messages">
+                {!canChat ? (
+                  <div className="auto-empty">
+                    <p>The autonomous agent is not configured, so chat is unavailable.</p>
+                  </div>
+                ) : messages.length === 0 ? (
+                  <div className="auto-empty">
+                    <p>
+                      Ask the autonomous Duty Officer about its standing orders, recent activity,
+                      or anything else on your mind.
+                    </p>
+                  </div>
+                ) : (
+                  messages.map((msg, i) => (
+                    <ChatMessage key={i} message={msg} onOpenAgentView={agentViews.selectView} />
+                  ))
+                )}
+                <div ref={messagesEndRef} />
+              </div>
+
+              {agentViews.isOpen ? (
+                <AgentViewPane
+                  sessionId={session?.session_id ?? null}
+                  views={agentViews.views}
+                  activeView={agentViews.activeView}
+                  activeViewId={agentViews.activeViewId}
+                  isLoading={agentViews.isLoading}
+                  error={agentViews.error}
+                  width={agentViews.width}
+                  onSelectView={agentViews.selectView}
+                  onSetWidth={agentViews.setWidth}
+                  onClose={agentViews.close}
+                  onRetry={agentViews.retry}
+                />
+              ) : agentViews.views.length > 0 && (
+                <button className="agent-view-reopen" onClick={agentViews.open} type="button">
+                  OPEN VIEW
+                </button>
               )}
-              <div ref={messagesEndRef} />
             </div>
             {canChat && (
               <ChatInput onSend={(content) => send(content)} disabled={isStreaming || !session} />

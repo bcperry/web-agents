@@ -207,6 +207,40 @@ class InMemoryUserScopedRepository:
         return False
 
 
+class InMemoryAgentViewRepository:
+    """Loop-independent in-memory agent view store (test double for user_data).
+
+    Mirrors ``CosmosAgentViewRepository``: flat documents partitioned by user, with
+    the conversation listing returned oldest-first (a stable insertion-sequence
+    tiebreaker keeps ordering deterministic when timestamps collide).
+    """
+
+    def __init__(self) -> None:
+        self._by_user: dict[str, dict[str, tuple[int, dict]]] = {}
+        self._seq = 0
+
+    async def list_for_conversation(self, user_id: str, conversation_id: str) -> list[dict]:
+        rows = [
+            row for row in self._by_user.get(user_id, {}).values()
+            if row[1].get("conversation_id") == conversation_id
+        ]
+        ordered = sorted(rows, key=lambda row: (str(row[1].get("created_at") or ""), row[0]))
+        return [dict(doc) for _, doc in ordered]
+
+    async def get(self, user_id: str, view_id: str) -> dict | None:
+        row = self._by_user.get(user_id, {}).get(view_id)
+        return dict(row[1]) if row is not None else None
+
+    async def create(self, document: dict) -> dict:
+        user_id = str(document["user_id"])
+        self._by_user.setdefault(user_id, {})[str(document["id"])] = (self._seq, dict(document))
+        self._seq += 1
+        return document
+
+    async def delete(self, user_id: str, view_id: str) -> bool:
+        return self._by_user.get(user_id, {}).pop(view_id, None) is not None
+
+
 def clear_cosmos_singletons(monkeypatch) -> None:
     """Clear cosmos_memory + user_data cached singletons for a test, via monkeypatch.
 
@@ -221,5 +255,5 @@ def clear_cosmos_singletons(monkeypatch) -> None:
                  "_skill_repo"):
         monkeypatch.setattr(cosmos_memory, name, None)
     for name in ("_custom_agents_repo", "_agent_customizations_repo", "_user_profile_repo",
-                 "_user_skills_repo"):
+                 "_user_skills_repo", "_agent_views_repo"):
         monkeypatch.setattr(user_data, name, None)

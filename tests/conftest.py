@@ -34,6 +34,7 @@ def _cosmos_doubles(monkeypatch):
 	import user_data
 	from agent_framework import InMemoryHistoryProvider
 	from tests._doubles import (
+		InMemoryAgentViewRepository,
 		InMemoryAutonomousLeaseRepository,
 		InMemoryAutonomousRunRepository,
 		InMemoryByIdRepository,
@@ -71,6 +72,7 @@ def _cosmos_doubles(monkeypatch):
 	monkeypatch.setattr(user_data, "_agent_customizations_repo", InMemoryUserScopedRepository())
 	monkeypatch.setattr(user_data, "_user_profile_repo", InMemoryUserScopedRepository())
 	monkeypatch.setattr(user_data, "_user_skills_repo", InMemoryUserScopedRepository())
+	monkeypatch.setattr(user_data, "_agent_views_repo", InMemoryAgentViewRepository())
 	yield
 
 

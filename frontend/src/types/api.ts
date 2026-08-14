@@ -206,7 +206,7 @@ export interface ChatMessage {
   usage?: UsageDetails | null;
 }
 
-export type SSEEventType = 'text' | 'function_call' | 'function_result' | 'usage' | 'error' | 'done';
+export type SSEEventType = 'text' | 'function_call' | 'function_result' | 'usage' | 'error' | 'done' | 'agent_view';
 
 export interface SSETextEvent {
   content: string;
@@ -235,6 +235,55 @@ export interface SSEErrorEvent {
   message: string;
   retry_after: number | null;
 }
+
+export interface SSEAgentViewEvent {
+  view_id: string;
+  title: string;
+  call_id: string;
+  created_at: string;
+}
+
+export interface AgentViewSummary {
+  viewId: string;
+  title: string;
+  createdAt: string;
+  chars: number;
+  source: 'chat' | 'autonomous';
+}
+
+export interface AgentView extends AgentViewSummary {
+  html: string;
+}
+
+export interface AgentViewDataResponse {
+  ok: boolean;
+  data?: unknown;
+  truncated?: boolean;
+  durationMs?: number;
+  error?: AgentViewBridgeError;
+}
+
+export type AgentViewErrorCode =
+  | 'not_permitted'
+  | 'invalid_arguments'
+  | 'session_inactive'
+  | 'rate_limited'
+  | 'tool_failed';
+
+export interface AgentViewBridgeError {
+  code: AgentViewErrorCode;
+  message: string;
+}
+
+/** view -> host. See specs/016-agent-ui-pane/contracts/view-bridge.md */
+export type AgentViewBridgeRequest =
+  | { v: 1; type: 'agentui.ready' }
+  | { v: 1; type: 'agentui.request'; requestId: string; tool: string; args: Record<string, unknown> };
+
+/** host -> view. */
+export type AgentViewBridgeResponse =
+  | { v: 1; type: 'agentui.response'; requestId: string; ok: true; data: unknown; truncated: boolean }
+  | { v: 1; type: 'agentui.response'; requestId: string; ok: false; error: AgentViewBridgeError };
 
 export interface ConversationIndexEntry {
   id: string;

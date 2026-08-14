@@ -1,5 +1,6 @@
 @import "./modules/base.css";
 @import "./modules/chat.css";
+@import "./modules/agent-view.css";
 @import "./modules/profile-login.css";
 @import "./modules/sidebar.css";
 @import "./modules/agent-builder.css";

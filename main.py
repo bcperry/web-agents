@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api_routes import autonomous as autonomous_routes
-from api_routes import profiles, sessions, skills, system, user_data
+from api_routes import agent_views, profiles, sessions, skills, system, user_data
 from api_routes.sessions import create_session, delete_session, send_message
 from app_context import (
     DEFAULT_MAX_USER_INPUT_CHARS,
@@ -118,6 +118,7 @@ for router in (
     profiles.router,
     skills.router,
     sessions.router,
+    agent_views.router,
     autonomous_routes.router,
     user_data.router,
 ):

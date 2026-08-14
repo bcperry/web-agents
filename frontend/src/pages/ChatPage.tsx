@@ -3,6 +3,7 @@ import type { AgentCustomizationOverride, AgentProfile, ConversationIndexEntry }
 import { fetchProfiles, AuthError } from '../api/client';
 import { emitToast } from '../hooks/useToast';
 import { useChat } from '../hooks/useChat';
+import { useAgentViews } from '../hooks/useAgentViews';
 import { useAuth } from '../hooks/useAuth';
 import { useTheme } from '../hooks/useTheme';
 import { useConversationStore } from '../hooks/useConversationStore';
@@ -12,6 +13,7 @@ import { ProfileSelector } from '../components/ProfileSelector';
 import { StarterQuestions } from '../components/StarterQuestions';
 import { TokenUsage } from '../components/TokenUsage';
 import { AgentCapabilitiesBar } from '../components/AgentCapabilitiesBar';
+import { AgentViewPane } from '../components/AgentViewPane';
 import { Sidebar } from '../components/Sidebar';
 import { SettingsMenu } from '../components/SettingsMenu';
 import { getRuntimeConfigSnapshot } from '../config/runtimeConfig';
@@ -58,6 +60,8 @@ export function ChatPage({ onOpenAdmin, onOpenAutonomous, onCustomAgentsChanged,
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isEndingSessionRef = useRef(false);
 
+  const agentViews = useAgentViews();
+
   const {
     messages,
     isStreaming,
@@ -73,7 +77,11 @@ export function ChatPage({ onOpenAdmin, onOpenAutonomous, onCustomAgentsChanged,
     startSession,
     endSession,
     send,
-  } = useChat(onCustomAgentsChanged);
+  } = useChat(onCustomAgentsChanged, agentViews.handleAgentViewEvent);
+
+  useEffect(() => {
+    agentViews.setSessionId(session?.session_id ?? null);
+  }, [session?.session_id, agentViews]);
 
   const { loadIndex, deleteConversation } = useConversationStore();
   const { user, logout, classificationBanner } = useAuth();
@@ -354,17 +362,39 @@ export function ChatPage({ onOpenAdmin, onOpenAutonomous, onCustomAgentsChanged,
           />
         )}
 
-        <div className="chat-messages">
-          {messages.length === 0 && selectedProfile && (
-            <StarterQuestions
-              starters={selectedProfile.starters}
-              onSelect={(msg) => handleSend(msg)}
+        <div className="chat-body">
+          <div className="chat-messages">
+            {messages.length === 0 && selectedProfile && (
+              <StarterQuestions
+                starters={selectedProfile.starters}
+                onSelect={(msg) => handleSend(msg)}
+              />
+            )}
+            {messages.map((msg, i) => (
+              <ChatMessage key={i} message={msg} onOpenAgentView={agentViews.selectView} />
+            ))}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {agentViews.isOpen ? (
+            <AgentViewPane
+              sessionId={session?.session_id ?? null}
+              views={agentViews.views}
+              activeView={agentViews.activeView}
+              activeViewId={agentViews.activeViewId}
+              isLoading={agentViews.isLoading}
+              error={agentViews.error}
+              width={agentViews.width}
+              onSelectView={agentViews.selectView}
+              onSetWidth={agentViews.setWidth}
+              onClose={agentViews.close}
+              onRetry={agentViews.retry}
             />
+          ) : agentViews.views.length > 0 && (
+            <button className="agent-view-reopen" onClick={agentViews.open} type="button">
+              OPEN VIEW
+            </button>
           )}
-          {messages.map((msg, i) => (
-            <ChatMessage key={i} message={msg} />
-          ))}
-          <div ref={messagesEndRef} />
         </div>
 
         {error && error.startsWith('Unauthorized') && (

@@ -1,17 +1,38 @@
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { ChatMessage as ChatMessageType } from '../types/api';
+import type { ChatMessage as ChatMessageType, ToolInvocation } from '../types/api';
 import { ToolStep } from './ToolStep';
 import { getRuntimeConfigSnapshot } from '../config/runtimeConfig';
 import { hasToolImages, imageDataUri, toolImages } from '../utils/content';
 
 interface Props {
   message: ChatMessageType;
+  onOpenAgentView?: (viewId: string) => void;
 }
 
-export function ChatMessage({ message }: Props) {
+const AGENT_VIEW_TOOL = 'render_agent_view';
+
+/** A rendered view's marker replaces its raw tool accordion in the transcript. */
+function agentViewResult(tool: ToolInvocation): { viewId: string; title: string } | null {
+  if (tool.name !== AGENT_VIEW_TOOL || !tool.result) return null;
+  try {
+    const parsed = JSON.parse(tool.result);
+    if (parsed?.status !== 'rendered' || !parsed?.view_id) return null;
+    return { viewId: String(parsed.view_id), title: String(parsed.title || 'Agent view') };
+  } catch {
+    return null;
+  }
+}
+
+export function ChatMessage({ message, onOpenAgentView }: Props) {
   const isUser = message.role === 'user';
   const { appName, appLogo } = getRuntimeConfigSnapshot();
+  const invocations = message.tool_invocations ?? [];
+  const viewMarkers = invocations
+    .map((tool) => ({ tool, view: agentViewResult(tool) }))
+    .filter((entry): entry is { tool: ToolInvocation; view: { viewId: string; title: string } } =>
+      entry.view !== null);
+  const otherInvocations = invocations.filter((tool) => agentViewResult(tool) === null);
 
   return (
     <div className={`chat-message ${isUser ? 'user-message' : 'assistant-message'}`}>
@@ -23,13 +44,24 @@ export function ChatMessage({ message }: Props) {
         <span className="message-role">{isUser ? 'You' : `${appName}`}</span>
       </div>
       <div className="message-content">
-        {message.tool_invocations && message.tool_invocations.length > 0 && (
+        {otherInvocations.length > 0 && (
           <div className="tool-steps">
-            {message.tool_invocations.map((tool) => (
+            {otherInvocations.map((tool) => (
               <ToolStep key={tool.call_id} invocation={tool} />
             ))}
           </div>
         )}
+        {viewMarkers.map(({ tool, view }) => (
+          <button
+            key={tool.call_id}
+            className="agent-view-marker"
+            type="button"
+            onClick={() => onOpenAgentView?.(view.viewId)}
+          >
+            <span className="agent-view-marker-tag">[VIEW]</span>
+            <span>{view.title}</span>
+          </button>
+        ))}
         {/* Inline images from tool results — shown outside collapsed accordions */}
         {hasToolImages(message.tool_invocations) && (
           <div className="message-tool-images">
