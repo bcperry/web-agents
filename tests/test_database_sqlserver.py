@@ -15,7 +15,7 @@ from database import (
     QueryStatus,
     SchemaRequest,
 )
-from database_synapse import SynapseProvider
+from database_sqlserver import SqlServerProvider
 
 
 class FakeToken:
@@ -78,7 +78,6 @@ def make_config(**overrides) -> DatabaseProviderConfig:
         "host": "synapse.example.test",
         "port": 1433,
         "database": "warehouse",
-        "tls_required": True,
         "environment": Environment.LOCAL,
         "max_rows": 2,
     }
@@ -87,7 +86,7 @@ def make_config(**overrides) -> DatabaseProviderConfig:
 
 
 def test_default_validator_accepts_tsql_bracket_identifiers():
-    provider = SynapseProvider(
+    provider = SqlServerProvider(
         make_config(approved_schemas=["reporting"]),
         "Driver=fake",
     )
@@ -100,11 +99,21 @@ def test_default_validator_accepts_tsql_bracket_identifiers():
     assert validated.referenced_schemas == frozenset({"reporting"})
 
 
-def test_apply_top_preserves_stricter_explicit_limit():
-    bounded = SynapseProvider._apply_top(
-        "SELECT TOP (10) [FORCE_ID] FROM [reporting].[FORCE_EQUIPMENT] ORDER BY [FORCE_ID]",
-        101,
+def test_provider_id_comes_from_configuration():
+    emulator = SqlServerProvider(
+        make_config(provider_id=ProviderId.SAP_EMULATOR), "Driver=fake"
     )
+    assert emulator.provider_id is ProviderId.SAP_EMULATOR
+    assert SqlServerProvider(make_config(), "Driver=fake").provider_id is ProviderId.SYNAPSE
+
+
+def test_bounded_sql_preserves_stricter_explicit_limit():
+    provider = SqlServerProvider(make_config(), "Driver=fake")
+    validated = provider.validator.validate(
+        "SELECT TOP (10) [FORCE_ID] FROM [reporting].[FORCE_EQUIPMENT] ORDER BY [FORCE_ID]"
+    )
+
+    bounded = provider._bounded_sql(validated, 101)
 
     assert "TOP 10" in bounded.upper()
     assert "TOP 101" not in bounded.upper()
@@ -119,12 +128,12 @@ def test_azure_ad_connection_uses_government_scope_and_token_attribute(monkeypat
         calls.append((connection_string, kwargs))
         return FakeConnection(cursor)
 
-    monkeypatch.setattr("database_synapse.pyodbc.connect", fake_connect)
+    monkeypatch.setattr("database_odbc.pyodbc.connect", fake_connect)
     connection_string = (
         "Driver={ODBC Driver 18 for SQL Server};Server=secret-host;"
         "Authentication=ActiveDirectoryMsi;Uid=secret-user;Database=warehouse"
     )
-    provider = SynapseProvider(make_config(), connection_string, credential=credential)
+    provider = SqlServerProvider(make_config(), connection_string, credential=credential)
 
     with caplog.at_level(logging.DEBUG):
         asyncio.run(provider.connect())
@@ -148,14 +157,14 @@ def test_query_validates_binds_parameters_applies_top_and_bounds_rows(monkeypatc
     cursor = FakeCursor(
         responses=[
             (
-                [("amount", None, None, None, None, None, None)],
+                [("amount", Decimal, None, None, None, None, None)],
                 [(Decimal("1.25"),), (Decimal("2.50"),), (Decimal("3.75"),)],
             )
         ]
     )
     connection = FakeConnection(cursor)
-    monkeypatch.setattr("database_synapse.pyodbc.connect", lambda *args, **kwargs: connection)
-    provider = SynapseProvider(make_config(), "Driver=fake;Server=not-logged")
+    monkeypatch.setattr("database_odbc.pyodbc.connect", lambda *args, **kwargs: connection)
+    provider = SqlServerProvider(make_config(), "Driver=fake;Server=not-logged")
 
     with caplog.at_level(logging.DEBUG):
         result = asyncio.run(
@@ -174,7 +183,6 @@ def test_query_validates_binds_parameters_applies_top_and_bounds_rows(monkeypatc
         "row_count": 2,
         "truncated": True,
         "truncated_by": "row_limit",
-        "continuation": None,
         "warnings": [
             "Result was bounded by the row_limit; omitted values are not evidence of absence."
         ],
@@ -183,6 +191,50 @@ def test_query_validates_binds_parameters_applies_top_and_bounds_rows(monkeypatc
     assert secret_sql not in caplog.text
     assert "private-value" not in caplog.text
     assert "1.25" not in caplog.text
+
+
+def test_empty_result_still_reports_driver_column_types(monkeypatch):
+    import datetime as dt
+
+    cursor = FakeCursor(
+        responses=[
+            (
+                [
+                    ("FORCE_ID", str, None, None, None, None, None),
+                    ("FL_LEVEL", int, None, None, None, None, None),
+                    ("BEGDA", dt.date, None, None, None, None, None),
+                ],
+                [],
+            )
+        ]
+    )
+    monkeypatch.setattr(
+        "database_odbc.pyodbc.connect", lambda *args, **kwargs: FakeConnection(cursor)
+    )
+    provider = SqlServerProvider(make_config(), "Driver=fake")
+
+    payload = asyncio.run(
+        provider.execute_query(QueryRequest(sql="SELECT a FROM sales.t WHERE a = ?", parameters=["x"]))
+    ).to_dict()
+
+    assert payload["rows"] == []
+    assert payload["columns"] == [
+        {"name": "FORCE_ID", "type": "string"},
+        {"name": "FL_LEVEL", "type": "integer"},
+        {"name": "BEGDA", "type": "datetime"},
+    ]
+
+
+def test_unknown_driver_type_is_reported_as_fallback(monkeypatch):
+    cursor = FakeCursor(responses=[([("odd", object, None, None, None, None, None)], [])])
+    monkeypatch.setattr(
+        "database_odbc.pyodbc.connect", lambda *args, **kwargs: FakeConnection(cursor)
+    )
+    provider = SqlServerProvider(make_config(), "Driver=fake")
+
+    result = asyncio.run(provider.execute_query(QueryRequest(sql="SELECT 1")))
+
+    assert result.to_dict()["columns"] == [{"name": "odd", "type": "fallback"}]
 
 
 def test_schema_discovery_uses_information_schema_filters_and_groups_columns(monkeypatch):
@@ -199,10 +251,10 @@ def test_schema_discovery_uses_information_schema_filters_and_groups_columns(mon
         ]
     )
     monkeypatch.setattr(
-        "database_synapse.pyodbc.connect",
+        "database_odbc.pyodbc.connect",
         lambda *args, **kwargs: FakeConnection(cursor),
     )
-    provider = SynapseProvider(make_config(max_rows=10), "Driver=fake")
+    provider = SqlServerProvider(make_config(max_rows=10), "Driver=fake")
 
     result = asyncio.run(
         provider.discover_schema(SchemaRequest(schema="sales", object_name="orders"))
@@ -246,10 +298,10 @@ def test_schema_discovery_uses_information_schema_filters_and_groups_columns(mon
 def test_driver_errors_map_to_sanitized_results(monkeypatch, caplog, error, expected_status):
     cursor = FakeCursor(error=error)
     monkeypatch.setattr(
-        "database_synapse.pyodbc.connect",
+        "database_odbc.pyodbc.connect",
         lambda *args, **kwargs: FakeConnection(cursor),
     )
-    provider = SynapseProvider(make_config(), "Driver=fake;Pwd=secret-password")
+    provider = SqlServerProvider(make_config(), "Driver=fake;Pwd=secret-password")
 
     with caplog.at_level(logging.DEBUG):
         result = asyncio.run(provider.execute_query(QueryRequest(sql="SELECT 1")))
@@ -263,10 +315,10 @@ def test_driver_errors_map_to_sanitized_results(monkeypatch, caplog, error, expe
 
 def test_invalid_sql_is_rejected_before_opening_connection(monkeypatch):
     monkeypatch.setattr(
-        "database_synapse.pyodbc.connect",
+        "database_odbc.pyodbc.connect",
         lambda *args, **kwargs: pytest.fail("connection must not be opened"),
     )
-    provider = SynapseProvider(make_config(), "Driver=fake")
+    provider = SqlServerProvider(make_config(), "Driver=fake")
 
     result = asyncio.run(provider.execute_query(QueryRequest(sql="DELETE FROM sales.orders")))
 

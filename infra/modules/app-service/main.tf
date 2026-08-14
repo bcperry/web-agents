@@ -53,6 +53,7 @@ resource "azurerm_linux_web_app" "app_service" {
     # Azure SQL settings
     AZURE_SQL_CONNECTIONSTRING      = var.azure_sql_connectionstring
     SAP_EMULATOR_ENABLED            = tostring(var.sap_emulator_enabled)
+    SAP_EMULATOR_CONNECTIONSTRING   = var.sap_emulator_connectionstring
     SAP_EMULATOR_SERVER_FQDN        = var.sap_emulator_server_fqdn
     SAP_EMULATOR_DATABASE_NAME      = var.sap_emulator_database_name
     SAP_EMULATOR_ENTITLED_GROUP_IDS = var.sap_emulator_entitled_group_ids

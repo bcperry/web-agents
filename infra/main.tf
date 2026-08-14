@@ -23,7 +23,6 @@ locals {
   sap_emulator_default_server_name = substr(lower(replace("sql-${var.environment_name}-sap", "/[^0-9a-z-]/", "-")), 0, 63)
   sap_emulator_server_name         = trimspace(var.sap_emulator_sql_server_name) != "" ? lower(var.sap_emulator_sql_server_name) : local.sap_emulator_default_server_name
   sap_emulator_app_outbound_ips    = toset([for ip in split(",", var.sap_emulator_app_outbound_ips) : trimspace(ip) if trimspace(ip) != ""])
-  azure_sql_connectionstring       = local.sap_emulator_enabled ? module.sap_emulator[0].connection_string : var.azure_sql_connectionstring
 }
 
 # Resource group (only created if not using existing)
@@ -102,8 +101,11 @@ module "app_service" {
   azure_openai_model         = var.azure_openai_model
   azure_openai_api_key       = var.azure_openai_api_key
   azure_openai_api_version   = var.azure_openai_api_version
-  azure_sql_connectionstring = local.azure_sql_connectionstring
+  azure_sql_connectionstring = var.azure_sql_connectionstring
   sap_emulator_enabled       = local.sap_emulator_enabled
+  sap_emulator_connectionstring = (
+    local.sap_emulator_enabled ? module.sap_emulator[0].connection_string : ""
+  )
   sap_emulator_server_fqdn = (
     local.sap_emulator_enabled ? module.sap_emulator[0].server_fqdn : ""
   )

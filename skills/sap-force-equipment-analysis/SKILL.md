@@ -15,7 +15,7 @@ Query only `[reporting].[FORCE_EQUIPMENT]`. It is the approved semantic view and
 the SAP joins, current relationship dates, current equipment usage segment, functional-location
 hierarchy, material details, and active status text.
 
-The view reflects emulator context client `900`, plan version `01`, English, and as-of date
+The view reflects SAP context client `900`, plan version `01`, English, and an as-of date of
 `2026-08-10`. All identifiers, serials, assignments, and readiness records are synthetic and
 unclassified. Public Army nomenclature is representative, not an operational data claim.
 
@@ -26,9 +26,9 @@ needed. Do not query the raw `sap` or `emulator` schemas.
 
 | Column | Meaning |
 | --- | --- |
-| `FORCE_ID` | Eight-character SAP organizational object identifier; preserve leading zeros. |
-| `FE_SHORT` | Short force-element or unit label. |
-| `FE_STEXT` | Long force-element or unit name. |
+| `FORCE_ID` | Eight-character SAP organizational object identifier; preserve leading zeros. This is the stable key to filter on once a unit is resolved. |
+| `FE_SHORT` | Terse SAP unit code such as `B09/4-10CAV`. Users rarely type this exactly; never guess it. |
+| `FE_STEXT` | Long force-element or unit name such as `Bravo Company, TF 09, 4-10CAV`. User phrasing usually resembles this. |
 | `BEGDA` | Start date of the force-to-equipment assignment. |
 | `ENDDA` | End date of the force-to-equipment assignment. |
 | `EQUNR` | Eighteen-character SAP equipment number; preserve leading zeros. |
@@ -51,13 +51,38 @@ needed. Do not query the raw `sap` or `emulator` schemas.
 ## Analysis Workflow
 
 1. Identify the requested population, grouping, timeframe, and measure.
-2. Aggregate first. For a broad question, return counts or top-N groups rather than assignment rows.
-3. Query the semantic view with only the columns needed and use selective predicates when available.
-4. Retrieve detail only when explicitly requested and scoped to a unit, status, location, or equipment.
-5. Bound detail with `TOP (20)` by default and use an explicit `ORDER BY`, normally `FORCE_ID, EQUNR`.
-6. Check tool status, warnings, and `truncated`. Never treat omitted rows as absent.
-7. State the as-of date when presenting readiness or assignment findings.
-8. Translate column names into operational language unless the user asks for technical details.
+2. If the user names a unit, resolve it to a `FORCE_ID` first. See "Resolving a Named Unit".
+3. Aggregate first. For a broad question, return counts or top-N groups rather than assignment rows.
+4. Query the semantic view with only the columns needed and use selective predicates when available.
+5. Retrieve detail only when explicitly requested and scoped to a unit, status, location, or equipment.
+6. Bound detail with `TOP (20)` by default and use an explicit `ORDER BY`, normally `FORCE_ID, EQUNR`.
+7. Check tool status, warnings, and `truncated`. Never treat omitted rows as absent.
+8. State the as-of date when presenting readiness or assignment findings.
+9. Translate column names into operational language unless the user asks for technical details.
+
+## Resolving a Named Unit
+
+Never filter on a guessed `FE_SHORT` with `=`. The short code is a terse SAP label such as
+`B09/4-10CAV`, while users normally type something closer to `FE_STEXT`
+(`Bravo Company, TF 09, 4-10CAV`) or an informal variant of it. An exact match on an invented code
+returns zero rows, and zero rows here means "my guess was wrong", not "the unit does not exist".
+
+Resolve in one bounded lookup, then query by the returned `FORCE_ID`:
+
+1. Split the user's phrase into its most distinctive tokens. Prefer the parent unit designator
+   (`4-10CAV`), the task-force or company number (`TF 09`, `B09`), and the company word (`BRAVO`).
+   Drop filler such as "company", "co", "unit", "the".
+2. Match two tokens with `AND`, each tested against both `FE_STEXT` and `FE_SHORT`, wrapping the
+   column and the parameter in `UPPER(...)` and binding `%TOKEN%` values.
+3. Act on the candidate count:
+   - **Exactly one** — use its `FORCE_ID` and name the unit you resolved to.
+   - **Several** — if one candidate matches every token the user supplied, use it and state the
+     assumption in one clause. Otherwise list the candidates and ask which one.
+   - **None** — retry once with only the single most distinctive token. If that is still empty,
+     say the unit is not present and show the nearest candidates you did find.
+4. Run the detail or summary query against `[FORCE_ID] = ?`. It is the stable key; labels are not.
+
+Do not describe this lookup step to the user. Report the resolved unit, not the search.
 
 ## Scale-Safe Defaults
 
@@ -90,7 +115,7 @@ needed. Do not query the raw `sap` or `emulator` schemas.
 - Use `COALESCE` only for presentation. Do not convert missing DODAC or location values into facts.
 - Use exact readiness values returned by the data. Do not infer FMC, PMC, NMCM, or NMCS from
   equipment type or location.
-- The view is already current as of the emulator context date. `BEGDA` and `ENDDA` describe the
+- The view is already current as of the `2026-08-10` context date. `BEGDA` and `ENDDA` describe the
   assignment validity; they are not maintenance-event dates.
 
 ## Reliable Query Patterns
@@ -131,13 +156,27 @@ WHERE [USR_STATUS] IN (
   ORDER BY [EQUIPMENT_COUNT] DESC, [FORCE_ID]
 ```
 
-Equipment for one unit using a bound parameter:
+Resolve a unit the user named, using two distinctive tokens:
+
+```sql
+SELECT DISTINCT TOP (10) [FORCE_ID], [FE_SHORT], [FE_STEXT]
+FROM [reporting].[FORCE_EQUIPMENT]
+WHERE (UPPER([FE_STEXT]) LIKE UPPER(?) OR UPPER([FE_SHORT]) LIKE UPPER(?))
+  AND (UPPER([FE_STEXT]) LIKE UPPER(?) OR UPPER([FE_SHORT]) LIKE UPPER(?))
+ORDER BY [FE_SHORT]
+```
+
+For "tell me about Bravo Company, TF 09, 4-10CAV" bind `%BRAVO%`, `%BRAVO%`, `%TF 09%`, `%TF 09%`,
+which resolves to a single `FORCE_ID`. Binding `%BRAVO%` with `%4-10CAV%` instead returns the whole
+`B**/4-10CAV` family, so prefer the token that carries the company or task-force number.
+
+Equipment for one resolved unit:
 
 ```sql
 SELECT TOP (20) [FORCE_ID], [FE_SHORT], [EQUNR], [EQKTX], [MATKL], [TPLNR],
        [USR_STATUS]
 FROM [reporting].[FORCE_EQUIPMENT]
-WHERE [FE_SHORT] = ?
+WHERE [FORCE_ID] = ?
 ORDER BY [FORCE_ID], [EQUNR]
 ```
 
@@ -168,10 +207,12 @@ ORDER BY [HEQUI], [EQUNR]
 - Null `DODAC`, `TPLNR`, `TPLMA`, `FL_LEVEL`, or `SWERK` is allowed by the semantic model.
 - Status fields can contain multiple comma-separated active statuses. For exact membership across
   such values, avoid naive substring conclusions; retrieve the row and explain the combined text.
-- If the result is truncated, narrow the query or aggregate it. Only reuse a continuation object
-  unchanged when the tool supplies one and the SQL and parameters are identical.
+- If the result is truncated, narrow the query or aggregate it. The tools do not page, so a
+  truncated result is never evidence that the omitted rows do not exist.
 - If a question asks for history, work orders, faults, parts demand, quantities, costs, personnel,
   or operational locations beyond this view, state that the available data cannot answer it.
+- Zero rows from an equality filter on a name or code means the filter value was wrong, not that the
+  unit or equipment is absent. Re-resolve with the fuzzy lookup before reporting an absence.
 
 ## Response Style
 
@@ -179,5 +220,8 @@ Lead with the result and the `2026-08-10` as-of date when relevant. Distinguish 
 rows from counts of unique equipment. Mention material, location, or status gaps only when they
 affect the requested conclusion. Do not expose SQL, schema names, tool names, connection details,
 or internal authorization behavior unless the user explicitly asks for technical implementation.
+Name the source as the force-equipment record, never as an emulator, fixture, test database, or
+synthetic dataset. Write "as of 2026-08-10", not "as of the SAP emulator". If the user asks whether
+the data is real, say plainly that it is synthetic and unclassified.
 Keep the initial response compact: normally one short conclusion plus a table of no more than 10
 summary rows. Do not print raw fleet records merely because they are available.

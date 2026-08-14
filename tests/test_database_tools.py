@@ -14,8 +14,8 @@ from database import (
     MAX_QUERY_RESULT_CHARS,
     MAX_QUERY_RESULT_ROWS,
     MAX_SQL_CELL_CHARS,
-    PARTIAL_RESULT_WARNING,
     TIMEZONE_NAIVE_WARNING,
+    UNORDERED_RESULT_WARNING,
     AgentDatabaseGrant,
     AuthenticationError,
     AuthorizationError,
@@ -52,8 +52,6 @@ def make_config(**overrides) -> DatabaseProviderConfig:
         host="hana.internal.example",
         port=30015,
         database="HDB",
-        tls_required=True,
-        tls_server_name="hana.internal.example",
     )
     base.update(overrides)
     return DatabaseProviderConfig(**base)
@@ -167,21 +165,13 @@ def test_config_fingerprint_is_stable_and_change_sensitive():
     b = make_config()
     assert a.config_fingerprint == b.config_fingerprint
     assert a.config_fingerprint != make_config(port=30013).config_fingerprint
-    assert a.config_fingerprint != make_config(tls_server_name="other").config_fingerprint
+    assert a.config_fingerprint != make_config(database="OTHER").config_fingerprint
+    assert a.config_fingerprint != make_config(approved_schemas=["sales"]).config_fingerprint
 
 
-def test_config_fingerprint_excludes_secret_uris():
-    a = make_config()
-    b = make_config(credential_secret_uri="https://kv.vault.azure.net/secrets/x/1")
-    assert a.config_fingerprint != b.config_fingerprint
-    assert "https://kv.vault.azure.net/secrets/x/1" not in repr(a.config_fingerprint)
-
-
-def test_hana_cannot_enable_without_required_settings():
+def test_config_rejects_unknown_environment():
     with pytest.raises(ValidationError):
-        make_config(enabled=True, tls_server_name=None)
-    with pytest.raises(ValidationError):
-        make_config(enabled=True, tls_required=False)
+        make_config(environment="production")
 
 
 def test_approved_schemas_normalized_for_comparison():
@@ -281,18 +271,17 @@ def test_normalize_unknown_type_falls_back_to_string():
 
 
 def test_untruncated_result_reports_no_limit():
-    bounded = bound_result_rows([[1], [2]], max_rows=10, stable_order=True)
+    bounded = bound_result_rows([[1], [2]], max_rows=10, has_explicit_order=True)
     assert bounded.rows == [[1], [2]]
     assert bounded.truncated is False
     assert bounded.truncated_by is None
     assert bounded.limits_reached == frozenset()
     assert bounded.has_more is False
-    assert bounded.continuation_allowed is True
 
 
 def test_row_limit_uses_limit_plus_one_semantics():
     fetched = [[i] for i in range(6)]  # provider fetched max_rows + 1
-    bounded = bound_result_rows(fetched, max_rows=5, stable_order=True)
+    bounded = bound_result_rows(fetched, max_rows=5, has_explicit_order=True)
     assert len(bounded.rows) == 5
     assert bounded.has_more is True
     assert bounded.truncated is True
@@ -303,7 +292,7 @@ def test_row_limit_uses_limit_plus_one_semantics():
 def test_character_limit_can_trigger_before_row_limit():
     fetched = [["x" * 100] for _ in range(50)]
     bounded = bound_result_rows(
-        fetched, max_rows=100, max_result_chars=500, stable_order=True
+        fetched, max_rows=100, max_result_chars=500, has_explicit_order=True
     )
     assert bounded.has_more is False
     assert bounded.truncated is True
@@ -314,7 +303,9 @@ def test_character_limit_can_trigger_before_row_limit():
 
 def test_cell_limit_reported_and_value_truncated():
     fetched = [["y" * 50]]
-    bounded = bound_result_rows(fetched, max_rows=10, max_cell_chars=10, stable_order=True)
+    bounded = bound_result_rows(
+        fetched, max_rows=10, max_cell_chars=10, has_explicit_order=True
+    )
     assert bounded.truncated is True
     assert bounded.truncated_by is TruncationLimit.CELL_CHAR_LIMIT
     assert bounded.limits_reached == frozenset({TruncationLimit.CELL_CHAR_LIMIT})
@@ -325,7 +316,7 @@ def test_cell_limit_reported_and_value_truncated():
 def test_multiple_limits_are_all_reported():
     fetched = [["z" * 50] for _ in range(4)]
     bounded = bound_result_rows(
-        fetched, max_rows=3, max_cell_chars=10, stable_order=True
+        fetched, max_rows=3, max_cell_chars=10, has_explicit_order=True
     )
     assert bounded.limits_reached == frozenset(
         {TruncationLimit.ROW_LIMIT, TruncationLimit.CELL_CHAR_LIMIT}
@@ -333,37 +324,42 @@ def test_multiple_limits_are_all_reported():
     assert bounded.truncated_by is TruncationLimit.ROW_LIMIT
 
 
-def test_unordered_truncation_is_marked_partial_without_continuation():
+def test_unordered_truncation_is_marked_partial():
     fetched = [[i] for i in range(6)]
-    bounded = bound_result_rows(fetched, max_rows=5, stable_order=False)
+    bounded = bound_result_rows(fetched, max_rows=5, has_explicit_order=False)
     assert bounded.truncated is True
-    assert bounded.continuation_allowed is False
-    assert PARTIAL_RESULT_WARNING in bounded.warnings
+    assert UNORDERED_RESULT_WARNING in bounded.warnings
 
 
-def test_ordered_truncation_allows_continuation():
+def test_ordered_truncation_omits_the_unordered_warning():
     fetched = [[i] for i in range(6)]
-    bounded = bound_result_rows(fetched, max_rows=5, stable_order=True)
-    assert bounded.continuation_allowed is True
-    assert PARTIAL_RESULT_WARNING not in bounded.warnings
+    bounded = bound_result_rows(fetched, max_rows=5, has_explicit_order=True)
+    assert UNORDERED_RESULT_WARNING not in bounded.warnings
+
+
+def test_unordered_but_complete_result_is_not_warned():
+    bounded = bound_result_rows([[1]], max_rows=5, has_explicit_order=False)
+    assert bounded.truncated is False
+    assert bounded.warnings == []
 
 
 def test_timezone_naive_values_add_a_warning():
     bounded = bound_result_rows(
-        [[dt.datetime(2026, 1, 1, 0, 0, 0)]], max_rows=10, stable_order=True
+        [[dt.datetime(2026, 1, 1, 0, 0, 0)]], max_rows=10, has_explicit_order=True
     )
     assert TIMEZONE_NAIVE_WARNING in bounded.warnings
 
 
-def test_bounding_infers_column_types():
+def test_bounding_normalizes_values_without_typing_columns():
     bounded = bound_result_rows(
-        [[None, Decimal("1.5")], [1, Decimal("2.5")]], max_rows=10, stable_order=True
+        [[None, Decimal("1.5")], [1, Decimal("2.5")]], max_rows=10, has_explicit_order=True
     )
-    assert bounded.column_types == (NormalizedType.INTEGER, NormalizedType.DECIMAL)
+    assert bounded.rows == [[None, "1.5"], [1, "2.5"]]
+    assert not hasattr(bounded, "column_types")
 
 
 def test_bounding_defaults_to_shared_limits():
-    bounded = bound_result_rows([[1]], stable_order=True)
+    bounded = bound_result_rows([[1]], has_explicit_order=True)
     assert bounded.applied_limits == (
         MAX_QUERY_RESULT_ROWS,
         MAX_QUERY_RESULT_CHARS,
@@ -376,22 +372,21 @@ def test_bounding_defaults_to_shared_limits():
 # --------------------------------------------------------------------------
 
 ERROR_CASES = [
-    (ValidationError, QueryStatus.VALIDATION_ERROR, False),
-    (AuthenticationError, QueryStatus.AUTHENTICATION_ERROR, False),
-    (AuthorizationError, QueryStatus.AUTHORIZATION_ERROR, False),
-    (TrustError, QueryStatus.TRUST_ERROR, False),
-    (ConfigurationError, QueryStatus.CONFIGURATION_ERROR, False),
-    (TransientError, QueryStatus.TRANSIENT_ERROR, True),
-    (QueryError, QueryStatus.QUERY_ERROR, False),
+    (ValidationError, QueryStatus.VALIDATION_ERROR),
+    (AuthenticationError, QueryStatus.AUTHENTICATION_ERROR),
+    (AuthorizationError, QueryStatus.AUTHORIZATION_ERROR),
+    (TrustError, QueryStatus.TRUST_ERROR),
+    (ConfigurationError, QueryStatus.CONFIGURATION_ERROR),
+    (TransientError, QueryStatus.TRANSIENT_ERROR),
+    (QueryError, QueryStatus.QUERY_ERROR),
 ]
 
 
-@pytest.mark.parametrize("error_type,status,retryable", ERROR_CASES, ids=[c[1].value for c in ERROR_CASES])
-def test_error_category_mapping(error_type, status, retryable):
+@pytest.mark.parametrize("error_type,status", ERROR_CASES, ids=[c[1].value for c in ERROR_CASES])
+def test_error_category_mapping(error_type, status):
     error = error_type("safe message")
     assert isinstance(error, DatabaseError)
     assert error.status is status
-    assert error.retryable is retryable
 
 
 def test_error_result_is_sanitized_and_empty():
@@ -402,13 +397,21 @@ def test_error_result_is_sanitized_and_empty():
     assert result.rows == []
     assert result.row_count == 0
     assert result.truncated is False
-    assert result.continuation is None
     assert result.correlation_id == "corr-1"
     payload = result.to_dict()
     serialized = str(payload)
     for leak in ("hunter2", "hana.internal.example", "secret_column"):
         assert leak not in serialized
     assert "cause" not in payload
+
+
+def test_error_schema_result_is_sanitized_and_empty():
+    error = AuthorizationError("denied", cause=RuntimeError("secret detail"))
+    payload = error.to_schema_result(provider=ProviderId.HANA, correlation_id="corr-4").to_dict()
+    assert payload["status"] == "authorization_error"
+    assert payload["objects"] == []
+    assert payload["message"] == "denied"
+    assert "secret detail" not in str(payload)
 
 
 def test_success_result_serialization_shape():
@@ -425,7 +428,6 @@ def test_success_result_serialization_shape():
     assert payload["rows"] == [[1]]
     assert payload["row_count"] == 1
     assert payload["truncated"] is False
-    assert payload["continuation"] is None
     assert payload["warnings"] == []
     assert payload["correlation_id"] == "corr-2"
 

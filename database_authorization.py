@@ -17,7 +17,7 @@ import inspect
 import json
 import logging
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Protocol, runtime_checkable
@@ -26,7 +26,6 @@ from database import (
     AgentDatabaseGrant,
     AuthorizationError,
     Capability,
-    Environment,
     QueryStatus,
     new_correlation_id,
 )
@@ -47,7 +46,6 @@ class DenialReason(str, Enum):
 
     TENANT_NOT_CONFIGURED = "tenant_not_configured"
     CAPABILITY_NOT_GRANTED = "capability_not_granted"
-    ENVIRONMENT_MISMATCH = "environment_mismatch"
     NOT_ENTITLED = "not_entitled"
     MEMBERSHIP_UNRESOLVED = "membership_unresolved"
 
@@ -70,8 +68,7 @@ class GroupMembershipResolver(Protocol):
     return a partial set when membership cannot be proven.
     """
 
-    def resolve_transitive_group_ids(self, *, user_id: str, tenant_id: str) -> Iterable[str]:
-        ...
+    def resolve_transitive_group_ids(self, *, user_id: str, tenant_id: str) -> Iterable[str]: ...
 
 
 class FailClosedGroupMembershipResolver:
@@ -105,13 +102,9 @@ class DatabaseAuditEvent:
         return asdict(self)
 
 
-AUDIT_EVENT_FIELDS = frozenset(f.name for f in fields(DatabaseAuditEvent))
-
-
 @runtime_checkable
 class AuditSink(Protocol):
-    def emit(self, event: DatabaseAuditEvent) -> None:
-        ...
+    def emit(self, event: DatabaseAuditEvent) -> None: ...
 
 
 class LoggingAuditSink:
@@ -122,7 +115,9 @@ class LoggingAuditSink:
 
     def emit(self, event: DatabaseAuditEvent) -> None:
         payload = json.dumps(event.to_dict(), sort_keys=True)
-        level = logging.WARNING if event.outcome in (OUTCOME_DENIED, OUTCOME_ERROR) else logging.INFO
+        level = (
+            logging.WARNING if event.outcome in (OUTCOME_DENIED, OUTCOME_ERROR) else logging.INFO
+        )
         self._logger.log(level, "database_tool_attempt %s", payload)
 
 
@@ -139,14 +134,16 @@ class DatabaseSubject:
     tenant_id: str | None
     agent_id: str
     grant: AgentDatabaseGrant
-    environment: Environment
     token_group_ids: Sequence[str] = ()
-    groups_overage: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(
             self, "token_group_ids", tuple(str(group) for group in (self.token_group_ids or ()))
         )
+
+    @property
+    def environment(self) -> str:
+        return self.grant.environment.value
 
 
 @dataclass(frozen=True)
@@ -167,9 +164,7 @@ def subject_from_user(user: Any, *, agent_id: str, grant: AgentDatabaseGrant) ->
         tenant_id=getattr(user, "tenant_id", None),
         agent_id=agent_id,
         grant=grant,
-        environment=grant.environment,
         token_group_ids=tuple(getattr(user, "group_ids", ()) or ()),
-        groups_overage=bool(getattr(user, "groups_overage", False)),
     )
 
 
@@ -178,9 +173,7 @@ def _utc_now() -> datetime:
 
 
 async def _maybe_await(value: Any) -> Any:
-    if inspect.isawaitable(value):
-        return await value
-    return value
+    return await value if inspect.isawaitable(value) else value
 
 
 # ---------------------------------------------------------------------------
@@ -217,19 +210,12 @@ class DatabaseAuthorizer:
     def allowed_tenant_ids(self) -> frozenset[str]:
         return self._tenant_ids
 
-    def invalidate(self, *, user_id: str | None = None, tenant_id: str | None = None) -> None:
-        """Drop cached membership so the next attempt re-resolves immediately."""
-        if user_id is None and tenant_id is None:
-            self._cache.clear()
-            return
-        for key in [
-            key
-            for key in self._cache
-            if (tenant_id is None or key[0] == tenant_id) and (user_id is None or key[1] == user_id)
-        ]:
-            self._cache.pop(key, None)
+    def now(self) -> datetime:
+        return self._clock()
 
-    async def evaluate(self, subject: DatabaseSubject, capability: Capability) -> AuthorizationDecision:
+    async def evaluate(
+        self, subject: DatabaseSubject, capability: Capability
+    ) -> AuthorizationDecision:
         """Decide without auditing; callers that audit must emit exactly one event."""
         correlation_id = new_correlation_id()
         tenant_id = str(subject.tenant_id or "").strip()
@@ -237,8 +223,6 @@ class DatabaseAuthorizer:
             return AuthorizationDecision(False, correlation_id, DenialReason.TENANT_NOT_CONFIGURED)
         if not subject.grant.allows(capability):
             return AuthorizationDecision(False, correlation_id, DenialReason.CAPABILITY_NOT_GRANTED)
-        if subject.environment is not subject.grant.environment:
-            return AuthorizationDecision(False, correlation_id, DenialReason.ENVIRONMENT_MISMATCH)
         if not subject.grant.entitled_groups:
             return AuthorizationDecision(False, correlation_id, DenialReason.NOT_ENTITLED)
         if subject.token_group_ids and subject.grant.entitles_groups(subject.token_group_ids):
@@ -274,14 +258,6 @@ class DatabaseAuthorizer:
         )
         return decision
 
-    async def authorize_grant(self, subject: DatabaseSubject) -> bool:
-        """Authorize every capability the grant carries; one event per capability."""
-        allowed = False
-        for capability in sorted(subject.grant.capabilities, key=lambda item: item.value):
-            decision = await self.authorize(subject, capability)
-            allowed = allowed or decision.allowed
-        return allowed
-
     def emit_audit(
         self,
         subject: DatabaseSubject,
@@ -300,7 +276,7 @@ class DatabaseAuthorizer:
             tenant_id=subject.tenant_id,
             agent_id=subject.agent_id,
             provider=subject.grant.provider_id.value,
-            environment=subject.environment.value,
+            environment=subject.environment,
             capability=capability.value,
             correlation_id=correlation_id,
             duration_ms=duration_ms,
@@ -314,10 +290,9 @@ class DatabaseAuthorizer:
         except Exception:  # noqa: BLE001 — auditing must not break the caller
             logger.exception("Database audit sink failed for correlation %s", correlation_id)
 
-    def now(self) -> datetime:
-        return self._clock()
-
-    async def _resolve_groups(self, subject: DatabaseSubject, tenant_id: str) -> frozenset[str] | None:
+    async def _resolve_groups(
+        self, subject: DatabaseSubject, tenant_id: str
+    ) -> frozenset[str] | None:
         key = (tenant_id, subject.user_id)
         now = self._clock()
         cached = self._cache.get(key)
@@ -325,7 +300,9 @@ class DatabaseAuthorizer:
             return cached[0]
         self._cache.pop(key, None)
         raw = await _maybe_await(
-            self.resolver.resolve_transitive_group_ids(user_id=subject.user_id, tenant_id=tenant_id)
+            self.resolver.resolve_transitive_group_ids(
+                user_id=subject.user_id, tenant_id=tenant_id
+            )
         )
         if raw is None:
             return None
@@ -341,40 +318,32 @@ class DatabaseAuthorizer:
 
 
 def guard_database_tools(
-    tools: Mapping[str, Any] | Iterable[Any],
+    tools: Mapping[Capability, Any],
     *,
     authorizer: DatabaseAuthorizer,
     subject: DatabaseSubject,
-) -> Any:
-    """Wrap provider-bound tools so membership is re-checked before each call."""
-    if isinstance(tools, Mapping):
-        return {
-            name: _guard_tool(tool, name=name, authorizer=authorizer, subject=subject)
-            for name, tool in tools.items()
-        }
-    return [
-        _guard_tool(
-            tool,
-            name=str(getattr(tool, "__name__", "")),
-            authorizer=authorizer,
-            subject=subject,
+) -> dict[str, Any]:
+    """Wrap capability-keyed tools so membership is re-checked before every call.
+
+    The returned mapping is keyed by model-facing tool name. That is the only
+    place a capability becomes a string, so renaming a tool cannot silently
+    unbind it from its guard.
+    """
+    return {
+        capability.value: _guard_tool(
+            tool, capability=capability, authorizer=authorizer, subject=subject
         )
-        for tool in tools
-    ]
+        for capability, tool in tools.items()
+    }
 
 
 def _guard_tool(
     tool: Any,
     *,
-    name: str,
+    capability: Capability,
     authorizer: DatabaseAuthorizer,
     subject: DatabaseSubject,
 ) -> Any:
-    try:
-        capability = Capability(name)
-    except ValueError:
-        return tool
-
     @functools.wraps(tool)
     async def guarded(*args: Any, **kwargs: Any) -> Any:
         decision = await authorizer.evaluate(subject, capability)
@@ -435,23 +404,14 @@ def _result_metadata(result: Any) -> tuple[str, int, bool]:
 def _denied_payload(
     capability: Capability, subject: DatabaseSubject, correlation_id: str
 ) -> dict[str, Any]:
-    from database import SchemaDiscoveryResult
-
     error = AuthorizationError(DENIED_MESSAGE)
+    provider = subject.grant.provider_id
     if capability is Capability.DATABASE_SCHEMA:
-        return SchemaDiscoveryResult(
-            provider=subject.grant.provider_id,
-            correlation_id=correlation_id,
-            status=error.status,
-            message=error.message,
-        ).to_dict()
-    return error.to_result(
-        provider=subject.grant.provider_id, correlation_id=correlation_id
-    ).to_dict()
+        return error.to_schema_result(provider=provider, correlation_id=correlation_id).to_dict()
+    return error.to_result(provider=provider, correlation_id=correlation_id).to_dict()
 
 
 __all__ = [
-    "AUDIT_EVENT_FIELDS",
     "MAX_MEMBERSHIP_CACHE_SECONDS",
     "AuditSink",
     "AuthorizationDecision",

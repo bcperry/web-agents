@@ -179,9 +179,10 @@ def test_sap_session_reports_authorized_database_tools(client, monkeypatch):
     async def database_query():
         return {}
 
-    async def fake_authorized_database_tools(ctx, *, user, agent_id, session_id, logger):
+    async def fake_database_tools(ctx, *, user, agent_id, tool_names, logger):
         assert agent_id == "sap_force_equipment"
-        return [database_schema, database_query]
+        assert {"database_schema", "database_query"} <= tool_names
+        return {"database_schema": database_schema, "database_query": database_query}
 
     def fake_create_chat_runtime(**kwargs):
         return SimpleNamespace(
@@ -195,11 +196,7 @@ def test_sap_session_reports_authorized_database_tools(client, monkeypatch):
     async def fake_connect_mcp_servers(configs, *, user_token=None):
         return [], []
 
-    monkeypatch.setattr(
-        session_orchestration,
-        "_authorized_database_tools",
-        fake_authorized_database_tools,
-    )
+    monkeypatch.setattr(session_orchestration, "_database_tools", fake_database_tools)
     monkeypatch.setattr(session_orchestration, "create_chat_runtime", fake_create_chat_runtime)
     monkeypatch.setattr(session_orchestration, "connect_mcp_servers", fake_connect_mcp_servers)
 
@@ -212,6 +209,38 @@ def test_sap_session_reports_authorized_database_tools(client, monkeypatch):
         "database_schema",
         "database_query",
     ]
+
+
+def test_sap_session_omits_database_tools_when_unentitled(client, monkeypatch):
+    import session_orchestration
+
+    class DummySession:
+        def to_dict(self):
+            return {"items": []}
+
+    async def fake_database_tools(ctx, *, user, agent_id, tool_names, logger):
+        return {}
+
+    def fake_create_chat_runtime(**kwargs):
+        return SimpleNamespace(
+            agent=object(),
+            session=DummySession(),
+            tools=kwargs.get("function_tools", []),
+            prompt_manifest={},
+            prompt_logical_profile="sap_force_equipment",
+        )
+
+    async def fake_connect_mcp_servers(configs, *, user_token=None):
+        return [], []
+
+    monkeypatch.setattr(session_orchestration, "_database_tools", fake_database_tools)
+    monkeypatch.setattr(session_orchestration, "create_chat_runtime", fake_create_chat_runtime)
+    monkeypatch.setattr(session_orchestration, "connect_mcp_servers", fake_connect_mcp_servers)
+
+    response = client.post("/api/sessions", json={"profile_id": "sap_force_equipment"})
+
+    assert response.status_code == 201
+    assert response.json()["tools_loaded"] == ["get_user_profile", "save_user_profile"]
 
 
 def test_custom_session_preserves_runtime_request_and_response(client, monkeypatch):
@@ -582,53 +611,18 @@ def test_custom_session_creation_tool_grants_are_exact(client, monkeypatch):
         assert loaded == set(selected)
 
 
-def test_database_tools_require_matching_grant_and_registered_provider():
-    from app_context import DatabaseProviderRegistry, build_tool_instances
-    from database import (
-        AgentDatabaseGrant,
-        Capability,
-        Environment,
-        ProviderId,
-        QueryResult,
-        SchemaDiscoveryResult,
-        new_correlation_id,
-    )
+def test_custom_agents_cannot_select_database_capabilities():
+    from database import DATABASE_TOOL_NAMES
+    from prompt_config import load_agents_yaml
+    from validators import known_tool_names_from_profiles
 
-    class Provider:
-        provider_id = ProviderId.SYNAPSE
+    profiles = load_agents_yaml()["profiles"]
+    declared = {
+        name for entry in profiles.values() for name in (entry.get("tools") or [])
+    }
 
-        async def connect(self):
-            pass
-
-        async def close(self):
-            pass
-
-        async def discover_schema(self, request):
-            return SchemaDiscoveryResult(
-                provider=self.provider_id, correlation_id=new_correlation_id()
-            )
-
-        async def execute_query(self, request):
-            return QueryResult(
-                provider=self.provider_id, correlation_id=new_correlation_id()
-            )
-
-    registry = DatabaseProviderRegistry([Provider()])
-    assert build_tool_instances(set(), session_id="ordinary", database_registry=registry) == []
-
-    grant = AgentDatabaseGrant(
-        provider_id=ProviderId.SYNAPSE,
-        capabilities={Capability.DATABASE_QUERY},
-        entitled_groups=["test-group"],
-        environment=Environment.LOCAL,
-    )
-    tools = build_tool_instances(
-        set(),
-        session_id="granted",
-        database_grant=grant,
-        database_registry=registry,
-    )
-    assert [tool.__name__ for tool in tools] == ["database_query"]
+    assert DATABASE_TOOL_NAMES & declared, "a built-in profile should declare database tools"
+    assert not known_tool_names_from_profiles(profiles) & DATABASE_TOOL_NAMES
 
 
 # ---------------------------------------------------------------------------

@@ -82,6 +82,7 @@ def validate_prompt(value: object, *, max_chars: int, field_name: str = "custom_
 
 def known_tool_names_from_profiles(profiles_data: dict) -> set[str]:
 	from app_context import function_tool_registry
+	from database import DATABASE_TOOL_NAMES
 
 	known_tools: set[str] = set(function_tool_registry())
 	for entry in profiles_data.values():
@@ -89,7 +90,8 @@ def known_tool_names_from_profiles(profiles_data: dict) -> set[str]:
 			for tool_name in entry.get("tools") or []:
 				if isinstance(tool_name, str):
 					known_tools.add(tool_name)
-	return known_tools
+	# Database capabilities are entitlement-bound and stay exclusive to built-in profiles.
+	return known_tools - DATABASE_TOOL_NAMES
 
 
 def validate_tool_names(raw_tools: object, known_tools: set[str], field_name: str = "custom_tools") -> list[str]:

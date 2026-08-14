@@ -10,20 +10,11 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-import pyodbc
-from azure.identity import DefaultAzureCredential
-
-from tools import _get_token_struct
+from database_odbc import OdbcConnector
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
-AZURE_GOVERNMENT_SQL_SCOPE = "https://database.usgovcloudapi.net/.default"
-SQL_COPT_SS_ACCESS_TOKEN = 1256
 
 _GO_LINE = re.compile(r"^\s*GO\s*(?:--.*)?$", flags=re.IGNORECASE)
-_AUTHENTICATION_ATTRIBUTE = re.compile(
-    r";?\s*Authentication=[^;]+", flags=re.IGNORECASE
-)
-_USER_ATTRIBUTE = re.compile(r";?\s*(?:Uid|User ID)=[^;]+", flags=re.IGNORECASE)
 
 
 class MigrationConfigurationError(ValueError):
@@ -76,17 +67,7 @@ def open_connection(connection_string: str) -> Any:
         raise MigrationConfigurationError(
             "SAP_EMULATOR_CONNECTIONSTRING or AZURE_SQL_CONNECTIONSTRING is required."
         )
-    uses_entra = "authentication=activedirectory" in connection_string.lower()
-    kwargs: dict[str, Any] = {"autocommit": True}
-    if uses_entra:
-        sanitized = _AUTHENTICATION_ATTRIBUTE.sub("", connection_string)
-        sanitized = _USER_ATTRIBUTE.sub("", sanitized).strip("; ")
-        token = DefaultAzureCredential().get_token(AZURE_GOVERNMENT_SQL_SCOPE)
-        kwargs["attrs_before"] = {
-            SQL_COPT_SS_ACCESS_TOKEN: _get_token_struct(token.token)
-        }
-        connection_string = sanitized
-    return pyodbc.connect(connection_string, **kwargs)
+    return OdbcConnector(connection_string).open(autocommit=True)
 
 
 def _quoted_identifier(value: str) -> str:

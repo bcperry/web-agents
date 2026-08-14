@@ -16,8 +16,7 @@ Returns bounded metadata for the provider bound to the current agent grant.
 ```text
 database_schema(
   schema: string | null = null,
-  object_name: string | null = null,
-  continuation: object | null = null
+  object_name: string | null = null
 ) -> SchemaDiscoveryResult
 ```
 
@@ -38,14 +37,12 @@ Executes one bounded read query through the provider bound to the current agent 
 ```text
 database_query(
   sql: string,
-  parameters: list[scalar] | null = null,
-  continuation: object | null = null
+  parameters: list[scalar] | null = null
 ) -> QueryResult
 ```
 
 `sql` is 1-20,000 Unicode characters. `parameters` contains at most 100 positional scalars and its
-RFC 8785 JSON Canonicalization Scheme encoding is at most 16,384 UTF-8 bytes. The same bytes are
-used for the continuation parameter hash, preserving JSON scalar types. A scalar is null, boolean, signed 64-bit integer,
+canonical JSON encoding is at most 16,384 UTF-8 bytes. A scalar is null, boolean, signed 64-bit integer,
 finite IEEE-754 number, or an untyped Unicode string up to 4,096 characters. Strings receive no
 decimal/date inference; callers use an explicit provider-valid SQL `CAST` when semantic typing is
 required. Binary, nested collections/maps, NaN, and infinities are rejected.
@@ -79,29 +76,17 @@ Rejected before execution:
 Validation uses a HANA-aware parser/tokenizer selected by a focused spike. A keyword prefix or regex
 alone is not an acceptable validator. Database grants remain the final write-prevention boundary.
 
-## Paging and Truncation
+## Truncation
+
+The tools do not page. A truncated result is a prompt to narrow the query, never a cursor.
 
 - The provider fetches at most `max_rows + 1` rows to detect additional data without materializing
   an unbounded result.
-- Deterministic continuation requires an explicit stable `ORDER BY` whose final tie-breaker is a
-  database-declared unique key or an operator-configured unique key approved in provider
-  configuration. Model assertion alone never proves uniqueness. Composite keys and mixed
-  directions are supported; null ordering must be explicit and provider-normalized.
-- The continuation object has `version`, opaque signed `token`, `expires_at`, and `guidance`.
-  Server-side token claims bind provider/environment, normalized SQL hash, positional-parameter
-  hash, ordered key columns/directions/null rules, normalized last-key values, result limits,
-  configuration fingerprint, issued time, and expiry. Values are integrity-protected and are not
-  independently editable model inputs.
-- A changed query/parameter/limit/configuration, expired token, invalid signature, unsupported
-  version, or malformed/composite/null key fails with `validation_error`; it never restarts at page
-  one. Parameter values are preserved only through the integrity-protected token and are never
-  logged.
-- If no stable order exists, the result sets `truncated=true`, returns no false completeness claim,
-  and tells the caller to issue a narrower query with stable ordering. Offset-only continuation is
-  not treated as deterministic under concurrent data changes.
 - Character-limit truncation can occur before the row limit. The result identifies which limit was
   reached and never interprets omitted values as absent.
-- Schema discovery pages by stable `(schema_name, object_name, ordinal_position)` ordering.
+- A truncated result from a query without an explicit `ORDER BY` additionally warns that the
+  omitted rows are arbitrary, so the caller re-issues with an explicit ordering.
+- Schema discovery is bounded by the same row limit and reports truncation the same way.
 
 ## Normalized Types and Serialization
 
@@ -158,6 +143,6 @@ Before implementation, approve fixtures that define:
 
 - Existing Azure Synapse tool names or the migration mapping to these proposed names.
 - Representative schema and query inputs.
-- Result columns/types, truncation and continuation behavior.
+- Result columns/types and truncation behavior.
 - Error categories and redaction expectations.
 - Whether any agent needs simultaneous Synapse and HANA access; if yes, approve distinct aliases.
