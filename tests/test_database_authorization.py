@@ -1,6 +1,7 @@
 """Offline tests for database entitlement authorization and metadata-only auditing."""
 
 import asyncio
+import dataclasses
 import json
 import logging
 from datetime import datetime, timedelta, timezone
@@ -22,8 +23,8 @@ from database import (
     new_correlation_id,
 )
 from database_authorization import (
-    AUDIT_EVENT_FIELDS,
     MAX_MEMBERSHIP_CACHE_SECONDS,
+    DatabaseAuditEvent,
     DatabaseAuthorizer,
     DatabaseSubject,
     DenialReason,
@@ -31,7 +32,9 @@ from database_authorization import (
     MembershipResolutionError,
     guard_database_tools,
 )
-from tools import build_database_tools
+from database_tools import DatabaseAccess, build_database_tools
+
+AUDIT_EVENT_FIELDS = frozenset(f.name for f in dataclasses.fields(DatabaseAuditEvent))
 
 TENANT = "11111111-1111-1111-1111-111111111111"
 OTHER_TENANT = "22222222-2222-2222-2222-222222222222"
@@ -181,18 +184,13 @@ def make_subject(
     tenant_id: str | None = TENANT,
     grant: AgentDatabaseGrant | None = None,
     token_group_ids: tuple[str, ...] = (),
-    groups_overage: bool = False,
-    environment: Environment | None = None,
 ) -> DatabaseSubject:
-    resolved_grant = grant or make_grant()
     return DatabaseSubject(
         user_id="user-1",
         tenant_id=tenant_id,
         agent_id="hana-analyst",
-        grant=resolved_grant,
-        environment=environment or resolved_grant.environment,
+        grant=grant or make_grant(),
         token_group_ids=token_group_ids,
-        groups_overage=groups_overage,
     )
 
 
@@ -275,10 +273,10 @@ def test_transitive_nested_membership_is_allowed():
     assert resolver.calls == 1
 
 
-def test_group_claim_overage_triggers_resolver():
+def test_token_groups_that_miss_the_entitlement_fall_through_to_the_resolver():
     resolver = FakeGraphResolver({"user-1": [ENTITLED_GROUP]})
     authorizer = make_authorizer(resolver=resolver)
-    subject = make_subject(token_group_ids=(OTHER_GROUP,), groups_overage=True)
+    subject = make_subject(token_group_ids=(OTHER_GROUP,))
 
     decision = asyncio.run(authorizer.authorize(subject, Capability.DATABASE_QUERY))
 
@@ -353,18 +351,10 @@ def test_capability_outside_grant_is_denied():
     assert decision.reason is DenialReason.CAPABILITY_NOT_GRANTED
 
 
-def test_environment_mismatch_is_denied():
-    authorizer = make_authorizer(resolver=FakeGraphResolver({"user-1": [ENTITLED_GROUP]}))
-    subject = make_subject(
-        grant=make_grant(environment=Environment.PRODUCTION),
-        environment=Environment.DEVELOPMENT,
-        token_group_ids=(ENTITLED_GROUP,),
-    )
+def test_environment_is_reported_from_the_grant():
+    subject = make_subject(grant=make_grant(environment=Environment.DEVELOPMENT))
 
-    decision = asyncio.run(authorizer.authorize(subject, Capability.DATABASE_QUERY))
-
-    assert decision.allowed is False
-    assert decision.reason is DenialReason.ENVIRONMENT_MISMATCH
+    assert subject.environment == Environment.DEVELOPMENT.value
 
 
 # ---------------------------------------------------------------------------
@@ -419,7 +409,7 @@ def test_revoked_membership_is_denied_after_cache_expiry():
     assert decision.reason is DenialReason.NOT_ENTITLED
 
 
-def test_invalidate_forces_immediate_reevaluation():
+def test_invalidated_membership_is_denied_once_the_cache_expires():
     clock = FakeClock()
     resolver = FakeGraphResolver({"user-1": [ENTITLED_GROUP]})
     authorizer = make_authorizer(resolver=resolver, clock=clock)
@@ -427,7 +417,7 @@ def test_invalidate_forces_immediate_reevaluation():
 
     asyncio.run(authorizer.authorize(subject, Capability.DATABASE_QUERY))
     resolver.direct["user-1"] = []
-    authorizer.invalidate(user_id="user-1", tenant_id=TENANT)
+    clock.advance(MAX_MEMBERSHIP_CACHE_SECONDS + 1)
 
     assert asyncio.run(authorizer.authorize(subject, Capability.DATABASE_QUERY)).allowed is False
 
@@ -503,7 +493,7 @@ def test_denied_tenant_never_leaks_unconfigured_tenant_details():
 
 def _guarded_tools(authorizer, subject, provider=None):
     provider = provider or FakeProvider()
-    tools = build_database_tools(provider, subject.grant)
+    tools = build_database_tools(provider, subject.grant.capabilities)
     return provider, guard_database_tools(tools, authorizer=authorizer, subject=subject)
 
 
@@ -540,7 +530,6 @@ def test_guarded_tools_preserve_model_facing_names_and_signature():
     assert list(inspect.signature(tools["database_query"]).parameters) == [
         "sql",
         "parameters",
-        "continuation",
     ]
 
 
@@ -620,68 +609,58 @@ class FakeUser:
         self.username = "user-1@example.test"
         self.tenant_id = tenant_id
         self.group_ids = group_ids
-        self.groups_overage = False
 
 
-def _session_context(**overrides):
-    from app_context import DatabaseProviderRegistry, build_tool_instances
+def _session_context(access=None):
+    from app_context import build_tool_instances
     from session_orchestration import SessionContext
 
-    provider = overrides.pop("provider", None) or FakeProvider()
-    registry = DatabaseProviderRegistry([provider])
-
-    def build(tool_names, *, session_id, user_id=None, database_grant=None):
-        return build_tool_instances(
-            tool_names,
-            session_id=session_id,
-            user_id=user_id,
-            database_grant=database_grant,
-            database_registry=registry,
-        )
-
-    ctx = SessionContext(
+    return SessionContext(
         sessions={},
         session_data_cls=object,
-        build_tool_instances=build,
+        build_tool_instances=build_tool_instances,
         build_user_profile_context=lambda profile: "",
-        **overrides,
+        database_access=access,
     )
-    return provider, ctx
 
 
-def _resolve_database_tools(ctx, user):
-    from session_orchestration import _authorized_database_tools
+def _resolve_database_tools(ctx, user, tool_names=("database_query", "database_schema")):
+    from session_orchestration import _database_tools
 
     return asyncio.run(
-        _authorized_database_tools(
+        _database_tools(
             ctx,
             user=user,
             agent_id="hana-analyst",
-            session_id="session-1",
+            tool_names=set(tool_names),
             logger=logging.getLogger("test"),
         )
     )
 
 
+def _access(authorizer, provider=None, grant=None):
+    return DatabaseAccess(
+        provider=provider or FakeProvider(),
+        authorizer=authorizer,
+        grant=grant or make_grant(),
+    )
+
+
 def test_session_without_database_wiring_is_unchanged():
-    _, ctx = _session_context()
-    assert ctx.database_authorizer is None
-    assert ctx.database_grant_resolver is None
-    assert _resolve_database_tools(ctx, FakeUser()) == []
+    ctx = _session_context()
+    assert ctx.database_access is None
+    assert _resolve_database_tools(ctx, FakeUser()) == {}
 
 
 def test_session_exposes_guarded_tools_to_entitled_user():
     sink = RecordingSink()
     authorizer = make_authorizer(resolver=FakeGraphResolver({"user-1": [ENTITLED_GROUP]}), sink=sink)
-    grant = make_grant()
-    provider, ctx = _session_context(
-        database_authorizer=authorizer,
-        database_grant_resolver=lambda user, agent_id: grant,
-    )
+    provider = FakeProvider()
+    ctx = _session_context(_access(authorizer, provider))
 
     tools = _resolve_database_tools(ctx, FakeUser())
 
-    assert sorted(tool.__name__ for tool in tools) == ["database_query", "database_schema"]
+    assert sorted(tools) == ["database_query", "database_schema"]
     assert [event.outcome for event in sink.events] == ["allowed", "allowed"]
     assert {event.capability for event in sink.events} == {
         Capability.DATABASE_QUERY.value,
@@ -690,23 +669,43 @@ def test_session_exposes_guarded_tools_to_entitled_user():
     for payload in sink.payloads:
         _assert_metadata_only(payload)
 
-    by_name = {tool.__name__: tool for tool in tools}
-    assert asyncio.run(by_name["database_query"]("SELECT 1 FROM sales.orders"))["status"] == (
+    assert asyncio.run(tools["database_query"]("SELECT 1 FROM sales.orders"))["status"] == (
         QueryStatus.SUCCESS.value
     )
     assert provider.query_calls == 1
 
 
+def test_session_exposes_only_the_capabilities_the_profile_declares():
+    sink = RecordingSink()
+    authorizer = make_authorizer(resolver=FakeGraphResolver({"user-1": [ENTITLED_GROUP]}), sink=sink)
+    ctx = _session_context(_access(authorizer))
+
+    tools = _resolve_database_tools(ctx, FakeUser(), tool_names=("database_schema",))
+
+    assert set(tools) == {"database_schema"}
+    assert {event.capability for event in sink.events} == {Capability.DATABASE_SCHEMA.value}
+
+
+def test_session_ignores_database_tools_the_grant_does_not_cover():
+    sink = RecordingSink()
+    authorizer = make_authorizer(resolver=FakeGraphResolver({"user-1": [ENTITLED_GROUP]}), sink=sink)
+    ctx = _session_context(
+        _access(authorizer, grant=make_grant(capabilities=(Capability.DATABASE_SCHEMA,)))
+    )
+
+    tools = _resolve_database_tools(ctx, FakeUser(), tool_names=("database_query",))
+
+    assert tools == {}
+    assert sink.events == []
+
+
 def test_session_withholds_tools_from_unentitled_user_and_audits_denial():
     sink = RecordingSink()
     authorizer = make_authorizer(resolver=FakeGraphResolver({"user-1": [OTHER_GROUP]}), sink=sink)
-    grant = make_grant()
-    provider, ctx = _session_context(
-        database_authorizer=authorizer,
-        database_grant_resolver=lambda user, agent_id: grant,
-    )
+    provider = FakeProvider()
+    ctx = _session_context(_access(authorizer, provider))
 
-    assert _resolve_database_tools(ctx, FakeUser()) == []
+    assert _resolve_database_tools(ctx, FakeUser()) == {}
     assert provider.query_calls == 0
     assert [event.outcome for event in sink.events] == ["denied", "denied"]
     for payload in sink.payloads:
@@ -718,38 +717,43 @@ def test_session_withholds_tools_from_unentitled_user_and_audits_denial():
 def test_session_withholds_tools_from_unconfigured_tenant():
     sink = RecordingSink()
     authorizer = make_authorizer(resolver=FakeGraphResolver({"user-1": [ENTITLED_GROUP]}), sink=sink)
-    grant = make_grant()
-    _, ctx = _session_context(
-        database_authorizer=authorizer,
-        database_grant_resolver=lambda user, agent_id: grant,
-    )
+    ctx = _session_context(_access(authorizer))
 
-    assert _resolve_database_tools(ctx, FakeUser(tenant_id=OTHER_TENANT)) == []
+    assert _resolve_database_tools(ctx, FakeUser(tenant_id=OTHER_TENANT)) == {}
     assert {event.error_category for event in sink.events} == {
         DenialReason.TENANT_NOT_CONFIGURED.value
     }
 
 
-def test_session_without_grant_exposes_no_database_tools():
+def test_session_without_declared_database_tools_never_reaches_the_authorizer():
     sink = RecordingSink()
     authorizer = make_authorizer(resolver=FakeGraphResolver({"user-1": [ENTITLED_GROUP]}), sink=sink)
-    _, ctx = _session_context(
-        database_authorizer=authorizer,
-        database_grant_resolver=lambda user, agent_id: None,
-    )
+    ctx = _session_context(_access(authorizer))
 
-    assert _resolve_database_tools(ctx, FakeUser()) == []
+    assert _resolve_database_tools(ctx, FakeUser(), tool_names=("get_user_profile",)) == {}
     assert sink.events == []
 
 
-def test_session_grant_resolver_failure_fails_closed():
+def test_session_tool_resolution_failure_fails_closed():
     sink = RecordingSink()
     authorizer = make_authorizer(resolver=FakeGraphResolver({"user-1": [ENTITLED_GROUP]}), sink=sink)
 
-    def boom(user, agent_id):
-        raise RuntimeError("grant store unavailable")
+    class ExplodingAccess:
+        async def tools_for(self, **kwargs):
+            raise RuntimeError("provider store unavailable")
 
-    _, ctx = _session_context(database_authorizer=authorizer, database_grant_resolver=boom)
+    ctx = _session_context(ExplodingAccess())
 
-    assert _resolve_database_tools(ctx, FakeUser()) == []
+    assert _resolve_database_tools(ctx, FakeUser()) == {}
     assert sink.events == []
+
+
+def test_access_rejects_a_grant_that_does_not_match_the_provider():
+    from database import ConfigurationError
+
+    with pytest.raises(ConfigurationError):
+        DatabaseAccess(
+            provider=FakeProvider(ProviderId.SYNAPSE),
+            authorizer=make_authorizer(resolver=FakeGraphResolver({})),
+            grant=make_grant(),
+        )

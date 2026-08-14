@@ -9,26 +9,23 @@ One configuration exists per provider and environment.
 
 | Field | Type | Rules |
 |-------|------|-------|
-| `provider_id` | enum | `synapse` or `hana`; stable and unique. |
+| `provider_id` | enum | `synapse`, `sap_emulator`, or `hana`; stable and unique. |
 | `enabled` | boolean | Defaults to false for HANA until its environment gate passes. |
 | `host` | string | Non-secret FQDN; IP literals are prohibited in production unless explicitly approved for a temporary network proof. |
 | `port` | integer | `1..65535`; HANA value supplied by its owner. |
 | `database` | string | Synapse database or HANA tenant/database identifier. |
-| `tls_required` | boolean | Must be true for HANA outside isolated tests. |
-| `tls_server_name` | string | Must match the validated server certificate identity. |
-| `ca_secret_uri` | URI/null | Key Vault certificate/secret URI when the platform trust store is insufficient. Never contains certificate material. |
-| `credential_secret_uri` | URI/null | Key Vault URI for the selected HANA credential. Terraform receives only the URI/reference, not the secret value. |
 | `approved_schemas` | list[string]/null | Null or empty means all objects readable by the database identity. A non-empty list narrows discovery and query access and can never broaden database grants. |
 | `connect_timeout_seconds` | integer | Positive; initial default 10, finalized by target testing. |
 | `query_timeout_seconds` | integer | Positive; initial default 30, finalized by target testing. |
-| `max_rows` | integer | Defaults to `MAX_QUERY_RESULT_ROWS`; server-side fetch must stop at limit + 1 to detect continuation. |
+| `max_rows` | integer | Defaults to `MAX_QUERY_RESULT_ROWS`; the server-side fetch stops at limit + 1 to detect additional rows. |
 | `max_result_chars` | integer | Defaults to `MAX_QUERY_RESULT_CHARS`. |
 | `max_cell_chars` | integer | Defaults to `MAX_SQL_CELL_CHARS`. |
 
+TLS and credential material are carried by the provider's connection configuration (for the SQL
+Server family, the ODBC DSN), not by fields in this model.
+
 ### Validation
 
-- HANA cannot be enabled without host, port, database, TLS server name, credential configuration,
-  and a passed environment acceptance record.
 - Schema names are normalized only for comparison; emitted SQL preserves provider-correct quoting.
 - Provider configuration is selected by an agent grant, never by free-form model input.
 - Secret values, PSKs, and private certificate material are not fields in this model.
@@ -52,19 +49,18 @@ model.
 |-------|------|-------|
 | `sql` | string | Exactly one read query in the accepted grammar. Bounded by the existing tool-input limit. |
 | `parameters` | list[scalar]/null | Optional positional bound values; never interpolated into SQL or logged. Named parameters are out of scope until both providers share an approved syntax. |
-| `continuation` | object/null | Exact unmodified continuation object returned by a previous result. |
 
 ## Query Result
 
 | Field | Type | Rules |
 |-------|------|-------|
 | `status` | enum | `success`, `validation_error`, `authentication_error`, `authorization_error`, `trust_error`, `configuration_error`, `transient_error`, or `query_error`. |
-| `provider` | enum | `synapse` or `hana`. |
+| `provider` | enum | `synapse`, `sap_emulator`, or `hana`. |
 | `columns` | list[object] | Ordered names and normalized type labels. |
 | `rows` | list[list] | Values are JSON-safe and each string/cell is bounded. |
-| `row_count` | integer | Number of rows returned in this page. |
+| `row_count` | integer | Number of rows returned. |
 | `truncated` | boolean | True when row, cell, or total-output limits were reached. |
-| `continuation` | object/null | Versioned signed token plus expiry and safe guidance, bound to provider, normalized query/parameters, proven unique ordering, limits, and configuration fingerprint. Never claims complete coverage when stable ordering cannot be proven. |
+| `truncated_by` | enum/null | Which limit stopped the result: `row_limit`, `total_char_limit`, or `cell_char_limit`. |
 | `warnings` | list[string] | Includes explicit partial-result/absence guidance. |
 | `correlation_id` | string | Safe opaque identifier for server-side diagnostics. |
 
@@ -75,7 +71,6 @@ model.
 | `provider` | enum | Bound provider. |
 | `objects` | list[object] | Schema, object, kind, ordered columns, normalized types. No source SQL/definition text. |
 | `truncated` | boolean | Indicates incomplete catalog coverage. |
-| `continuation` | object/null | Deterministic catalog continuation. |
 
 ## Environment Acceptance Record
 

@@ -1,40 +1,16 @@
 import json
 import logging
-import os
 import re
-import struct
-import time
-from contextlib import closing
 from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import Field
-import pyodbc
-
-from azure.identity import DefaultAzureCredential
-
+from text_limits import env_int, truncate_text
 
 logger = logging.getLogger("tools")
 
-
-def _env_int(name: str, default: int) -> int:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    try:
-        value = int(raw)
-        return value if value > 0 else default
-    except (TypeError, ValueError):
-        logger.warning("Invalid %s=%r; using default=%s", name, raw, default)
-        return default
-
-
-MAX_QUERY_RESULT_ROWS = _env_int("MAX_QUERY_RESULT_ROWS", 100)
-MAX_QUERY_RESULT_CHARS = _env_int("MAX_QUERY_RESULT_CHARS", 12000)
-MAX_SQL_CELL_CHARS = _env_int("MAX_SQL_CELL_CHARS", 1200)
-MAX_LOG_QUERY_CHARS = _env_int("MAX_LOG_QUERY_CHARS", 500)
-MAX_LOG_TOOL_RESULT_CHARS = _env_int("MAX_LOG_TOOL_RESULT_CHARS", 100)
-MAX_SEARCH_SNIPPET_CHARS = _env_int("MAX_SEARCH_SNIPPET_CHARS", 500)
+MAX_LOG_QUERY_CHARS = env_int("MAX_LOG_QUERY_CHARS", 500)
+MAX_LOG_TOOL_RESULT_CHARS = env_int("MAX_LOG_TOOL_RESULT_CHARS", 100)
+MAX_SEARCH_SNIPPET_CHARS = env_int("MAX_SEARCH_SNIPPET_CHARS", 500)
 
 
 def _mask_connection_string(connection_string: str) -> str:
@@ -45,7 +21,7 @@ def _mask_connection_string(connection_string: str) -> str:
 
 def _compact_sql_for_logs(query: str) -> str:
     compacted = " ".join(query.strip().split())
-    return _truncate_text(compacted, MAX_LOG_QUERY_CHARS, "SQL LOG")
+    return truncate_text(compacted, MAX_LOG_QUERY_CHARS, "SQL LOG")
 
 
 def _summarize_params_for_logs(params: Any | None) -> str:
@@ -67,86 +43,6 @@ def _preview_tool_result_for_logs(value: Any) -> str:
         return compact
     return f"{compact[:MAX_LOG_TOOL_RESULT_CHARS]}..."
 
-
-def _get_token_struct(token: str) -> bytes:
-    """Convert access token to the format required by pyodbc for SQL Server."""
-    token_bytes = token.encode("utf-16-le")
-    return struct.pack(f"<I{len(token_bytes)}s", len(token_bytes), token_bytes)
-
-
-def _truncate_text(value: str, max_chars: int, label: str) -> str:
-    if len(value) <= max_chars:
-        return value
-    omitted = len(value) - max_chars
-    return f"{value[:max_chars]}\n...[TRUNCATED {label}: omitted {omitted} chars]"
-
-
-def _sanitize_cell_value(value: Any) -> Any:
-    if isinstance(value, str):
-        return _truncate_text(value, MAX_SQL_CELL_CHARS, "SQL CELL")
-    return value
-
-
-def build_database_tools(provider: Any, grant: Any) -> dict[str, Any]:
-    """Build model-facing database tools bound to one provider grant."""
-    from database import (
-        Capability,
-        DatabaseError,
-        QueryRequest,
-        SchemaDiscoveryResult,
-        SchemaRequest,
-        new_correlation_id,
-    )
-
-    if provider.provider_id is not grant.provider_id:
-        return {}
-
-    tools: dict[str, Any] = {}
-
-    if grant.allows(Capability.DATABASE_SCHEMA):
-        async def database_schema(
-            schema: str | None = None,
-            object_name: str | None = None,
-            continuation: dict[str, Any] | None = None,
-        ) -> dict[str, Any]:
-            """Return bounded metadata from the database provider configured for this agent."""
-            try:
-                request = SchemaRequest(
-                    schema=schema,
-                    object_name=object_name,
-                    continuation=continuation,
-                )
-                return (await provider.discover_schema(request)).to_dict()
-            except DatabaseError as error:
-                return SchemaDiscoveryResult(
-                    provider=provider.provider_id,
-                    correlation_id=new_correlation_id(),
-                    status=error.status,
-                    message=error.message,
-                ).to_dict()
-
-        tools["database_schema"] = database_schema
-
-    if grant.allows(Capability.DATABASE_QUERY):
-        async def database_query(
-            sql: str,
-            parameters: list[Any] | None = None,
-            continuation: dict[str, Any] | None = None,
-        ) -> dict[str, Any]:
-            """Execute one bounded read query using the database provider configured for this agent."""
-            try:
-                request = QueryRequest(
-                    sql=sql,
-                    parameters=parameters,
-                    continuation=continuation,
-                )
-                return (await provider.execute_query(request)).to_dict()
-            except DatabaseError as error:
-                return error.to_result(provider=provider.provider_id).to_dict()
-
-        tools["database_query"] = database_query
-
-    return tools
 
 def build_user_profile_tools(user_id: str) -> dict[str, Any]:
     """Build the user-profile memory tools bound to a specific user.

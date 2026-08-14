@@ -86,8 +86,11 @@ AZURE_COSMOS_USER_SKILLS_CONTAINER=user-skills
 ```
 
 The feature 015 SAP force-equipment emulator can provision a real Azure SQL database and load the
-workbook-derived schema with synthetic records. See
-[database_emulator/README.md](database_emulator/README.md) for its data assumptions, opt-in
+workbook-derived schema with synthetic records. It is reached over the public endpoint restricted to
+the App Service outbound IPs and an optional developer IP range — private endpoints are reserved for
+the real HANA target described in
+[specs/015-sap-hana-private-connectivity/contracts/network-security-handoff.md](specs/015-sap-hana-private-connectivity/contracts/network-security-handoff.md).
+See [database_emulator/README.md](database_emulator/README.md) for its data assumptions, opt-in
 Terraform settings, migration commands, and verification query.
 
 Frontend environment variables (for Azure AD auth in the browser) go in `frontend/.env`:

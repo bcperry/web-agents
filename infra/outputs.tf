@@ -77,8 +77,16 @@ output "AZURE_OPENAI_API_VERSION" {
 }
 
 output "AZURE_SQL_CONNECTIONSTRING" {
-  description = "Azure SQL connection string"
-  value       = local.azure_sql_connectionstring
+  description = "Azure SQL connection string (empty indicates managed identity)"
+  value       = var.azure_sql_connectionstring
+  sensitive   = true
+}
+
+# Emitted under its own name: azd writes outputs back into the environment, so
+# aliasing a computed value onto a user-set input would feed it back to Terraform.
+output "SAP_EMULATOR_CONNECTIONSTRING" {
+  description = "Passwordless ODBC connection string for the SAP emulator; null when disabled"
+  value       = local.sap_emulator_enabled ? module.sap_emulator[0].connection_string : null
   sensitive   = true
 }
 

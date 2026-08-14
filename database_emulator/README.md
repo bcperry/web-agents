@@ -61,9 +61,11 @@ access through the feature 015 VNet with public network access disabled.
 ## Register the Application Provider
 
 The application registers the emulator as the distinct `sap_emulator` provider when
-`SAP_EMULATOR_ENABLED=true`. It exposes read-only `database_schema` and `database_query` tools only
-to the built-in `sap_force_equipment` profile, restricts SQL to the `reporting` schema, and requires
-membership in one of the configured Entra security groups.
+`SAP_EMULATOR_ENABLED=true`. A built-in profile earns the read-only `database_schema` and
+`database_query` tools by declaring them in `config/agents.yaml`; user-created custom agents cannot
+select them. SQL is restricted to the `reporting` schema and every call requires membership in one
+of the configured Entra security groups. An incomplete configuration disables the tools and logs an
+error rather than stopping the app.
 
 ```bash
 azd env set SAP_EMULATOR_ENTITLED_GROUP_IDS <entra-security-group-object-id>
@@ -73,8 +75,8 @@ azd deploy web
 
 Configure the app registration with `groupMembershipClaims=SecurityGroup` so validated access
 tokens contain the user's group IDs. Users must acquire a new token after group membership or app
-claim settings change. Group-claim overage fails closed because no Graph membership resolver is
-currently configured.
+claim settings change. A token whose group claim is absent or overflowed fails closed because no
+Graph membership resolver is currently configured.
 
 ## Apply and Verify
 
@@ -82,7 +84,7 @@ The connection string is configuration, not a password. The runner strips its au
 attribute and obtains an Azure Government SQL token with `DefaultAzureCredential`.
 
 ```bash
-export SAP_EMULATOR_CONNECTIONSTRING="$(terraform -chdir=infra output -raw AZURE_SQL_CONNECTIONSTRING)"
+export SAP_EMULATOR_CONNECTIONSTRING="$(terraform -chdir=infra output -raw SAP_EMULATOR_CONNECTIONSTRING)"
 export SAP_EMULATOR_READER_PRINCIPAL_NAME=<app-managed-identity-name>
 uv run python -m database_emulator.apply_migrations
 ```

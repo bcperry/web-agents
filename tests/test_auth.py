@@ -53,16 +53,14 @@ def test_authenticated_user_carries_validated_tenant_and_group_claims():
 
     assert user.tenant_id == "tenant-1"
     assert user.group_ids == ("group-1", "group-2")
-    assert user.groups_overage is False
 
 
-def test_authenticated_user_detects_group_claim_overage():
+def test_authenticated_user_ignores_a_non_list_groups_claim():
     user = _authenticated_user_from_payload(
         {"oid": "user-1", "tid": "tenant-1", "_claim_names": {"groups": "src1"}}
     )
 
     assert user.group_ids == ()
-    assert user.groups_overage is True
 
 
 def test_clear_jwks_cache():

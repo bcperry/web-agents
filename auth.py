@@ -31,7 +31,6 @@ class AuthenticatedUser:
     username: str
     tenant_id: str | None = None
     group_ids: tuple[str, ...] = ()
-    groups_overage: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "group_ids", tuple(str(group) for group in self.group_ids))
@@ -50,17 +49,11 @@ def _authenticated_user_from_payload(payload: dict) -> AuthenticatedUser:
         raise HTTPException(status_code=401, detail="Token missing user identifier")
 
     raw_groups = payload.get("groups", ())
-    group_ids = tuple(str(group) for group in raw_groups) if isinstance(raw_groups, list) else ()
-    claim_names = payload.get("_claim_names")
-    groups_overage = bool(payload.get("hasgroups")) or (
-        isinstance(claim_names, dict) and "groups" in claim_names
-    )
     return AuthenticatedUser(
         user_id=str(user_id),
         username=str(payload.get("preferred_username", payload.get("name", "unknown"))),
         tenant_id=str(payload.get("tid") or "") or None,
-        group_ids=group_ids,
-        groups_overage=groups_overage,
+        group_ids=tuple(str(group) for group in raw_groups) if isinstance(raw_groups, list) else (),
     )
 
 

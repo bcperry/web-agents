@@ -91,6 +91,13 @@ variable "sap_emulator_enabled" {
   default     = false
 }
 
+variable "sap_emulator_connectionstring" {
+  description = "Passwordless ODBC connection string for the SAP emulator database"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 variable "sap_emulator_server_fqdn" {
   description = "Azure SQL server FQDN for the SAP emulator provider"
   type        = string

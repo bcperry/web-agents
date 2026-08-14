@@ -1,20 +1,15 @@
-"""Offline tests for independent provider registration and model-facing tools."""
+"""Offline tests for independent provider selection and model-facing tool shape."""
 
 import asyncio
 
 import pytest
 
-from app_context import (
-    DatabaseProviderRegistry,
-    build_tool_instances,
-    configure_sap_emulator_runtime,
-)
 from database import (
     AgentDatabaseGrant,
     Capability,
     ColumnMetadata,
-    DatabaseProvider,
     ConfigurationError,
+    DatabaseProvider,
     Environment,
     NormalizedType,
     ProviderId,
@@ -25,7 +20,20 @@ from database import (
     SchemaRequest,
     new_correlation_id,
 )
-from tools import build_database_tools
+from database_authorization import DatabaseAuthorizer
+from database_tools import DatabaseAccess, build_database_tools, sap_emulator_access
+
+TENANT = "tenant-1"
+ENTITLED_GROUP = "group-1"
+
+EMULATOR_ENV = {
+    "SAP_EMULATOR_ENABLED": "true",
+    "SAP_EMULATOR_CONNECTIONSTRING": "Driver=fake;Server=sql.test;Database=sap",
+    "SAP_EMULATOR_SERVER_FQDN": "sql.test",
+    "SAP_EMULATOR_DATABASE_NAME": "sap",
+    "OAUTH_AZURE_GOV_AD_TENANT_ID": TENANT,
+    "SAP_EMULATOR_ENTITLED_GROUP_IDS": "group-1, group-2",
+}
 
 
 class FakeProvider:
@@ -66,17 +74,38 @@ class FakeProvider:
         )
 
 
-def grant(provider_id: ProviderId, *capabilities: Capability) -> AgentDatabaseGrant:
+class AllowAllResolver:
+    def resolve_transitive_group_ids(self, *, user_id: str, tenant_id: str):
+        return [ENTITLED_GROUP]
+
+
+class FakeUser:
+    user_id = "user-1"
+    tenant_id = TENANT
+    group_ids = (ENTITLED_GROUP,)
+
+
+def make_grant(provider_id: ProviderId, *capabilities: Capability) -> AgentDatabaseGrant:
     return AgentDatabaseGrant(
         provider_id=provider_id,
         capabilities=capabilities,
-        entitled_groups=["test-group"],
+        entitled_groups=[ENTITLED_GROUP],
         environment=Environment.LOCAL,
     )
 
 
-def by_name(tools):
-    return {tool.__name__: tool for tool in tools}
+def make_access(provider: FakeProvider, *capabilities: Capability) -> DatabaseAccess:
+    return DatabaseAccess(
+        provider=provider,
+        authorizer=DatabaseAuthorizer(allowed_tenant_ids=(TENANT,), resolver=AllowAllResolver()),
+        grant=make_grant(provider.provider_id, *capabilities),
+    )
+
+
+def resolve(access: DatabaseAccess, *tool_names: str) -> dict:
+    return asyncio.run(
+        access.tools_for(user=FakeUser(), agent_id="agent-1", tool_names=tool_names)
+    )
 
 
 def test_fake_hana_and_synapse_satisfy_same_protocol():
@@ -84,27 +113,12 @@ def test_fake_hana_and_synapse_satisfy_same_protocol():
     assert isinstance(FakeProvider(ProviderId.HANA, "hana"), DatabaseProvider)
 
 
-def test_registry_selects_each_provider_independently_without_leakage():
+def test_each_provider_serves_its_own_session_without_leakage():
     synapse = FakeProvider(ProviderId.SYNAPSE, "synapse")
     hana = FakeProvider(ProviderId.HANA, "hana")
-    registry = DatabaseProviderRegistry([synapse, hana])
 
-    synapse_tools = by_name(
-        build_tool_instances(
-            set(),
-            session_id="synapse-session",
-            database_grant=grant(ProviderId.SYNAPSE, Capability.DATABASE_QUERY),
-            database_registry=registry,
-        )
-    )
-    hana_tools = by_name(
-        build_tool_instances(
-            set(),
-            session_id="hana-session",
-            database_grant=grant(ProviderId.HANA, Capability.DATABASE_QUERY),
-            database_registry=registry,
-        )
-    )
+    synapse_tools = resolve(make_access(synapse, Capability.DATABASE_QUERY), "database_query")
+    hana_tools = resolve(make_access(hana, Capability.DATABASE_QUERY), "database_query")
 
     synapse_result = asyncio.run(synapse_tools["database_query"]("SELECT 1"))
     hana_result = asyncio.run(hana_tools["database_query"]("SELECT 1"))
@@ -117,77 +131,77 @@ def test_registry_selects_each_provider_independently_without_leakage():
 
 def test_capability_grant_exposes_only_the_allowed_database_tool():
     provider = FakeProvider(ProviderId.SYNAPSE, "synapse")
-    query_tools = build_database_tools(
-        provider, grant(ProviderId.SYNAPSE, Capability.DATABASE_QUERY)
-    )
-    schema_tools = build_database_tools(
-        provider, grant(ProviderId.SYNAPSE, Capability.DATABASE_SCHEMA)
-    )
-    assert set(query_tools) == {"database_query"}
-    assert set(schema_tools) == {"database_schema"}
+    assert set(build_database_tools(provider, [Capability.DATABASE_QUERY])) == {
+        Capability.DATABASE_QUERY
+    }
+    assert set(build_database_tools(provider, [Capability.DATABASE_SCHEMA])) == {
+        Capability.DATABASE_SCHEMA
+    }
 
 
-def test_absent_grant_or_missing_provider_registers_no_database_tools():
-    registry = DatabaseProviderRegistry(
-        [FakeProvider(ProviderId.SYNAPSE, "synapse")]
-    )
-    assert build_tool_instances(set(), session_id="ordinary", database_registry=registry) == []
-    assert build_tool_instances(
-        set(),
-        session_id="missing-hana",
-        database_grant=grant(ProviderId.HANA, Capability.DATABASE_QUERY),
-        database_registry=registry,
-    ) == []
+def test_undeclared_and_ungranted_tools_are_never_exposed():
+    access = make_access(FakeProvider(ProviderId.SYNAPSE, "synapse"), Capability.DATABASE_SCHEMA)
+    assert resolve(access) == {}
+    assert resolve(access, "get_user_profile") == {}
+    assert resolve(access, "database_query") == {}
+    assert set(resolve(access, "database_schema")) == {"database_schema"}
 
 
-def test_sap_emulator_runtime_registers_only_for_its_agent_profile():
-    registry = DatabaseProviderRegistry()
-    authorizer, resolver = configure_sap_emulator_runtime(
-        environ={
-            "SAP_EMULATOR_ENABLED": "true",
-            "AZURE_SQL_CONNECTIONSTRING": "Driver=fake;Server=sql.test;Database=sap",
-            "SAP_EMULATOR_SERVER_FQDN": "sql.test",
-            "SAP_EMULATOR_DATABASE_NAME": "sap",
-            "OAUTH_AZURE_GOV_AD_TENANT_ID": "tenant-1",
-            "SAP_EMULATOR_ENTITLED_GROUP_IDS": "group-1, group-2",
-        },
-        registry=registry,
-    )
-
-    assert authorizer is not None
-    assert resolver is not None
-    grant = resolver(None, "sap_force_equipment")
-    assert grant is not None
-    assert grant.provider_id is ProviderId.SAP_EMULATOR
-    assert grant.entitled_groups == ("group-1", "group-2")
-    assert set(registry.tools_for_grant(grant)) == {"database_query", "database_schema"}
-    assert resolver(None, "sql") is None
-
-
-def test_sap_emulator_runtime_rejects_incomplete_enabled_configuration():
-    with pytest.raises(ConfigurationError, match="SAP_EMULATOR_SERVER_FQDN"):
-        configure_sap_emulator_runtime(
-            environ={
-                "SAP_EMULATOR_ENABLED": "true",
-                "AZURE_SQL_CONNECTIONSTRING": "Driver=fake",
-            },
-            registry=DatabaseProviderRegistry(),
+def test_access_rejects_a_grant_for_a_different_provider():
+    with pytest.raises(ConfigurationError):
+        DatabaseAccess(
+            provider=FakeProvider(ProviderId.SYNAPSE, "synapse"),
+            authorizer=DatabaseAuthorizer(allowed_tenant_ids=(TENANT,)),
+            grant=make_grant(ProviderId.HANA, Capability.DATABASE_QUERY),
         )
+
+
+def test_emulator_access_is_absent_when_disabled():
+    assert sap_emulator_access({}) is None
+    assert sap_emulator_access({"SAP_EMULATOR_ENABLED": "false"}) is None
+
+
+def test_emulator_access_binds_the_configured_tenant_and_groups():
+    access = sap_emulator_access(EMULATOR_ENV)
+
+    assert access is not None
+    assert access.provider.provider_id is ProviderId.SAP_EMULATOR
+    assert access.grant.entitled_groups == ("group-1", "group-2")
+    assert access.authorizer.allowed_tenant_ids == frozenset({TENANT})
+
+
+def test_emulator_access_falls_back_to_the_shared_azure_sql_dsn():
+    environ = dict(EMULATOR_ENV)
+    del environ["SAP_EMULATOR_CONNECTIONSTRING"]
+    environ["AZURE_SQL_CONNECTIONSTRING"] = "Driver=fake;Server=sql.test;Database=sap"
+
+    assert sap_emulator_access(environ) is not None
+
+
+@pytest.mark.parametrize("missing", ["SAP_EMULATOR_SERVER_FQDN", "SAP_EMULATOR_ENTITLED_GROUP_IDS"])
+def test_emulator_access_rejects_incomplete_enabled_configuration(missing: str):
+    environ = dict(EMULATOR_ENV)
+    del environ[missing]
+
+    with pytest.raises(ConfigurationError, match=missing):
+        sap_emulator_access(environ)
+
+
+def test_incomplete_configuration_never_stops_the_app_from_starting(monkeypatch):
+    from app_context import configured_database_access
+
+    monkeypatch.setenv("SAP_EMULATOR_ENABLED", "true")
+    monkeypatch.delenv("SAP_EMULATOR_SERVER_FQDN", raising=False)
+
+    assert configured_database_access() is None
 
 
 def test_database_tool_result_shape_matches_contract():
     provider = FakeProvider(ProviderId.HANA, "hana")
-    tools = build_database_tools(
-        provider,
-        grant(
-            ProviderId.HANA,
-            Capability.DATABASE_QUERY,
-            Capability.DATABASE_SCHEMA,
-        ),
-    )
+    tools = build_database_tools(provider, [Capability.DATABASE_QUERY, Capability.DATABASE_SCHEMA])
 
-    query = asyncio.run(tools["database_query"]("SELECT 1", parameters=[1]))
-    schema = asyncio.run(tools["database_schema"](schema="hana"))
+    query = asyncio.run(tools[Capability.DATABASE_QUERY]("SELECT 1", parameters=[1]))
+    schema = asyncio.run(tools[Capability.DATABASE_SCHEMA](schema="hana"))
 
     assert set(query) == {
         "status",
@@ -197,7 +211,6 @@ def test_database_tool_result_shape_matches_contract():
         "row_count",
         "truncated",
         "truncated_by",
-        "continuation",
         "warnings",
         "correlation_id",
     }
@@ -206,7 +219,6 @@ def test_database_tool_result_shape_matches_contract():
         "provider",
         "objects",
         "truncated",
-        "continuation",
         "warnings",
         "correlation_id",
     }

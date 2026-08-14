@@ -16,13 +16,11 @@ from database import (
     MAX_SQL_CHARS,
     QueryRequest,
     QueryStatus,
-    SqlGlotValidator,
-    SqlValidator,
     ValidationError,
-    default_sql_validator,
     validate_identifier_filter,
     validate_parameters,
 )
+from database_sql import SqlGlotValidator, SqlValidator, default_sql_validator
 
 
 @pytest.fixture
