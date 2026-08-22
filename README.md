@@ -2,6 +2,14 @@
 
 AI agent framework using [agent-framework](https://pypi.org/project/agent-framework/) with Azure OpenAI. Two-tier architecture: **FastAPI** backend + **React/TypeScript** frontend served as static files from the same origin.
 
+## Portfolio summary
+
+- **Ownership:** Sole architect and accountable engineer for the application, orchestration, security model, persistence, scheduler, tests, and cloud deployment.
+- **Agent platform:** Configurable SQL, Azure AI Search, and hybrid agents; agents-as-tools delegation; visible tool calls; and SSE-streamed responses.
+- **Enterprise design:** Microsoft Entra ID, per-user Cosmos DB persistence, ownership validation, audit trails, managed cloud configuration, and Azure Government deployment validation.
+- **Autonomous operation:** Durable user-defined automations with schedules, notification sinks, and Cosmos lease-based at-most-once execution.
+- **Engineering:** Python, FastAPI, React, TypeScript, Microsoft Agent Framework, pytest, Playwright, Azure App Service, and infrastructure automation.
+
 ## Overview
 
 - AI agent with multiple configurable profiles: SQL queries, Azure AI Search, Hybrid
