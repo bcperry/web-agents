@@ -69,7 +69,9 @@ Create a `.env` file at the repository root:
 # Azure OpenAI
 AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
 AZURE_OPENAI_MODEL=gpt-4o
-AZURE_OPENAI_API_KEY=your-api-key
+# Leave empty to authenticate with Entra ID (managed identity in Azure, `az login` locally).
+# Requires the "Cognitive Services OpenAI User" role on the account.
+AZURE_OPENAI_API_KEY=
 AZURE_OPENAI_API_VERSION=2025-01-01-preview
 
 # Azure SQL Database (optional — needed for SQL profiles)

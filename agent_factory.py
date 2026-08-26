@@ -3,6 +3,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from typing import Any, Sequence
+from urllib.parse import urlsplit
 
 from agent_framework import CompactionProvider, SkillsProvider, SkillsSource
 from agent_framework import Agent as RuntimeAgent
@@ -150,6 +151,56 @@ def _get_default_temperature() -> float:
     return max(0.0, min(2.0, val))
 
 
+_azure_credential: Any = None
+
+
+def _openai_token_scope(endpoint: str) -> str:
+    """Azure Government uses a different Entra audience than the commercial cloud."""
+    cloud = "us" if (urlsplit(endpoint).hostname or "").endswith(".us") else "com"
+    return f"https://cognitiveservices.azure.{cloud}/.default"
+
+
+def _azure_token_provider(endpoint: str) -> Any:
+    """Entra token provider for Azure OpenAI, backed by a shared credential.
+
+    A provider is built here rather than handing the SDK a credential because the
+    SDK hardcodes the commercial-cloud scope.
+    """
+    global _azure_credential
+    from azure.identity import AzureAuthorityHosts
+    from azure.identity.aio import DefaultAzureCredential, get_bearer_token_provider
+
+    if _azure_credential is None:
+        authority = (
+            AzureAuthorityHosts.AZURE_GOVERNMENT
+            if (urlsplit(endpoint).hostname or "").endswith(".us")
+            else AzureAuthorityHosts.AZURE_PUBLIC_CLOUD
+        )
+        _azure_credential = DefaultAzureCredential(authority=authority)
+    return get_bearer_token_provider(_azure_credential, _openai_token_scope(endpoint))
+
+
+async def close_azure_credential() -> None:
+    """Close the shared Entra credential (called on app shutdown)."""
+    global _azure_credential
+    if _azure_credential is not None:
+        await _azure_credential.close()
+        _azure_credential = None
+
+
+def build_chat_client(**kwargs: Any) -> OpenAIChatClient:
+    """Build an OpenAIChatClient, authenticating with Entra ID when no API key is set.
+
+    Accepts the SDK's own keyword arguments; with none the SDK auto-detects the
+    provider from environment variables (AZURE_OPENAI_* → Azure, OPENAI_* →
+    OpenAI-compatible).
+    """
+    endpoint = kwargs.get("azure_endpoint") or (os.getenv("AZURE_OPENAI_ENDPOINT") or "").strip()
+    if endpoint and not kwargs.get("api_key") and not (os.getenv("AZURE_OPENAI_API_KEY") or "").strip():
+        kwargs["credential"] = _azure_token_provider(endpoint)
+    return OpenAIChatClient(**kwargs)
+
+
 def _build_context_providers(
     token_budget: int,
     summarizer_client: OpenAIChatClient | None = None,
@@ -158,7 +209,7 @@ def _build_context_providers(
     skill_names: list[str] | None = None,
     user_id: str | None = None,
 ) -> list[Any]:
-    summarizer = summarizer_client or OpenAIChatClient()
+    summarizer = summarizer_client or build_chat_client()
     tokenizer = CharacterEstimatorTokenizer()
 
     pipeline = TokenBudgetComposedStrategy(
@@ -193,18 +244,18 @@ def _build_context_providers(
 def _build_openai_clients() -> tuple[OpenAIChatClient, OpenAIChatClient]:
     """Create primary and summarizer OpenAI clients from environment variables.
 
-    The primary client uses zero-arg construction so the SDK auto-detects the
-    provider from environment variables (AZURE_OPENAI_* → Azure, OPENAI_* → OpenAI-compatible).
+    The primary client is built from the ambient AZURE_OPENAI_*/OPENAI_* vars;
+    an Azure endpoint with no API key authenticates with managed identity.
 
     The secondary/summarizer client checks for AZURE_OPENAI_SECONDARY_* vars
     (which the SDK does not auto-detect) and falls back to the primary client.
     """
-    primary = OpenAIChatClient()
+    primary = build_chat_client()
 
     secondary_endpoint = (os.getenv("AZURE_OPENAI_SECONDARY_ENDPOINT") or "").strip()
     if secondary_endpoint:
         try:
-            summarizer = OpenAIChatClient(
+            summarizer = build_chat_client(
                 azure_endpoint=secondary_endpoint,
                 model=(os.getenv("AZURE_OPENAI_SECONDARY_MODEL") or "").strip() or None,
                 api_key=(os.getenv("AZURE_OPENAI_SECONDARY_API_KEY") or "").strip() or None,
@@ -219,9 +270,11 @@ def _build_openai_clients() -> tuple[OpenAIChatClient, OpenAIChatClient]:
     else:
         summarizer = primary
 
+    azure_endpoint = (os.getenv("AZURE_OPENAI_ENDPOINT") or "").strip()
     logger.info(
-        "LLM provider: %s (primary), %s (summarizer)",
-        "Azure OpenAI" if os.getenv("AZURE_OPENAI_ENDPOINT") else "OpenAI-compatible",
+        "LLM provider: %s (primary, auth=%s), %s (summarizer)",
+        "Azure OpenAI" if azure_endpoint else "OpenAI-compatible",
+        "key" if (os.getenv("AZURE_OPENAI_API_KEY") or "").strip() else "managed-identity",
         "dedicated Azure" if secondary_endpoint else "same as primary",
     )
     return primary, summarizer

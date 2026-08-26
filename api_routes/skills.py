@@ -51,7 +51,7 @@ async def generate_skill_content(
         raise HTTPException(status_code=422, detail="description must be ≤ 2048 characters")
     skill_name = (body.name or "new-skill").strip() or "new-skill"
 
-    from agent_framework.openai import OpenAIChatClient
+    from agent_factory import build_chat_client
 
     system_prompt = (
         "You are an expert at writing concise, well-structured Markdown skill "
@@ -69,7 +69,7 @@ async def generate_skill_content(
     )
 
     try:
-        client = OpenAIChatClient()
+        client = build_chat_client()
         response = await client.get_response(
             messages=[
                 ChatMessage(role="system", contents=[Content(type="text", text=system_prompt)]),

@@ -38,6 +38,33 @@ class TestProviderRouting:
         client = OpenAIChatCompletionClient()
         assert client is not None
 
+    @patch.dict(
+        "os.environ",
+        {
+            "AZURE_OPENAI_ENDPOINT": "https://test.openai.azure.us/",
+            "AZURE_OPENAI_MODEL": "gpt-4o",
+            "AZURE_OPENAI_API_VERSION": "2024-02-15-preview",
+        },
+        clear=True,
+    )
+    def test_azure_openai_managed_identity_instantiation(self) -> None:
+        """With no API key, the Azure client authenticates via an Entra token provider."""
+        import agent_factory
+
+        client = agent_factory.build_chat_client()
+        assert client.client._azure_ad_token_provider is not None
+
+    def test_azure_openai_token_scope_matches_cloud(self) -> None:
+        """Azure Government endpoints need the .us cognitive services audience."""
+        import agent_factory
+
+        assert agent_factory._openai_token_scope("https://x.openai.azure.us/") == (
+            "https://cognitiveservices.azure.us/.default"
+        )
+        assert agent_factory._openai_token_scope("https://x.openai.azure.com/") == (
+            "https://cognitiveservices.azure.com/.default"
+        )
+
 
 def test_create_chat_runtime_binds_profile_tools_and_creates_session(monkeypatch) -> None:
     """Runtime creation should preserve profile tool filtering and agent session creation."""

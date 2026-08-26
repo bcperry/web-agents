@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from agent_factory import close_azure_credential
 from api_routes import autonomous as autonomous_routes
 from api_routes import agent_views, profiles, sessions, skills, system, user_data
 from api_routes.sessions import create_session, delete_session, send_message
@@ -91,6 +92,7 @@ async def lifespan(app: FastAPI):
     session_count = len(_sessions)
     _sessions.clear()
     await close_cosmos()
+    await close_azure_credential()
     logger.info("Cleaned up %d sessions on shutdown", session_count)
 
 
