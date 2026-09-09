@@ -33,17 +33,6 @@ resource "azurerm_resource_group" "rg" {
   tags     = local.tags
 }
 
-# User-assigned managed identity
-module "managed_identity" {
-  source = "./modules/managed-identity"
-
-  name     = "id-${var.environment_name}"
-  location = local.resource_group_location
-  tags     = local.tags
-
-  resource_group_name = local.resource_group_name
-}
-
 # Azure Cosmos DB (durable agent memory + per-user chat history)
 module "cosmos" {
   source = "./modules/cosmos"
@@ -52,7 +41,6 @@ module "cosmos" {
   location            = local.resource_group_location
   tags                = local.tags
   resource_group_name = local.resource_group_name
-  principal_id        = module.managed_identity.managed_identity_principal_id
 
   # Optional: grant the deploying user (AZURE_PRINCIPAL_ID) Cosmos data-plane
   # access so you can run the app locally against this live account. Toggle with
@@ -84,22 +72,19 @@ module "sap_emulator" {
 module "app_service" {
   source = "./modules/app-service"
 
-  name                       = "app-${var.environment_name}"
-  location                   = local.resource_group_location
-  app_service_tags           = merge(local.tags, { "azd-service-name" = "web" })
-  app_service_plan_tags      = local.tags
-  app_service_plan_name      = "asp-${var.environment_name}"
-  app_service_plan_sku       = var.app_service_plan_sku
-  python_version             = var.python_version
-  managed_identity_id        = module.managed_identity.managed_identity_id
-  managed_identity_client_id = module.managed_identity.managed_identity_client_id
+  name                  = "app-${var.environment_name}"
+  location              = local.resource_group_location
+  app_service_tags      = merge(local.tags, { "azd-service-name" = "web" })
+  app_service_plan_tags = local.tags
+  app_service_plan_name = "asp-${var.environment_name}"
+  app_service_plan_sku  = var.app_service_plan_sku
+  python_version        = var.python_version
 
   resource_group_name = local.resource_group_name
 
   # Application environment variables
   azure_openai_endpoint      = var.azure_openai_endpoint
   azure_openai_model         = var.azure_openai_model
-  azure_openai_api_key       = var.azure_openai_api_key
   azure_openai_api_version   = var.azure_openai_api_version
   azure_sql_connectionstring = var.azure_sql_connectionstring
   sap_emulator_enabled       = local.sap_emulator_enabled
@@ -141,4 +126,19 @@ module "app_service" {
   app_name              = var.app_name
   app_tagline           = var.app_tagline
   app_logo              = var.app_logo
+}
+
+resource "azurerm_role_assignment" "azure_openai_user" {
+  scope                = var.azure_openai_resource_id
+  role_definition_name = "Cognitive Services OpenAI User"
+  principal_id         = module.app_service.system_assigned_principal_id
+  principal_type       = "ServicePrincipal"
+}
+
+resource "azurerm_cosmosdb_sql_role_assignment" "app_data_contributor" {
+  resource_group_name = local.resource_group_name
+  account_name        = module.cosmos.account_name
+  role_definition_id  = "${module.cosmos.account_id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002"
+  principal_id        = module.app_service.system_assigned_principal_id
+  scope               = module.cosmos.account_id
 }

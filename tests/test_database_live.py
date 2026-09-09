@@ -16,6 +16,7 @@ from prompt_config import load_agents_yaml
 pytestmark = pytest.mark.sqlserver_integration
 
 REPORTING_VIEW = "[reporting].[FORCE_EQUIPMENT]"
+FINANCE_REPORTING_VIEW = "[reporting].[FINANCIAL_EXECUTION]"
 UNENTITLED_GROUP = "00000000-0000-0000-0000-000000000000"
 
 
@@ -36,18 +37,23 @@ class User:
         )
 
 
-def resolve(access, user=None, tool_names=DATABASE_TOOL_NAMES):
+def resolve(access, user=None, tool_names=DATABASE_TOOL_NAMES, agent_id="sap_force_equipment"):
     return asyncio.run(
         access.tools_for(
-            user=user or User(access), agent_id="sap_force_equipment", tool_names=tool_names
+            user=user or User(access), agent_id=agent_id, tool_names=tool_names
         )
     )
 
 
 def test_declared_profile_tools_resolve_against_the_live_database(access):
-    declared = load_agents_yaml()["profiles"]["sap_force_equipment"]["tools"]
+    profiles = load_agents_yaml()["profiles"]
 
-    assert set(resolve(access, tool_names=declared)) == {"database_schema", "database_query"}
+    for agent_id in ("sap_force_equipment", "sap_financial_execution"):
+        declared = profiles[agent_id]["tools"]
+        assert set(resolve(access, tool_names=declared, agent_id=agent_id)) == {
+            "database_schema",
+            "database_query",
+        }
 
 
 def test_schema_discovery_returns_the_reporting_contract(access):
@@ -58,6 +64,25 @@ def test_schema_discovery_returns_the_reporting_contract(access):
     assert result["status"] == "success"
     assert [obj["name"] for obj in result["objects"]] == ["FORCE_EQUIPMENT"]
     assert len(result["objects"][0]["columns"]) == 21
+
+
+def test_finance_schema_and_query_return_the_reporting_contract(access):
+    tools = resolve(access, agent_id="sap_financial_execution")
+    schema = asyncio.run(
+        tools["database_schema"](schema="reporting", object_name="FINANCIAL_EXECUTION")
+    )
+    result = asyncio.run(
+        tools["database_query"](
+            f"SELECT COUNT(*) AS N FROM {FINANCE_REPORTING_VIEW} WHERE [FISCAL_YEAR] = ?",
+            [2026],
+        )
+    )
+
+    assert schema["status"] == "success"
+    assert [obj["name"] for obj in schema["objects"]] == ["FINANCIAL_EXECUTION"]
+    assert len(schema["objects"][0]["columns"]) == 20
+    assert result["status"] == "success"
+    assert result["rows"] == [[500]]
 
 
 def test_query_binds_parameters_and_types_columns(access):

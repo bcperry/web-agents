@@ -166,8 +166,10 @@ def test_standard_profile_session_preserves_runtime_request_and_response(client,
     assert data["session_id"] in _sessions
 
 
-def test_sap_session_reports_authorized_database_tools(client, monkeypatch):
+def test_sap_sessions_report_authorized_database_tools(client, monkeypatch):
     import session_orchestration
+
+    requested_profile_id = ""
 
     class DummySession:
         def to_dict(self):
@@ -180,7 +182,7 @@ def test_sap_session_reports_authorized_database_tools(client, monkeypatch):
         return {}
 
     async def fake_database_tools(ctx, *, user, agent_id, tool_names, logger):
-        assert agent_id == "sap_force_equipment"
+        assert agent_id == requested_profile_id
         assert {"database_schema", "database_query"} <= tool_names
         return {"database_schema": database_schema, "database_query": database_query}
 
@@ -190,7 +192,7 @@ def test_sap_session_reports_authorized_database_tools(client, monkeypatch):
             session=DummySession(),
             tools=kwargs.get("function_tools", []),
             prompt_manifest={},
-            prompt_logical_profile="sap_force_equipment",
+            prompt_logical_profile=requested_profile_id,
         )
 
     async def fake_connect_mcp_servers(configs, *, user_token=None):
@@ -200,15 +202,18 @@ def test_sap_session_reports_authorized_database_tools(client, monkeypatch):
     monkeypatch.setattr(session_orchestration, "create_chat_runtime", fake_create_chat_runtime)
     monkeypatch.setattr(session_orchestration, "connect_mcp_servers", fake_connect_mcp_servers)
 
-    response = client.post("/api/sessions", json={"profile_id": "sap_force_equipment"})
+    for profile_id in ("sap_force_equipment", "sap_financial_execution"):
+        requested_profile_id = profile_id
+        response = client.post("/api/sessions", json={"profile_id": profile_id})
 
-    assert response.status_code == 201
-    assert response.json()["tools_loaded"] == [
-        "get_user_profile",
-        "save_user_profile",
-        "database_schema",
-        "database_query",
-    ]
+        assert response.status_code == 201
+        assert response.json()["tools_loaded"] == [
+            "get_user_profile",
+            "save_user_profile",
+            "render_agent_view",
+            "database_schema",
+            "database_query",
+        ]
 
 
 def test_sap_session_omits_database_tools_when_unentitled(client, monkeypatch):
@@ -240,7 +245,11 @@ def test_sap_session_omits_database_tools_when_unentitled(client, monkeypatch):
     response = client.post("/api/sessions", json={"profile_id": "sap_force_equipment"})
 
     assert response.status_code == 201
-    assert response.json()["tools_loaded"] == ["get_user_profile", "save_user_profile"]
+    assert response.json()["tools_loaded"] == [
+        "get_user_profile",
+        "save_user_profile",
+        "render_agent_view",
+    ]
 
 
 def test_custom_session_preserves_runtime_request_and_response(client, monkeypatch):

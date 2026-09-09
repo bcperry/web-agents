@@ -14,6 +14,9 @@ the assumptions in
   view returns three current force-equipment rows.
 - `migrations/004_bulk_synthetic_seed.sql` adds 500 linked, representative Army force, equipment,
   installation, material, and readiness fixtures while preserving the three edge-case records.
+- `migrations/005_financial_execution.sql` adds SAP-style fund, funds-center, commitment-item,
+  budget-line, and posting sources; a 500-row FY2026 `reporting.FINANCIAL_EXECUTION` view; and
+  deterministic execution-risk fixtures.
 - `apply_migrations.py` validates or applies migrations using ODBC Driver 18 and Entra credentials.
 
 ## Regenerate and Validate
@@ -101,9 +104,22 @@ FROM [reporting].[FORCE_EQUIPMENT]
 ORDER BY [FORCE_ID], [EQUNR];
 ```
 
-The seed returns 503 rows: the original Alpha and Bravo edge cases plus 500 generated current
-assignments. Every SAP-facing table contains at least 500 rows. The unrelated relationship and
-expired assignment must not appear.
+The force-equipment seed returns 503 rows: the original Alpha and Bravo edge cases plus 500
+generated current assignments. Every force-equipment SAP table contains at least 500 rows. The
+unrelated relationship and expired assignment must not appear. The finance seed separately returns
+500 FY2026 budget lines backed by 1,500 synthetic posting rows across five appropriations,
+50 funds centers, and ten commitment items.
+
+Verify the finance semantic result:
+
+```sql
+SELECT [APPROPRIATION], SUM([BUDGET_AMOUNT]) AS [BUDGET_AMOUNT],
+       SUM([CONSUMED_AMOUNT]) AS [CONSUMED_AMOUNT],
+       SUM([AVAILABLE_AMOUNT]) AS [AVAILABLE_AMOUNT]
+FROM [reporting].[FINANCIAL_EXECUTION]
+GROUP BY [APPROPRIATION]
+ORDER BY [APPROPRIATION];
+```
 
 To repeat the complete engine-level assertion against a disposable SQL Server or Azure SQL
 database, point the dedicated test setting at that database:

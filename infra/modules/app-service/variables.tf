@@ -43,16 +43,6 @@ variable "python_version" {
   default     = "3.12"
 }
 
-variable "managed_identity_id" {
-  description = "The managed identity resource ID"
-  type        = string
-}
-
-variable "managed_identity_client_id" {
-  description = "The managed identity client ID"
-  type        = string
-}
-
 variable "resource_group_name" {
   description = "The name of the resource group"
   type        = string
@@ -66,12 +56,6 @@ variable "azure_openai_endpoint" {
 variable "azure_openai_model" {
   description = "Azure OpenAI model deployment name"
   type        = string
-}
-
-variable "azure_openai_api_key" {
-  description = "Azure OpenAI API key"
-  type        = string
-  sensitive   = true
 }
 
 variable "azure_openai_api_version" {

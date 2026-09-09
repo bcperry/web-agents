@@ -67,11 +67,6 @@ variable "user_skills_container_name" {
   default     = "user-skills"
 }
 
-variable "principal_id" {
-  description = "Principal ID of the app's managed identity, granted data-plane access."
-  type        = string
-}
-
 variable "dev_principal_id" {
   description = "Optional developer/user principal ID granted Cosmos data-plane access for local development (empty = none granted)."
   type        = string

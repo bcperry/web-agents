@@ -46,12 +46,14 @@ def test_migrations_are_contiguous_and_have_executable_batches():
         "002_force_equipment_reporting.sql",
         "003_synthetic_seed.sql",
         "004_bulk_synthetic_seed.sql",
+        "005_financial_execution.sql",
     ]
     assert validate_migrations(files) == {
         "001_sap_schema.sql": 17,
         "002_force_equipment_reporting.sql": 11,
         "003_synthetic_seed.sql": 3,
         "004_bulk_synthetic_seed.sql": 3,
+        "005_financial_execution.sql": 4,
     }
 
 

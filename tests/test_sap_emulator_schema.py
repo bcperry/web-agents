@@ -138,3 +138,49 @@ def test_bulk_seed_populates_linked_sap_tables_at_scale():
     assert "N'M1A2 SEPv3 Abrams'" in sql
     assert "N'FORT-BRAGG'" in sql
     assert "N'Non-Mission Capable Supply'" in sql
+
+
+def test_finance_migration_builds_linked_sources_and_reporting_contract():
+    sql = (MIGRATIONS / "005_financial_execution.sql").read_text(encoding="utf-8")
+
+    assert "CREATE TABLE [sap].[FM_FUND_MASTER]" in sql
+    assert "[APPROPRIATION] nvarchar(80) NOT NULL" in sql
+    assert "CREATE TABLE [sap].[FM_FUNDS_CENTER_MASTER]" in sql
+    assert "CREATE TABLE [sap].[FM_COMMITMENT_ITEM_MASTER]" in sql
+    assert "CREATE TABLE [sap].[FM_BUDGET_LINE]" in sql
+    assert "CREATE TABLE [sap].[FM_POSTING]" in sql
+    assert "CREATE OR ALTER VIEW [reporting].[FINANCIAL_EXECUTION]" in sql
+    assert "DECLARE @line_count int = 500;" in sql
+    assert "Finance fixture did not produce 500 execution rows." in sql
+    assert "Finance fixture did not produce varied execution statuses." in sql
+
+    expected_columns = [
+        "FISCAL_YEAR",
+        "BUDGET_LINE_ID",
+        "FUND_CODE",
+        "APPROPRIATION",
+        "FUNDING_AUTHORITY",
+        "FUNDS_CENTER",
+        "FUNDS_CENTER_NAME",
+        "COMMAND_NAME",
+        "COMMITMENT_ITEM",
+        "COMMITMENT_ITEM_NAME",
+        "PROGRAM_ELEMENT",
+        "BUDGET_AMOUNT",
+        "COMMITTED_AMOUNT",
+        "OBLIGATED_AMOUNT",
+        "EXPENDED_AMOUNT",
+        "CONSUMED_AMOUNT",
+        "AVAILABLE_AMOUNT",
+        "EXECUTION_PCT",
+        "EXECUTION_STATUS",
+        "LAST_POSTING_DATE",
+    ]
+    projection = sql.split("SELECT\n    [execution].[FISCAL_YEAR]", 1)[1].split(
+        "FROM [EXECUTION] AS [execution]", 1
+    )[0]
+    aliases = [f"AS [{column}]" for column in expected_columns]
+    assert all(alias in projection for alias in aliases)
+    assert [projection.index(alias) for alias in aliases] == sorted(
+        projection.index(alias) for alias in aliases
+    )

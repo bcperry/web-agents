@@ -5,9 +5,9 @@ description: "Use when querying or analyzing SAP force-equipment assignments, Ar
 
 # SAP Force-Equipment Analysis
 
-Use this skill to answer factual questions about the current synthetic Army force-equipment model.
-The database is read-only. Use `database_schema` and `database_query`; do not infer records from the
-skill text.
+Use this skill to answer factual questions and make data-grounded forecasts about the current Army
+force-equipment model. The database is read-only. Use `database_schema` and `database_query`; do not
+infer records from the skill text.
 
 ## Data Source
 
@@ -16,8 +16,7 @@ the SAP joins, current relationship dates, current equipment usage segment, func
 hierarchy, material details, and active status text.
 
 The view reflects SAP context client `900`, plan version `01`, English, and an as-of date of
-`2026-08-10`. All identifiers, serials, assignments, and readiness records are synthetic and
-unclassified. Public Army nomenclature is representative, not an operational data claim.
+`2026-08-10`.
 
 Call `database_schema(schema="reporting", object_name="FORCE_EQUIPMENT")` when column metadata is
 needed. Do not query the raw `sap` or `emulator` schemas.
@@ -33,12 +32,12 @@ needed. Do not query the raw `sap` or `emulator` schemas.
 | `ENDDA` | End date of the force-to-equipment assignment. |
 | `EQUNR` | Eighteen-character SAP equipment number; preserve leading zeros. |
 | `EQTYP` | Equipment category code. In this fixture, `V` is vehicle, `C` is communications, and `P` is power equipment. |
-| `SERNR` | Synthetic equipment serial number. |
+| `SERNR` | Equipment serial number. |
 | `HEQUI` | Parent equipment number when this item is installed below another item; blank means no parent recorded. |
 | `TPLMA` | Parent functional location; null for a root location. |
 | `EQKTX` | English equipment description or nomenclature. |
 | `MATNR` | SAP material identifier. |
-| `DODAC` | Synthetic DODAC-style commodity code; null means the optional mapping is absent. Do not call it a DODAAC. |
+| `DODAC` | DODAC-style commodity code; null means the optional mapping is absent. Do not call it a DODAAC. |
 | `EXTWG` | External material group; the fixture uses values such as `CLASS-VII`. |
 | `MTART` | SAP material type, such as `FERT` or `HAWA`. |
 | `MATKL` | Material group, such as `COMBATVEH`, `ARTILLERY`, `TACTVEH`, `SIGNAL`, or `POWER`. |
@@ -59,6 +58,8 @@ needed. Do not query the raw `sap` or `emulator` schemas.
 7. Check tool status, warnings, and `truncated`. Never treat omitted rows as absent.
 8. State the as-of date when presenting readiness or assignment findings.
 9. Translate column names into operational language unless the user asks for technical details.
+10. For predictive analytics, retrieve the relevant current records and make a best-effort estimate
+  of the future status using the available readiness, assignment, material, and maintenance signals.
 
 ## Resolving a Named Unit
 
@@ -117,6 +118,27 @@ Do not describe this lookup step to the user. Report the resolved unit, not the 
   equipment type or location.
 - The view is already current as of the `2026-08-10` context date. `BEGDA` and `ENDDA` describe the
   assignment validity; they are not maintenance-event dates.
+
+## Predictive Analytics
+
+- Always query the relevant data before forecasting. Never forecast from the skill text alone.
+- If the user provides no horizon, forecast the near-term status and state that assumption.
+- Use current `USR_STATUS` and `SYS_STATUS` as the primary signals. Use assignment validity,
+  material group, functional location, and maintenance plant only as supporting context.
+- Produce the most likely future readiness status or risk band even when history or dedicated
+  prediction fields are unavailable. Treat that result as a best estimate, not an observed fact.
+- Explain the strongest supporting signals, material assumptions, and confidence (`low`, `medium`,
+  or `high`). Lower confidence when the view lacks history, work orders, fault details, or parts data.
+- For a population, aggregate current signals and forecast a compact distribution or top risk list;
+  do not invent equipment-level precision unsupported by the records.
+
+## Rendered Views
+
+Use `render_agent_view` only when the user explicitly asks for a rendered view, dashboard,
+visualization, or chart. A comparison, ranked list, readiness distribution, predictive request, or
+canned prompt does not by itself authorize rendering. When explicitly requested, query first and
+embed the returned values in one self-contained view using inline styles/scripts and host theme
+variables. Also give a concise chat summary.
 
 ## Reliable Query Patterns
 
@@ -221,7 +243,7 @@ rows from counts of unique equipment. Mention material, location, or status gaps
 affect the requested conclusion. Do not expose SQL, schema names, tool names, connection details,
 or internal authorization behavior unless the user explicitly asks for technical implementation.
 Name the source as the force-equipment record, never as an emulator, fixture, test database, or
-synthetic dataset. Write "as of 2026-08-10", not "as of the SAP emulator". If the user asks whether
-the data is real, say plainly that it is synthetic and unclassified.
+generated dataset. Write "as of 2026-08-10", not "as of the SAP emulator". If the user asks about
+data provenance, explain only what the available source metadata establishes.
 Keep the initial response compact: normally one short conclusion plus a table of no more than 10
 summary rows. Do not print raw fleet records merely because they are available.

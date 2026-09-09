@@ -49,6 +49,29 @@ EXPECTED_TABLE_MINIMUMS = {
     "ZDFPS_DODAC": 500,
 }
 
+EXPECTED_FINANCE_COLUMNS = [
+    "FISCAL_YEAR",
+    "BUDGET_LINE_ID",
+    "FUND_CODE",
+    "APPROPRIATION",
+    "FUNDING_AUTHORITY",
+    "FUNDS_CENTER",
+    "FUNDS_CENTER_NAME",
+    "COMMAND_NAME",
+    "COMMITMENT_ITEM",
+    "COMMITMENT_ITEM_NAME",
+    "PROGRAM_ELEMENT",
+    "BUDGET_AMOUNT",
+    "COMMITTED_AMOUNT",
+    "OBLIGATED_AMOUNT",
+    "EXPENDED_AMOUNT",
+    "CONSUMED_AMOUNT",
+    "AVAILABLE_AMOUNT",
+    "EXECUTION_PCT",
+    "EXECUTION_STATUS",
+    "LAST_POSTING_DATE",
+]
+
 
 @pytest.mark.sqlserver_integration
 def test_sap_emulator_migrations_and_reporting_contract():
@@ -134,6 +157,51 @@ FROM [reporting].[FORCE_EQUIPMENT]
 WHERE [EQUNR] IN ('000000000000001004', '000000000000001005')
 """
         ).fetchval()
+        finance_columns = [
+            row[0]
+            for row in cursor.execute(
+                """
+SELECT [COLUMN_NAME]
+FROM [INFORMATION_SCHEMA].[COLUMNS]
+WHERE [TABLE_SCHEMA] = 'reporting' AND [TABLE_NAME] = 'FINANCIAL_EXECUTION'
+ORDER BY [ORDINAL_POSITION]
+"""
+            )
+        ]
+        finance_rows = cursor.execute(
+            "SELECT COUNT(*) FROM [reporting].[FINANCIAL_EXECUTION] WHERE [FISCAL_YEAR] = 2026"
+        ).fetchval()
+        finance_postings = cursor.execute(
+            "SELECT COUNT(*) FROM [sap].[FM_POSTING] WHERE [MANDT] = '900'"
+        ).fetchval()
+        finance_statuses = {
+            row[0]
+            for row in cursor.execute(
+                "SELECT DISTINCT [EXECUTION_STATUS] FROM [reporting].[FINANCIAL_EXECUTION]"
+            )
+        }
+        invalid_finance_calculations = cursor.execute(
+            """
+SELECT COUNT(*)
+FROM [reporting].[FINANCIAL_EXECUTION]
+WHERE [CONSUMED_AMOUNT] <> [COMMITTED_AMOUNT] + [OBLIGATED_AMOUNT] + [EXPENDED_AMOUNT]
+   OR [AVAILABLE_AMOUNT] <> [BUDGET_AMOUNT] - [CONSUMED_AMOUNT]
+   OR [EXECUTION_STATUS] <> CASE
+        WHEN [CONSUMED_AMOUNT] > [BUDGET_AMOUNT] THEN N'OVER EXECUTED'
+        WHEN [CONSUMED_AMOUNT] >= [BUDGET_AMOUNT] * 0.90 THEN N'AT RISK'
+        WHEN [CONSUMED_AMOUNT] >= [BUDGET_AMOUNT] * 0.75 THEN N'WATCH'
+        ELSE N'ON TRACK'
+      END
+"""
+        ).fetchval()
+        invalid_fiscal_periods = cursor.execute(
+            """
+SELECT COUNT(*)
+FROM [sap].[FM_POSTING]
+WHERE [MANDT] = '900'
+  AND [FISCAL_PERIOD] <> DATEDIFF(month, CONVERT(date, '20251001', 112), [POSTING_DATE]) + 1
+"""
+        ).fetchval()
     finally:
         connection.close()
 
@@ -141,6 +209,12 @@ WHERE [EQUNR] IN ('000000000000001004', '000000000000001005')
     assert ddic_fields == 693
     assert excluded_rows == 0
     assert bulk_rows == 500
+    assert finance_columns == EXPECTED_FINANCE_COLUMNS
+    assert finance_rows == 500
+    assert finance_postings == 1500
+    assert finance_statuses == {"ON TRACK", "WATCH", "AT RISK", "OVER EXECUTED"}
+    assert invalid_finance_calculations == 0
+    assert invalid_fiscal_periods == 0
     assert unit_distribution[0] == 50
     assert unit_distribution[1] >= 2
     assert unit_distribution[2] <= 25

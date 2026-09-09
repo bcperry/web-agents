@@ -12,11 +12,7 @@ infra/
 ├── provider.tf                      # Provider configurations
 ├── terraform.tfvars.example         # Example variable values
 └── modules/
-    ├── managed-identity/            # Managed Identity module
-    │   ├── main.tf
-    │   ├── variables.tf
-    │   └── outputs.tf
-    └── app-service/                 # App Service module
+  └── app-service/                 # App Service module
         ├── main.tf
         ├── variables.tf
         └── outputs.tf
@@ -25,7 +21,9 @@ infra/
 ## Resources Created
 
 - **Resource Group**: Container for all resources
-- **Managed Identity**: User-assigned identity for the app
+- **Managed Identity**: System-assigned identity on the App Service
+- **Azure OpenAI access**: Grants the app identity the
+  `Cognitive Services OpenAI User` role on an existing account
 - **App Service Plan**: Linux-based hosting plan
 - **App Service**: Web app for running the Chainlit application
 - **Cosmos DB**: Durable chat/configuration database, including global `skills`
@@ -84,8 +82,14 @@ terraform apply -var="environment_name=dev" -var="location=eastus" -var="subscri
 | `principal_id` | User/app principal ID | "" | No |
 | `app_service_plan_sku` | App Service Plan SKU | "B1" | No |
 | `python_version` | Python version | "3.12" | No |
+| `azure_openai_resource_id` | Full resource ID of the existing Azure OpenAI account | - | Yes |
 
 *Required for azd deployments, handled automatically
+
+Set `AZURE_OPENAI_RESOURCE_ID` before provisioning. The deploying principal must
+be able to create role assignments at that scope. Terraform does not change the
+Azure OpenAI account's local-auth setting. The application receives no Azure
+OpenAI API key and authenticates with its system-assigned managed identity.
 
 ## Outputs
 
@@ -94,5 +98,4 @@ terraform apply -var="environment_name=dev" -var="location=eastus" -var="subscri
 - `RESOURCE_GROUP_NAME`: Resource group name
 - `WEB_APP_NAME`: App Service name
 - `WEB_APP_URL`: App Service URL
-- `MANAGED_IDENTITY_CLIENT_ID`: Managed identity client ID
-- `MANAGED_IDENTITY_PRINCIPAL_ID`: Managed identity principal ID
+- `MANAGED_IDENTITY_PRINCIPAL_ID`: App Service system identity principal ID

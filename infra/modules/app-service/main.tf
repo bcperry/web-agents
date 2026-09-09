@@ -20,10 +20,7 @@ resource "azurerm_linux_web_app" "app_service" {
   https_only = true
 
   identity {
-    type = "UserAssigned"
-    identity_ids = [
-      var.managed_identity_id
-    ]
+    type = "SystemAssigned"
   }
 
   site_config {
@@ -41,13 +38,11 @@ resource "azurerm_linux_web_app" "app_service" {
 
   app_settings = {
     SCM_DO_BUILD_DURING_DEPLOYMENT = "true"
-    AZURE_CLIENT_ID                = var.managed_identity_client_id
     WEBSITES_PORT                  = "8000"
 
     # Azure OpenAI settings
     AZURE_OPENAI_ENDPOINT    = var.azure_openai_endpoint
     AZURE_OPENAI_MODEL       = var.azure_openai_model
-    AZURE_OPENAI_API_KEY     = var.azure_openai_api_key
     AZURE_OPENAI_API_VERSION = var.azure_openai_api_version
 
     # Azure SQL settings

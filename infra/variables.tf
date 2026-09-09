@@ -57,10 +57,14 @@ variable "azure_openai_model" {
   type        = string
 }
 
-variable "azure_openai_api_key" {
-  description = "Azure OpenAI API key (leave empty to use managed identity)"
+variable "azure_openai_resource_id" {
+  description = "Resource ID of the existing Azure OpenAI account used to grant the App Service system-assigned identity access"
   type        = string
-  sensitive   = true
+
+  validation {
+    condition     = can(regex("(?i)^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\\.CognitiveServices/accounts/[^/]+$", var.azure_openai_resource_id))
+    error_message = "azure_openai_resource_id must be the full resource ID of a Microsoft.CognitiveServices/accounts resource."
+  }
 }
 
 variable "azure_openai_api_version" {
