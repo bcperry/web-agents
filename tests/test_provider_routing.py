@@ -4,6 +4,7 @@ import pytest
 from types import SimpleNamespace
 from unittest.mock import patch
 from agent_framework.openai import OpenAIChatCompletionClient
+from prompt_config import AgentProfile
 
 
 class TestProviderRouting:
@@ -87,15 +88,13 @@ def test_create_chat_runtime_binds_profile_tools_and_creates_session(monkeypatch
     denied_tool = SimpleNamespace(name="denied_tool")
 
     monkeypatch.setattr(agent_factory, "_build_openai_clients", lambda: (FakeClient(), FakeClient()))
-    monkeypatch.setattr(agent_factory, "load_agent_profile", lambda chat_profile=None: SimpleNamespace(
+    monkeypatch.setattr(agent_factory, "load_agent_profile", lambda chat_profile=None: AgentProfile(
         name="Profile Name",
         description="Profile description",
         system_prompt="System prompt",
         tool_names=["allowed_tool"],
         logical_profile="profile-key",
-        search_context=False,
         temperature=0.4,
-        skills=[],
     ))
 
     runtime = agent_factory.create_chat_runtime(

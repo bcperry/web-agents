@@ -89,7 +89,6 @@ class AutonomousScheduler:
         self._logger = logger
         self._last_slot: dict[str, str] = {}
         self._task: asyncio.Task[None] | None = None
-        self._stopped = asyncio.Event()
 
     async def start(self) -> None:
         """Seed the current slot as handled, then launch the background poll loop."""
@@ -153,19 +152,12 @@ class AutonomousScheduler:
             self._logger.error("Scheduled cycle raised for %s", directive.id, exc_info=True)
 
     async def _run_loop(self) -> None:
-        try:
-            while not self._stopped.is_set():
-                await self.poll_once()
-                try:
-                    await asyncio.wait_for(self._stopped.wait(), timeout=self._poll_interval)
-                except asyncio.TimeoutError:
-                    pass
-        except asyncio.CancelledError:  # pragma: no cover — cooperative shutdown
-            pass
+        while True:
+            await self.poll_once()
+            await asyncio.sleep(self._poll_interval)
 
     async def stop(self) -> None:
         """Signal and await the background loop's cancellation."""
-        self._stopped.set()
         if self._task is not None:
             self._task.cancel()
             try:

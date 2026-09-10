@@ -1,13 +1,14 @@
+import asyncio
 import logging
 import os
 import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from azure.core.credentials import AzureKeyCredential
 from azure.identity import DefaultAzureCredential
-from azure.search.documents import SearchClient
 from agent_framework import MCPStdioTool
 from agent_framework import MCPStreamableHTTPTool
 from agent_framework.azure import AzureAISearchContextProvider
@@ -20,6 +21,37 @@ logger = logging.getLogger(__name__)
 
 
 # ── MCP Server Configuration ────────────────────────────────────────────────
+
+_SECRET_QUERY_KEYS = {"api_key", "apikey", "code", "token", "access_token", "client_secret", "password"}
+_SECRET_ASSIGNMENT_RE = re.compile(
+    r"(?i)\b(api[_-]?key|access[_-]?token|client[_-]?secret|password|connectionstring|connection_string)\s*=\s*[^\s&]+"
+)
+_BEARER_RE = re.compile(r"(?i)bearer\s+[A-Za-z0-9._~+/=-]+")
+
+
+def _sanitize_url(value: str) -> str:
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return value
+    if not parsed.scheme or not parsed.netloc:
+        return value
+    safe_query = urlencode([
+        (key, val)
+        for key, val in parse_qsl(parsed.query, keep_blank_values=True)
+        if key.lower() not in _SECRET_QUERY_KEYS
+    ])
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, safe_query, parsed.fragment))
+
+
+def sanitize_mcp_result_error(error: str | None) -> str | None:
+    if error is None:
+        return None
+    sanitized = re.sub(r"https?://[^\s)]+", lambda match: _sanitize_url(match.group(0)), str(error))
+    sanitized = _BEARER_RE.sub("[REDACTED_TOKEN]", sanitized)
+    sanitized = _SECRET_ASSIGNMENT_RE.sub(lambda match: f"{match.group(1)} [REDACTED]", sanitized)
+    return sanitized
+
 
 _ENV_VAR_PATTERN = re.compile(r"\$\{(\w+)\}")
 
@@ -62,7 +94,7 @@ def _interpolate_env_vars(value: str) -> str:
     return _ENV_VAR_PATTERN.sub(_replace, value)
 
 
-def parse_mcp_server_configs(profile_entry: dict[str, Any]) -> list[MCPServerConfig]:
+def parse_mcp_server_configs(profile_entry: dict[str, Any], *, interpolate_env: bool = False) -> list[MCPServerConfig]:
     """Parse and validate the mcp_servers list from an agents.yaml profile entry or request body."""
     raw_servers = profile_entry.get("mcp_servers")
     if not raw_servers:
@@ -88,11 +120,11 @@ def parse_mcp_server_configs(profile_entry: dict[str, Any]) -> list[MCPServerCon
             continue
 
         url = entry.get("url")
-        if isinstance(url, str):
+        if interpolate_env and isinstance(url, str):
             url = _interpolate_env_vars(url)
 
         command = entry.get("command")
-        if isinstance(command, str):
+        if interpolate_env and isinstance(command, str):
             command = _interpolate_env_vars(command)
 
         if transport == "http" and not url:
@@ -103,14 +135,16 @@ def parse_mcp_server_configs(profile_entry: dict[str, Any]) -> list[MCPServerCon
             continue
 
         raw_args = entry.get("args") or []
-        args = [_interpolate_env_vars(a) if isinstance(a, str) else str(a) for a in raw_args]
+        args = [_interpolate_env_vars(arg) if interpolate_env and isinstance(arg, str) else str(arg) for arg in raw_args]
 
         raw_env = entry.get("env")
-        env = {k: _interpolate_env_vars(v) for k, v in raw_env.items()} if isinstance(raw_env, dict) else None
+        env = {key: _interpolate_env_vars(value) if interpolate_env else value for key, value in raw_env.items()} if isinstance(raw_env, dict) else None
 
         allowed_tools = entry.get("allowed_tools")
-        if allowed_tools is not None and not isinstance(allowed_tools, list):
-            allowed_tools = None
+        if allowed_tools is not None and (
+            not isinstance(allowed_tools, list) or any(not isinstance(tool, str) for tool in allowed_tools)
+        ):
+            raise ValueError("allowed_tools must be a list of tool name strings")
 
         request_timeout = entry.get("request_timeout")
         if request_timeout is not None:
@@ -138,7 +172,7 @@ def parse_mcp_server_configs(profile_entry: dict[str, Any]) -> list[MCPServerCon
             command=command,
             args=args,
             env=env,
-            allowed_tools=[str(t) for t in allowed_tools] if allowed_tools else None,
+            allowed_tools=allowed_tools,
             request_timeout=request_timeout,
             description=entry.get("description"),
             auth=auth,
@@ -213,7 +247,7 @@ def create_mcp_tool(config: MCPServerConfig, *, auth_token: str | None = None) -
     }
     if config.description:
         common_kwargs["description"] = config.description
-    if config.allowed_tools:
+    if config.allowed_tools is not None:
         common_kwargs["allowed_tools"] = config.allowed_tools
     if config.request_timeout:
         common_kwargs["request_timeout"] = config.request_timeout
@@ -248,6 +282,7 @@ async def connect_mcp_servers(
     connected: list[Any] = []
     results: list[MCPConnectionResult] = []
     for config in configs:
+        tool = None
         try:
             resolved_token = resolve_mcp_auth_token(config, user_token)
             tool = create_mcp_tool(config, auth_token=resolved_token)
@@ -261,7 +296,12 @@ async def connect_mcp_servers(
                 status="connected",
                 tool_count=tool_count,
             ))
-        except BaseException as e:
+        except asyncio.CancelledError:
+            await cleanup_mcp_servers([*connected, *([tool] if tool is not None else [])])
+            raise
+        except Exception as e:
+            if tool is not None:
+                await cleanup_mcp_servers([tool])
             logger.warning("MCP server '%s' (%s) failed to connect: %s", config.name, config.transport, e)
             results.append(MCPConnectionResult(
                 name=config.name,
@@ -331,19 +371,6 @@ def get_search_credential() -> AzureKeyCredential | DefaultAzureCredential:
 
 
 @lru_cache(maxsize=1)
-def get_search_client() -> SearchClient:
-    config = get_search_service_config()
-    if not config.endpoint or not config.index_name:
-        raise ValueError("SEARCH_SERVICE_ENDPOINT and SEARCH_INDEX_NAME must be configured.")
-
-    return SearchClient(
-        endpoint=config.endpoint,
-        index_name=config.index_name,
-        credential=get_search_credential(),
-    )
-
-
-@lru_cache(maxsize=1)
 def get_search_context_provider() -> AzureAISearchContextProvider:
     """Lazily create the Azure AI Search context provider (requires .env to be loaded)."""
     config = get_search_service_config()
@@ -376,7 +403,6 @@ __all__ = [
     "connect_mcp_servers",
     "cleanup_mcp_servers",
     "SearchServiceConfig",
-    "get_search_client",
     "get_search_credential",
     "get_search_context_provider",
     "get_search_service_config",

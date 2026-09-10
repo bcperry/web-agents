@@ -81,19 +81,48 @@ def test_custom_agents_crud_and_isolation(client):
         app.dependency_overrides.pop(get_current_user, None)
 
 
-def test_agent_customizations_crud(client):
+@pytest.mark.parametrize("base_name", ["Search Agent", "Old display name"])
+def test_agent_customizations_crud(client, base_name):
     from main import app
 
-    override = {"id": "o1", "baseProfileId": "search", "systemPrompt": "x", "source": "builtin-override"}
+    override = {"id": "o1", "baseProfileId": "search", "baseProfileName": base_name,
+                "systemPrompt": "x", "source": "builtin-override"}
     app.dependency_overrides[get_current_user] = _as_user("userA")
     try:
         assert client.put("/api/agent-customizations/search", json=override).status_code == 200
         listed = client.get("/api/agent-customizations").json()["overrides"]
         assert [o["baseProfileId"] for o in listed] == ["search"]
+        assert listed[0]["baseProfileName"] == "Search Agent"
+        assert listed[0]["name"] == "Search Agent"
+        listed[0]["systemPrompt"] = "Edited after reload"
+        saved = client.put("/api/agent-customizations/search", json=listed[0])
+        assert saved.status_code == 200
+        assert saved.json()["systemPrompt"] == "Edited after reload"
         assert client.delete("/api/agent-customizations/search").status_code == 204
         assert client.get("/api/agent-customizations").json()["overrides"] == []
     finally:
         app.dependency_overrides.pop(get_current_user, None)
+
+
+def test_customization_save_validates_identity_and_capabilities(client):
+    body = {"baseProfileId": "search", "systemPrompt": "Search carefully.", "tools": ["missing-tool"]}
+    assert client.put("/api/agent-customizations/search", json=body).status_code == 422
+    body["tools"] = []
+    assert client.put("/api/agent-customizations/other", json=body).status_code == 400
+    body["baseProfileId"] = "missing-profile"
+    assert client.put("/api/agent-customizations/missing-profile", json=body).status_code == 400
+
+
+@pytest.mark.parametrize("path, body", [
+    ("/api/agent-customizations/search", {"baseProfileId": "search", "baseProfileName": "Search Agent"}),
+    ("/api/custom-agents/planner", {"id": "planner", "name": "Planner"}),
+])
+def test_agent_saves_still_reject_unknown_fields(client, path, body):
+    response = client.put(path, json={**body, "systemPrompt": "Help.", "unexpectedField": True})
+    assert response.status_code == 422
+    assert response.json()["detail"] == [{
+        "field": "unexpectedField", "reason": "Extra inputs are not permitted",
+    }]
 
 
 def test_save_rejects_non_object_body(client):
@@ -104,6 +133,21 @@ def test_save_rejects_non_object_body(client):
         assert client.put("/api/custom-agents/a1", json=["not", "an", "object"]).status_code == 400
     finally:
         app.dependency_overrides.pop(get_current_user, None)
+
+
+@pytest.mark.parametrize("path, identity", [
+    ("/api/custom-agents/planner", {"id": "planner", "name": "Planner"}),
+    ("/api/agent-customizations/search", {"baseProfileId": "search"}),
+])
+def test_agent_saves_report_nested_validation_errors(client, path, identity):
+    response = client.put(path, json={
+        **identity, "systemPrompt": "Plan.",
+        "starters": [{"label": "Question", "message": {"invalid": "object"}}],
+    })
+    assert response.status_code == 422
+    assert response.json()["detail"] == [{
+        "field": "starters.0.message", "reason": "Input should be a valid string",
+    }]
 
 
 def test_custom_agent_save_is_strict_matches_id_and_preserves_created_at(client):

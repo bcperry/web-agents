@@ -27,10 +27,10 @@ interface AdminPageProps {
   automationEditId?: string;
   agents: CustomAgentDefinition[];
   builtInOverrides: AgentCustomizationOverride[];
-  onSaveAgent: (agent: CustomAgentDefinition) => void;
-  onDeleteAgent: (id: string) => void;
-  onSaveBuiltInOverride: (override: AgentCustomizationOverride) => void;
-  onResetBuiltInOverride: (baseProfileId: string) => void;
+  onSaveAgent: (agent: CustomAgentDefinition) => Promise<void>;
+  onDeleteAgent: (id: string) => Promise<void>;
+  onSaveBuiltInOverride: (override: AgentCustomizationOverride) => Promise<void>;
+  onResetBuiltInOverride: (baseProfileId: string) => Promise<void>;
 }
 
 export function AdminPage({

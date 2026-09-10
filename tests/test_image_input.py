@@ -1,7 +1,6 @@
 """Tests for multi-modal image input validation (spec 002).
 
-Updated for FastAPI-based architecture — tests the validation functions
-available in the new main.py.
+Tests shared validators and the FastAPI message endpoint.
 """
 
 import io
@@ -9,7 +8,7 @@ import pytest
 from types import SimpleNamespace
 from fastapi import UploadFile
 
-from main import (
+from validators import (
     ALLOWED_IMAGE_MIMES,
     MAX_IMAGE_SIZE_BYTES,
     MAX_IMAGES_PER_MESSAGE,
@@ -263,7 +262,7 @@ class TestMultiImageValidation:
 
 
 # ===========================================================================
-# Source inspection tests — verify main.py structure
+# Source inspection tests — verify message endpoint structure
 # ===========================================================================
 
 
@@ -289,21 +288,21 @@ class TestSendMessageEndpoint:
 
     def test_send_message_has_validation(self) -> None:
         import inspect
-        import main
+        from api_routes.sessions import send_message
 
-        source = inspect.getsource(main.send_message)
+        source = inspect.getsource(send_message)
         assert "validate_uploaded_images" in source
 
     def test_send_message_builds_contents_list(self) -> None:
         import inspect
-        import main
+        from api_routes.sessions import send_message
 
-        source = inspect.getsource(main.send_message)
+        source = inspect.getsource(send_message)
         assert "Content.from_text" in source
 
     def test_send_message_handles_image_errors(self) -> None:
         import inspect
-        import main
+        from api_routes.sessions import send_message
 
-        source = inspect.getsource(main.send_message)
+        source = inspect.getsource(send_message)
         assert "could not be processed" in source

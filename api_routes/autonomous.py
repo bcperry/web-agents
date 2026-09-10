@@ -75,13 +75,6 @@ def _validated_notify(raw: str | None) -> dict[str, str] | None:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-async def _run_autonomous_cycle(*args, **kwargs):
-    import main
-
-    runner = getattr(main, "run_autonomous_cycle", run_autonomous_cycle)
-    return await runner(*args, **kwargs)
-
-
 @router.post("/api/autonomous/run-now")
 async def autonomous_run_now(
     body: AutonomousRunNowRequest,
@@ -102,7 +95,7 @@ async def autonomous_run_now(
             raise HTTPException(status_code=409, detail="No enabled directives are configured")
         directive = enabled[0]
 
-    record = await _run_autonomous_cycle(
+    record = await run_autonomous_cycle(
         session_context, directive, trigger="manual", logger=logger, config=config
     )
     return record.to_wire()

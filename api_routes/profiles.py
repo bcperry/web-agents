@@ -5,10 +5,12 @@ import os
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.security.utils import get_authorization_scheme_param
 
 from app_context import build_tool_instances, function_tool_registry
 from auth import AuthenticatedUser, get_current_user
-from mcp_servers import cleanup_mcp_servers, connect_mcp_servers, get_search_service_config, parse_mcp_server_configs
+from mcp_servers import cleanup_mcp_servers, connect_mcp_servers, get_search_service_config, parse_mcp_server_configs, sanitize_mcp_result_error
+from validators import validate_http_mcp_servers
 from profile_definitions import (
     BuiltInProfileDefinitionResponse,
     DEFAULT_PROFILE_ICON,
@@ -110,19 +112,20 @@ async def test_mcp_connections(
     request: Request,
     user: AuthenticatedUser = Depends(get_current_user),
 ):
-    body = await request.json()
+    try:
+        body = await request.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Body must be valid JSON") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Body must be a JSON object")
     raw_servers = body.get("mcp_servers", [])
     if not isinstance(raw_servers, list) or not raw_servers:
         raise HTTPException(status_code=400, detail="mcp_servers must be a non-empty list")
 
-    for entry in raw_servers:
-        if not isinstance(entry, dict):
-            raise HTTPException(status_code=400, detail="Each mcp_servers entry must be an object")
-        if entry.get("transport", "http") != "http":
-            raise HTTPException(status_code=400, detail="Only http MCP servers can be tested")
+    raw_servers = validate_http_mcp_servers(raw_servers, override=False, default_transport="http")
 
-    auth_header = request.headers.get("authorization", "")
-    user_token = auth_header.removeprefix("Bearer ").strip() if auth_header.lower().startswith("bearer ") else None
+    scheme, token = get_authorization_scheme_param(request.headers.get("authorization"))
+    user_token = token.strip() if scheme.lower() == "bearer" else None
 
     configs = parse_mcp_server_configs({"mcp_servers": raw_servers})
     tools, results = await connect_mcp_servers(configs, user_token=user_token)
@@ -130,7 +133,7 @@ async def test_mcp_connections(
 
     return {
         "results": [
-            {"name": r.name, "transport": r.transport, "status": r.status, "tool_count": r.tool_count, "error": r.error}
+            {"name": r.name, "transport": r.transport, "status": r.status, "tool_count": r.tool_count, "error": sanitize_mcp_result_error(r.error)}
             for r in results
         ],
     }

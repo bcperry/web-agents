@@ -36,10 +36,8 @@ class ChatRuntime:
     agent: RuntimeAgent
     session: Any
     tools: list[Any]
-    prompt_manifest: dict[str, str]
     prompt_logical_profile: str
     sub_agent_tool_names: list[str] = field(default_factory=list)
-    sub_agent_mcp_tools: list[Any] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -196,7 +194,7 @@ def build_chat_client(**kwargs: Any) -> OpenAIChatClient:
     OpenAI-compatible).
     """
     endpoint = kwargs.get("azure_endpoint") or (os.getenv("AZURE_OPENAI_ENDPOINT") or "").strip()
-    if endpoint and not kwargs.get("api_key") and not (os.getenv("AZURE_OPENAI_API_KEY") or "").strip():
+    if endpoint and kwargs.get("credential") is None and not kwargs.get("api_key") and not (os.getenv("AZURE_OPENAI_API_KEY") or "").strip():
         kwargs["credential"] = _azure_token_provider(endpoint)
     return OpenAIChatClient(**kwargs)
 
@@ -204,7 +202,6 @@ def build_chat_client(**kwargs: Any) -> OpenAIChatClient:
 def _build_context_providers(
     token_budget: int,
     summarizer_client: OpenAIChatClient | None = None,
-    logical_profile: str | None = None,
     enable_search_context: bool = False,
     skill_names: list[str] | None = None,
     user_id: str | None = None,
@@ -298,7 +295,7 @@ def _resolve_sub_agent_definition(
                 profile.description,
                 profile.system_prompt,
                 profile.temperature,
-                list(profile.skills),
+                profile.skills,
             )
         if isinstance(agent_ref, CustomAgentRef):
             definition = agent_ref.definition or {}
@@ -309,7 +306,7 @@ def _resolve_sub_agent_definition(
                 return None
             description = str(definition.get("description") or "").strip()
             raw_temp = definition.get("temperature")
-            skills = [str(value) for value in (definition.get("skills") or []) if isinstance(value, str)]
+            skills = [value for value in (definition.get("skills") or []) if isinstance(value, str)]
             temperature: float | None = None
             if raw_temp is not None:
                 try:
@@ -328,10 +325,11 @@ def _build_sub_agent_tools(
     primary_client,
     sub_agent_resources=None,
     user_id=None,
+    reserved_tool_names=(),
 ):
     """Wrap each resolved sub-agent ref as a FunctionTool via Agent.as_tool.
 
-    Returns (tools, tool_names, sub_agent_mcp_tools). For each builtin
+    Returns (tools, tool_names). For each builtin
     sub-agent ref, if sub_agent_resources contains an entry keyed by the
     target profile_id, that sub-agent is constructed with its own
     function_tools + mcp_tools + skills (and search context provider).
@@ -339,7 +337,7 @@ def _build_sub_agent_tools(
     + temperature). Custom sub-agents remain leaf-only.
     """
     if not refs:
-        return [], [], []
+        return [], []
 
     resources_map = sub_agent_resources or {}
 
@@ -348,13 +346,7 @@ def _build_sub_agent_tools(
         info = _resolve_sub_agent_definition(ref)
         if info is None:
             continue
-        resolved.append((ref, info))
-
-    if not resolved:
-        return [], [], []
-
-    derivations = []
-    for ref, (name, description, _instructions, _temp, _skills) in resolved:
+        name, description = info[:2]
         agent_ref = ref.agent_ref
         if isinstance(agent_ref, BuiltinAgentRef):
             fallback_id = agent_ref.profile_id
@@ -362,55 +354,43 @@ def _build_sub_agent_tools(
             fallback_id = agent_ref.custom_agent_id
         else:
             fallback_id = ""
-        derivations.append(derive_sub_agent_tool_surface(name, description, fallback_id))
+        surface = derive_sub_agent_tool_surface(name, description, fallback_id)
+        resolved.append((ref, info, surface))
 
-    tool_names = disambiguate_tool_names([tn for tn, _, _ in derivations])
+    tool_names = disambiguate_tool_names(
+        [surface[0] for _, _, surface in resolved], reserved_names=reserved_tool_names
+    )
 
     tools = []
-    final_names = []
-    aggregated_mcp_tools = []
-    for (ref, (name, description, instructions, sub_temp, sub_skills)), (_orig_tool_name, tool_description, _arg_desc), final_tool_name in zip(
-        resolved, derivations, tool_names
-    ):
+    for (ref, info, surface), final_tool_name in zip(resolved, tool_names):
+        name, description, instructions, sub_temp, sub_skills = info
         sub_tools_extra = []
         try:
-            sub_default_options = {}
-            if sub_temp is not None:
-                sub_default_options["temperature"] = sub_temp
-
-            sub_context_providers = None
+            providers = []
+            selected_skills = sub_skills
             if isinstance(ref.agent_ref, BuiltinAgentRef):
+                selected_skills = []
                 resources = resources_map.get(ref.agent_ref.profile_id)
                 if resources is not None:
                     sub_tools_extra = [*resources.function_tools, *resources.mcp_tools]
-                    aggregated_mcp_tools.extend(resources.mcp_tools)
-                    providers = []
+                    selected_skills = resources.skill_names
                     if resources.enable_search_context:
                         providers.append(get_search_context_provider())
-                    skills_provider = _build_skills_provider(resources.skill_names or None, user_id)
-                    if skills_provider is not None:
-                        providers.append(skills_provider)
-                    sub_context_providers = providers or None
-            elif sub_skills:
-                skills_provider = _build_skills_provider(sub_skills, user_id)
-                sub_context_providers = [skills_provider] if skills_provider is not None else None
+            skills_provider = _build_skills_provider(selected_skills or None, user_id)
+            if skills_provider is not None:
+                providers.append(skills_provider)
 
-            as_agent_kwargs = {
-                "name": _sanitize_agent_name(name or final_tool_name),
-                "instructions": instructions,
-                "description": description or f"Delegate to the {name or final_tool_name} agent.",
-            }
-            if sub_default_options:
-                as_agent_kwargs["default_options"] = sub_default_options
-            if sub_tools_extra:
-                as_agent_kwargs["tools"] = sub_tools_extra
-            if sub_context_providers:
-                as_agent_kwargs["context_providers"] = sub_context_providers
-
-            sub_agent = primary_client.as_agent(**as_agent_kwargs)
+            sub_agent = primary_client.as_agent(
+                name=_sanitize_agent_name(name or final_tool_name),
+                instructions=instructions,
+                description=description or f"Delegate to the {name or final_tool_name} agent.",
+                default_options={"temperature": sub_temp} if sub_temp is not None else None,
+                tools=sub_tools_extra or None,
+                context_providers=providers or None,
+            )
             sub_tool = sub_agent.as_tool(
                 name=final_tool_name,
-                description=tool_description,
+                description=surface[1],
                 arg_name="request",
                 arg_description=f"Request for the {final_tool_name} agent.",
             )
@@ -418,7 +398,6 @@ def _build_sub_agent_tools(
             logger.warning("Failed to wrap sub-agent %r as tool: %s", ref.agent_ref, exc)
             continue
         tools.append(sub_tool)
-        final_names.append(final_tool_name)
         logger.info(
             "Wired sub-agent tool: %s (target=%s, kind=%s, extra_tools=%d)",
             final_tool_name,
@@ -427,7 +406,7 @@ def _build_sub_agent_tools(
             len(sub_tools_extra),
         )
 
-    return tools, final_names, aggregated_mcp_tools
+    return tools, [tool.name for tool in tools]
 
 
 def create_chat_runtime(
@@ -455,7 +434,7 @@ def create_chat_runtime(
         logical_profile = "custom"
         all_tools: list[Any] = [*function_tools, *mcp_servers]
         skill_names = custom_skills
-        sub_agent_refs: list[SubAgentToolRef] = list(agents_as_tools)
+        sub_agent_refs = agents_as_tools
     else:
         agent_profile = load_agent_profile(chat_profile=chat_profile)
         runtime_instructions = agent_profile.system_prompt
@@ -477,7 +456,7 @@ def create_chat_runtime(
         skill_names = agent_profile.skills or None
         # Caller-supplied refs override profile refs (e.g., session-time overrides);
         # otherwise fall back to whatever the YAML profile declared.
-        sub_agent_refs = list(agents_as_tools) if agents_as_tools else list(getattr(agent_profile, "agents_as_tools", ()) or ())
+        sub_agent_refs = agents_as_tools or agent_profile.agents_as_tools
 
     if extra_instructions:
         runtime_instructions = runtime_instructions + extra_instructions
@@ -486,11 +465,14 @@ def create_chat_runtime(
 
     resolved_temperature = temperature if temperature is not None else _get_default_temperature()
 
-    sub_agent_tools, sub_agent_tool_names, sub_agent_mcp_tools = _build_sub_agent_tools(
-        sub_agent_refs, primary_client, sub_agent_resources, user_id
+    sub_agent_tools, sub_agent_tool_names = _build_sub_agent_tools(
+        sub_agent_refs, primary_client, sub_agent_resources, user_id,
+        reserved_tool_names=[
+            getattr(tool, "name", None) or getattr(tool, "__name__", "")
+            for tool in all_tools
+        ],
     )
-    if sub_agent_tools:
-        all_tools = [*all_tools, *sub_agent_tools]
+    all_tools.extend(sub_agent_tools)
 
     agent = primary_client.as_agent(
         name=_sanitize_agent_name(agent_name),
@@ -501,7 +483,6 @@ def create_chat_runtime(
         context_providers=_build_context_providers(
             token_budget=token_budget,
             summarizer_client=summarizer_client,
-            logical_profile=logical_profile,
             enable_search_context=enable_search_context,
             skill_names=skill_names,
             user_id=user_id,
@@ -522,8 +503,6 @@ def create_chat_runtime(
         agent=agent,
         session=agent.create_session(),
         tools=all_tools,
-        prompt_manifest={},
         prompt_logical_profile=logical_profile,
         sub_agent_tool_names=sub_agent_tool_names,
-        sub_agent_mcp_tools=sub_agent_mcp_tools,
     )

@@ -1,3 +1,21 @@
+def test_private_skill_can_be_edited_and_deleted_only_by_its_owner(client):
+    import asyncio
+    import user_data
+    from auth import AuthenticatedUser, get_current_user
+    from main import app
+
+    asyncio.run(user_data.get_user_skills_repository().create("dev-user", "private-edit", {
+        "id": "private-edit", "description": "Private", "content": "Original",
+    }))
+    assert client.get("/api/skills/private-edit").json()["scope"] == "user"
+    assert client.put("/api/skills/private-edit", json={"description": "Changed", "content": "Changed"}).status_code == 200
+    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser("other", "other")
+    try:
+        assert client.delete("/api/skills/private-edit").status_code == 404
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+    assert client.delete("/api/skills/private-edit").status_code == 204
+
 """Tests for Skills CRUD API endpoints (Cosmos-backed, durable store)."""
 
 import os

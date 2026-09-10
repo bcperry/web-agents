@@ -15,21 +15,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from agent_factory import close_azure_credential
 from api_routes import autonomous as autonomous_routes
 from api_routes import agent_views, profiles, sessions, skills, system, user_data
-from api_routes.sessions import create_session, delete_session, send_message
-from app_context import (
-    DEFAULT_MAX_USER_INPUT_CHARS,
-    build_tool_instances as _build_tool_instances,
-    build_user_profile_context as _build_user_profile_context,
-    get_skills_dir as _get_skills_dir,
-    session_context as _session_context,
-)
-from autonomous import get_autonomous_config, run_autonomous_cycle, seed_autonomous_directives
+from app_context import get_skills_dir, session_context
+from autonomous import get_autonomous_config, seed_autonomous_directives
 from autonomous_scheduler import AutonomousScheduler, scheduler_enabled
 from cosmos_memory import close_cosmos, cosmos_config_summary, require_cosmos_configured
-from session_data import SessionData, _sessions
+import session_data
 from skills_manager import seed_skills
 from static_files import mount_static_files
-from validators import ALLOWED_IMAGE_MIMES, MAX_IMAGE_SIZE_BYTES, MAX_IMAGES_PER_MESSAGE
 
 load_dotenv()
 
@@ -67,7 +59,7 @@ async def lifespan(app: FastAPI):
         logger.warning("Failed to load/seed autonomous config at startup", exc_info=True)
 
     try:
-        skills_seeded = await seed_skills(_get_skills_dir())
+        skills_seeded = await seed_skills(get_skills_dir())
         logger.info("Skills — seeded %d default skill(s) from ./skills into Cosmos", skills_seeded)
     except Exception:
         logger.warning("Failed to seed skills at startup", exc_info=True)
@@ -75,7 +67,7 @@ async def lifespan(app: FastAPI):
     autonomous_scheduler = None
     if scheduler_enabled():
         try:
-            autonomous_scheduler = AutonomousScheduler(_session_context, logger=logger)
+            autonomous_scheduler = AutonomousScheduler(session_context, logger=logger)
             await autonomous_scheduler.start()
             logger.info("Autonomous scheduler started (in-process, Cosmos lease)")
         except Exception:
@@ -89,8 +81,9 @@ async def lifespan(app: FastAPI):
             await autonomous_scheduler.stop()
         except Exception:
             logger.debug("Error stopping autonomous scheduler", exc_info=True)
-    session_count = len(_sessions)
-    _sessions.clear()
+    session_count = len(session_data._sessions)
+    for session_id in list(session_data._sessions):
+        await session_data.close_session(session_id)
     await close_cosmos()
     await close_azure_credential()
     logger.info("Cleaned up %d sessions on shutdown", session_count)
@@ -127,22 +120,3 @@ for router in (
     app.include_router(router)
 
 mount_static_files(app, logger=logger)
-
-
-__all__ = [
-    "ALLOWED_IMAGE_MIMES",
-    "DEFAULT_MAX_USER_INPUT_CHARS",
-    "MAX_IMAGE_SIZE_BYTES",
-    "MAX_IMAGES_PER_MESSAGE",
-    "SessionData",
-    "_build_tool_instances",
-    "_build_user_profile_context",
-    "_get_skills_dir",
-    "_session_context",
-    "_sessions",
-    "app",
-    "create_session",
-    "delete_session",
-    "run_autonomous_cycle",
-    "send_message",
-]

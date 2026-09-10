@@ -50,8 +50,7 @@ export interface BuiltinAgentRefWire {
 export interface CustomAgentRefWire {
   kind: 'custom';
   customAgentId: string;
-  /** Full inlined custom-agent definition; required on the wire. */
-  definition: CustomAgentDefinition;
+  definition?: CustomAgentDefinition;
 }
 
 export type AgentRef = BuiltinAgentRefWire | CustomAgentRefWire;

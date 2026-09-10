@@ -79,7 +79,8 @@ def _cosmos_doubles(monkeypatch):
 @pytest.fixture
 def client():
 	"""FastAPI TestClient with clean in-memory sessions."""
-	from main import _sessions, app
+	from main import app
+	from session_data import _sessions
 
 	_sessions.clear()
 	with TestClient(app) as test_client:
@@ -133,7 +134,8 @@ def skills_client(monkeypatch):
 	skills CRUD tests a clean catalog. Yields the repo for direct seeding.
 	"""
 	import cosmos_memory
-	from main import _sessions, app
+	from main import app
+	from session_data import _sessions
 	from tests._doubles import InMemoryByIdRepository
 
 	_sessions.clear()

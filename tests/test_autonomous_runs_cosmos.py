@@ -15,6 +15,36 @@ import cosmos_memory
 from cosmos_memory import AutonomousRunRecord
 
 
+def test_execution_lease_release_checks_owner_and_etag():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from azure.core import MatchConditions
+    from azure.cosmos.exceptions import CosmosResourceExistsError, CosmosAccessConditionFailedError
+
+    async def scenario():
+        container = SimpleNamespace(
+            create_item=AsyncMock(),
+            read_item=AsyncMock(return_value={"run_id": "owner", "_etag": "version"}),
+            delete_item=AsyncMock(),
+        )
+        repo = cosmos_memory.CosmosAutonomousLeaseRepository(None, "test", "leases")
+        repo._container = container
+        assert await repo.try_start("directive", "owner", ttl=60)
+        container.create_item.side_effect = CosmosResourceExistsError(status_code=409)
+        assert not await repo.try_start("directive", "other", ttl=60)
+        await repo.finish("directive", "other")
+        container.delete_item.assert_not_awaited()
+        await repo.finish("directive", "owner")
+        container.delete_item.assert_awaited_once_with(
+            item="execution", partition_key="directive", etag="version",
+            match_condition=MatchConditions.IfNotModified,
+        )
+        container.delete_item.side_effect = CosmosAccessConditionFailedError(status_code=412)
+        await repo.finish("directive", "owner")
+
+    asyncio.run(scenario())
+
+
 @pytest.mark.emulator
 def test_run_repo_create_list_get_round_trip(cosmos_emulator):
     async def scenario():
@@ -86,6 +116,13 @@ def test_lease_try_acquire_is_atomic_once(cosmos_emulator):
             # A different slot for the same directive is independently claimable.
             other = await repo.try_acquire(directive_id, "2026-06-19T12:30:00+00:00", ttl=60)
             assert other is True
+            assert await repo.try_start(directive_id, "first", ttl=60)
+            assert not await repo.try_start(directive_id, "second", ttl=60)
+            await repo.finish(directive_id, "second")
+            assert not await repo.try_start(directive_id, "second", ttl=60)
+            await repo.finish(directive_id, "first")
+            assert await repo.try_start(directive_id, "second", ttl=60)
+            await repo.finish(directive_id, "second")
         finally:
             await cosmos_memory.close_cosmos()
 

@@ -24,24 +24,7 @@ export function formatToolResult(raw: string): string {
   try {
     return JSON.stringify(JSON.parse(raw), null, 2);
   } catch {
-    try {
-      const jsonified = raw
-        .replace(/datetime\.datetime\([^)]+\)/g, (match) => {
-          const numbers = match.match(/\d+/g);
-          if (numbers && numbers.length >= 3) {
-            const [year, month, day, hour = '0', minute = '0', second = '0'] = numbers;
-            return `"${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}T${hour.padStart(2, '0')}:${minute.padStart(2, '0')}:${second.padStart(2, '0')}"`;
-          }
-          return `"${match}"`;
-        })
-        .replace(/'/g, '"')
-        .replace(/\bTrue\b/g, 'true')
-        .replace(/\bFalse\b/g, 'false')
-        .replace(/\bNone\b/g, 'null');
-      return JSON.stringify(JSON.parse(jsonified), null, 2);
-    } catch {
-      return raw;
-    }
+    return raw;
   }
 }
 

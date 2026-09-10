@@ -1,90 +1,9 @@
 import json
-import logging
-import os
-import re
-import struct
-import time
-from contextlib import closing
 from datetime import datetime, timezone
 from typing import Any
 
 from pydantic import Field
-import pyodbc
 
-from azure.identity import DefaultAzureCredential
-
-
-logger = logging.getLogger("tools")
-
-
-def _env_int(name: str, default: int) -> int:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    try:
-        value = int(raw)
-        return value if value > 0 else default
-    except (TypeError, ValueError):
-        logger.warning("Invalid %s=%r; using default=%s", name, raw, default)
-        return default
-
-
-MAX_QUERY_RESULT_ROWS = _env_int("MAX_QUERY_RESULT_ROWS", 100)
-MAX_QUERY_RESULT_CHARS = _env_int("MAX_QUERY_RESULT_CHARS", 12000)
-MAX_SQL_CELL_CHARS = _env_int("MAX_SQL_CELL_CHARS", 1200)
-MAX_LOG_QUERY_CHARS = _env_int("MAX_LOG_QUERY_CHARS", 500)
-MAX_LOG_TOOL_RESULT_CHARS = _env_int("MAX_LOG_TOOL_RESULT_CHARS", 100)
-MAX_SEARCH_SNIPPET_CHARS = _env_int("MAX_SEARCH_SNIPPET_CHARS", 500)
-
-
-def _mask_connection_string(connection_string: str) -> str:
-    redacted = re.sub(r"(?i)(password|pwd)\s*=\s*[^;]+", r"\1=***", connection_string)
-    redacted = re.sub(r"(?i)(user id|uid)\s*=\s*[^;]+", r"\1=***", redacted)
-    return redacted
-
-
-def _compact_sql_for_logs(query: str) -> str:
-    compacted = " ".join(query.strip().split())
-    return _truncate_text(compacted, MAX_LOG_QUERY_CHARS, "SQL LOG")
-
-
-def _summarize_params_for_logs(params: Any | None) -> str:
-    if params is None:
-        return "none"
-    if isinstance(params, tuple):
-        return f"tuple(len={len(params)})"
-    if isinstance(params, list):
-        return f"list(len={len(params)})"
-    if isinstance(params, dict):
-        return f"dict(keys={list(params.keys())})"
-    return type(params).__name__
-
-
-def _preview_tool_result_for_logs(value: Any) -> str:
-    raw = str(value)
-    compact = " ".join(raw.split())
-    if len(compact) <= MAX_LOG_TOOL_RESULT_CHARS:
-        return compact
-    return f"{compact[:MAX_LOG_TOOL_RESULT_CHARS]}..."
-
-
-def _get_token_struct(token: str) -> bytes:
-    """Convert access token to the format required by pyodbc for SQL Server."""
-    token_bytes = token.encode("utf-16-le")
-    return struct.pack(f"<I{len(token_bytes)}s", len(token_bytes), token_bytes)
-
-
-def _truncate_text(value: str, max_chars: int, label: str) -> str:
-    if len(value) <= max_chars:
-        return value
-    omitted = len(value) - max_chars
-    return f"{value[:max_chars]}\n...[TRUNCATED {label}: omitted {omitted} chars]"
-
-
-def _sanitize_cell_value(value: Any) -> Any:
-    if isinstance(value, str):
-        return _truncate_text(value, MAX_SQL_CELL_CHARS, "SQL CELL")
-    return value
 
 def build_user_profile_tools(user_id: str) -> dict[str, Any]:
     """Build the user-profile memory tools bound to a specific user.

@@ -450,8 +450,13 @@ def test_unattended_views_round_trip_their_source(client):
         app.dependency_overrides.pop(get_current_user, None)
 
 
-def test_deleting_a_conversation_deletes_its_views(client):
+def test_deleting_a_conversation_deletes_its_views(client, monkeypatch):
     from main import app
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    clear_history = AsyncMock()
+    monkeypatch.setattr("api_routes.sessions.get_history_provider", lambda: SimpleNamespace(clear=clear_history))
 
     _seed_conversation("userA", "conv-1")
     _seed_conversation("userA", "conv-2")
@@ -461,6 +466,7 @@ def test_deleting_a_conversation_deletes_its_views(client):
     app.dependency_overrides[get_current_user] = _as_user("userA")
     try:
         assert client.delete("/api/conversations/conv-1").status_code == 204
+        clear_history.assert_awaited_once_with("conv-1")
         assert run(agent_views.list_views("userA", "conv-1")) == []
         assert run(agent_views.get_view("userA", "conv-2", keeper)) is not None
     finally:

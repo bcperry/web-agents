@@ -112,13 +112,8 @@ const TOOL_NAME_MAX = 64;
 const TOOL_DESC_MAX = 500;
 
 export function slugifyToolName(raw: string, fallbackId = ''): string {
-  const seed = (raw || '').trim() || fallbackId || '';
-  let slug = seed
-    .toLowerCase()
-    .replace(/[^a-z0-9_]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .replace(/_+/g, '_');
-  if (!slug) slug = (fallbackId || 'agent').toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '') || 'agent';
+  const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  let slug = normalize(raw) || normalize(fallbackId) || 'sub_agent';
   if (/^\d/.test(slug)) slug = `a_${slug}`;
   if (slug.length > TOOL_NAME_MAX) slug = slug.slice(0, TOOL_NAME_MAX);
   return slug;
@@ -131,9 +126,12 @@ export function disambiguateToolNames(names: string[]): string[] {
       used.add(name);
       return name;
     }
-    let i = 2;
-    while (used.has(`${name}_${i}`)) i += 1;
-    const out = `${name}_${i}`;
+    let suffix = 2;
+    let out: string;
+    do {
+      const ending = `_${suffix++}`;
+      out = `${name.slice(0, TOOL_NAME_MAX - ending.length)}${ending}`;
+    } while (used.has(out));
     used.add(out);
     return out;
   });
@@ -152,8 +150,9 @@ export function deriveSubAgentToolSurface(
 ): DerivedToolSurface {
   const toolName = slugifyToolName(targetName, fallbackId);
   let toolDescription = (targetDescription || '').trim();
-  if (!toolDescription) toolDescription = `Delegate to the ${targetName || fallbackId} agent.`;
-  if (toolDescription.length > TOOL_DESC_MAX) toolDescription = toolDescription.slice(0, TOOL_DESC_MAX);
+  toolDescription = toolDescription
+    ? toolDescription.slice(0, TOOL_DESC_MAX)
+    : `Delegate to the ${targetName.trim() || fallbackId || toolName} agent.`;
   return {
     toolName,
     toolDescription,

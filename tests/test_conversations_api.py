@@ -53,6 +53,40 @@ def test_list_returns_only_owner_conversations(client):
         app.dependency_overrides.pop(get_current_user, None)
 
 
+def test_live_session_endpoints_reject_other_users_without_cleanup(client):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from main import app
+    from session_data import _sessions
+
+    tool = SimpleNamespace(close=AsyncMock())
+    session = SimpleNamespace(user_id="owner", mcp_tools=[tool])
+    _sessions["private-session"] = session
+    app.dependency_overrides[get_current_user] = _as_user("other")
+    try:
+        assert client.post("/api/sessions/private-session/messages", json={"content": "hello"}).status_code == 404
+        assert client.delete("/api/sessions/private-session").status_code == 404
+        assert _sessions["private-session"] is session
+        tool.close.assert_not_awaited()
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+
+def test_session_cleanup_is_idempotent():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from session_data import close_session
+
+    tool = SimpleNamespace(close=AsyncMock())
+    sessions = {"test": SimpleNamespace(mcp_tools=[tool])}
+    async def scenario():
+        await close_session("test", sessions=sessions)
+        await close_session("test", sessions=sessions)
+    run(scenario())
+    tool.close.assert_awaited_once()
+    assert not sessions
+
+
 def test_list_orders_by_last_activity_desc(client):
     from main import app
 
@@ -69,6 +103,25 @@ def test_list_orders_by_last_activity_desc(client):
         assert set(ids) == {"older", "newer"}
     finally:
         app.dependency_overrides.pop(get_current_user, None)
+
+
+def test_conversations_can_be_paged_without_repeating_records(client):
+    for index in range(5):
+        _seed("dev-user", f"page-{index}")
+    found = []
+    cursor = None
+    while True:
+        params = {"limit": 2}
+        if cursor:
+            params["cursor"] = cursor
+        response = client.get("/api/conversations", params=params)
+        assert response.status_code == 200
+        payload = response.json()
+        found.extend(record["id"] for record in payload["conversations"])
+        cursor = payload["nextCursor"]
+        if not cursor:
+            break
+    assert len(found) == len(set(found)) == 5
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +190,26 @@ def test_list_excludes_other_users(client):
 # ---------------------------------------------------------------------------
 # T034 — DELETE /api/conversations/{id}
 # ---------------------------------------------------------------------------
+
+def test_failed_history_delete_keeps_conversation_retryable(client, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from session_data import _sessions
+
+    _seed("dev-user", "retry-delete")
+    session = SimpleNamespace(user_id="dev-user", mcp_tools=[])
+    _sessions["retry-delete"] = session
+    history = _FakeHistory([])
+    history.clear = AsyncMock(side_effect=RuntimeError("Store unavailable"))
+    monkeypatch.setattr(cosmos_memory, "_history_provider", history)
+
+    assert client.delete("/api/conversations/retry-delete").status_code == 503
+    assert run(cosmos_memory.get_conversation_repository().get_owned("dev-user", "retry-delete")) is not None
+    assert _sessions["retry-delete"] is session
+    history.clear.side_effect = None
+    assert client.delete("/api/conversations/retry-delete").status_code == 204
+    assert "retry-delete" not in _sessions
+
 
 def test_delete_is_owner_scoped(client, monkeypatch):
     from main import app

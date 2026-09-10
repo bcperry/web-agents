@@ -21,10 +21,10 @@ import { validateSubAgentTools, type ResolvedAgentTarget } from '../utils/agentT
 interface AgentBuilderProps {
   agents: CustomAgentDefinition[];
   builtInOverrides: AgentCustomizationOverride[];
-  onSave: (agent: CustomAgentDefinition) => void;
-  onDelete: (id: string) => void;
-  onSaveBuiltInOverride: (override: AgentCustomizationOverride) => void;
-  onResetBuiltInOverride: (baseProfileId: string) => void;
+  onSave: (agent: CustomAgentDefinition) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+  onSaveBuiltInOverride: (override: AgentCustomizationOverride) => Promise<void>;
+  onResetBuiltInOverride: (baseProfileId: string) => Promise<void>;
   onBack: () => void;
 }
 
@@ -38,6 +38,7 @@ export function AgentBuilder({
   onBack,
 }: AgentBuilderProps) {
   const [availableTools, setAvailableTools] = useState<ToolInfo[]>([]);
+  const [saving, setSaving] = useState(false);
   const [builtInProfiles, setBuiltInProfiles] = useState<AgentProfile[]>([]);
   const [searchContextAvailable, setSearchContextAvailable] = useState(true);
   const [availableSkills, setAvailableSkills] = useState<ToolInfo[]>([]);
@@ -248,29 +249,34 @@ export function AgentBuilder({
     setForm((prev) => ({ ...prev, agentsAsTools: next }));
   };
 
-  const handleSave = () => {
-    if (!isValid) return;
-    if (subAgentValidationErrors.length > 0) return;
-    if (editingBuiltInDefinition) {
-      const existingOverride = builtInOverrides.find((item) => item.baseProfileId === editingBuiltInDefinition.id);
-      const override = prepareBuiltInOverride(form, editingBuiltInDefinition, existingOverride, parsedTemperature);
-      onSaveBuiltInOverride(override);
+  const handleSave = async () => {
+    if (!isValid || saving || subAgentValidationErrors.length > 0) return;
+    setSaving(true);
+    setSaveSuccess(false);
+    try {
+      if (editingBuiltInDefinition) {
+        const existingOverride = builtInOverrides.find((item) => item.baseProfileId === editingBuiltInDefinition.id);
+        await onSaveBuiltInOverride(prepareBuiltInOverride(form, editingBuiltInDefinition, existingOverride, parsedTemperature));
+      } else {
+        await onSave(prepareCustomAgent(form, editingId, agents, parsedTemperature));
+      }
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 2000);
       resetForm();
-      return;
+    } catch {
+      setSaveSuccess(false);
+    } finally {
+      setSaving(false);
     }
-
-    const agent = prepareCustomAgent(form, editingId, agents, parsedTemperature);
-    onSave(agent);
-    setSaveSuccess(true);
-    setTimeout(() => setSaveSuccess(false), 2000);
-    resetForm();
   };
 
-  const handleDelete = (id: string) => {
-    if (editingId === id) resetForm();
-    onDelete(id);
+  const handleDelete = async (id: string) => {
+    try {
+      await onDelete(id);
+      if (editingId === id) resetForm();
+    } catch {
+      setSaveSuccess(false);
+    }
   };
 
   const handleMakeStandard = (override: AgentCustomizationOverride) => {
@@ -336,7 +342,7 @@ export function AgentBuilder({
                       <button onClick={() => handleEditBuiltIn(profile)} type="button" title="Customize built-in agent">EDIT</button>
                       {override && (
                         <>
-                          <button onClick={() => onResetBuiltInOverride(profile.id)} type="button" title="Reset local customization">RESET</button>
+                          <button onClick={() => void onResetBuiltInOverride(profile.id).catch(() => setSaveSuccess(false))} type="button" title="Reset customization">RESET</button>
                           <button
                             onClick={() => handleMakeStandard(override)}
                             type="button"
@@ -383,7 +389,7 @@ export function AgentBuilder({
         </div>
 
         {/* Form */}
-        <div className="agent-builder-form">
+        <div className="agent-builder-form" inert={saving} aria-busy={saving}>
           <h3 className="agent-builder-section-title">
             {editingBuiltInDefinition ? 'CUSTOMIZE BUILT-IN AGENT' : editingId ? 'EDIT AGENT' : 'CREATE NEW AGENT'}
           </h3>

@@ -63,7 +63,7 @@ def derive_sub_agent_tool_surface(
     return tool_name, description, arg_description
 
 
-def disambiguate_tool_names(names: Iterable[str]) -> list[str]:
+def disambiguate_tool_names(names: Iterable[str], *, reserved_names: Iterable[str] = ()) -> list[str]:
     """Return ``names`` with duplicates suffixed ``_2``, ``_3``, … in order.
 
     The first occurrence of each name keeps its original spelling; subsequent
@@ -75,7 +75,7 @@ def disambiguate_tool_names(names: Iterable[str]) -> list[str]:
     >>> disambiguate_tool_names(["a", "a_2", "a"])
     ['a', 'a_2', 'a_3']
     """
-    seen: set[str] = set()
+    seen: set[str] = set(reserved_names)
     out: list[str] = []
     for name in names:
         if name not in seen:
@@ -84,7 +84,8 @@ def disambiguate_tool_names(names: Iterable[str]) -> list[str]:
             continue
         suffix = 2
         while True:
-            candidate = f"{name}_{suffix}"
+            ending = f"_{suffix}"
+            candidate = f"{name[:_TOOL_NAME_MAX_LEN - len(ending)]}{ending}"
             if candidate not in seen:
                 seen.add(candidate)
                 out.append(candidate)

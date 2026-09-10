@@ -1,10 +1,10 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import type {
   AgentProfile,
   ChatMessage,
   ChatSession,
   ConversationIndexEntry,
-  McpConnectionResult,
+  SessionCreateResponse,
   SSEAgentViewEvent,
   ToolInvocation,
   UsageDetails,
@@ -14,138 +14,130 @@ import {
   AuthError,
 } from '../api/client';
 import { emitToast } from './useToast';
-import { cleanupSession, emptyBuiltInOverride, emptyUsage, startChatSession } from './useSessionLifecycle';
-
-interface ChatState {
-  messages: ChatMessage[];
-  isStreaming: boolean;
-  session: ChatSession | null;
-  sessionUsage: UsageDetails;
-  mcpResults: McpConnectionResult[];
-  toolsLoaded: string[];
-  skillsLoaded: string[];
-  agentsLoaded: string[];
-  searchContext: boolean;
-  error: string | null;
-  conversationId: string | null;
-  saveCounter: number;
-  startSession: (profile: AgentProfile, resume?: ConversationIndexEntry) => Promise<void>;
-  endSession: () => Promise<void>;
-  send: (content: string, images?: File[]) => Promise<void>;
-  clearError: () => void;
-}
+import { RequestError } from '../api/helpers';
+import { cleanupSession, emptyUsage, startChatSession } from './useSessionLifecycle';
 
 export function useChat(
   onCustomAgentsChanged?: () => void,
   onAgentView?: (event: SSEAgentViewEvent) => void,
-): ChatState {
+) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
-  const [session, setSession] = useState<ChatSession | null>(null);
+  const [session, setSession] = useState<SessionCreateResponse | null>(null);
   const [sessionUsage, setSessionUsage] = useState<UsageDetails>(emptyUsage);
   const [error, setError] = useState<string | null>(null);
-  const [conversationId, setConversationId] = useState<string | null>(null);
   const [saveCounter, setSaveCounter] = useState(0);
-  const [mcpResults, setMcpResults] = useState<McpConnectionResult[]>([]);
-  const [toolsLoaded, setToolsLoaded] = useState<string[]>([]);
-  const [skillsLoaded, setSkillsLoaded] = useState<string[]>([]);
-  const [agentsLoaded, setAgentsLoaded] = useState<string[]>([]);
-  const [searchContext, setSearchContext] = useState(false);
 
-  // Accumulator refs for building the current assistant message during streaming
-  const textAccRef = useRef('');
-  const toolsRef = useRef<ToolInvocation[]>([]);
-  const turnUsageRef = useRef<UsageDetails | null>(null);
-  const createdAtRef = useRef<string | null>(null);
-  const conversationIdRef = useRef<string | null>(null);
-  const customAgentIdRef = useRef<string | null>(null);
-  const builtInOverrideRef = useRef<{
-    usedBuiltInOverride: boolean;
-    baseProfileId?: string;
-    overrideUpdatedAt?: string;
-  }>(emptyBuiltInOverride());
+  const generationRef = useRef(0);
+  const lifecycleRef = useRef<Promise<unknown>>(Promise.resolve());
+  const sessionRef = useRef<ChatSession | null>(null);
+  const requestRef = useRef<AbortController | null>(null);
+  const imageUrlsRef = useRef<string[]>([]);
+
+  const invalidateRequest = useCallback(() => {
+    generationRef.current += 1;
+    requestRef.current?.abort();
+    requestRef.current = null;
+    imageUrlsRef.current.forEach(url => URL.revokeObjectURL(url));
+    imageUrlsRef.current = [];
+    return generationRef.current;
+  }, []);
+
+  useEffect(() => () => {
+    invalidateRequest();
+    const previous = sessionRef.current;
+    lifecycleRef.current = lifecycleRef.current.then(() => cleanupSession(previous));
+    sessionRef.current = null;
+  }, [invalidateRequest]);
 
   const startSession = useCallback(async (profile: AgentProfile, resume?: ConversationIndexEntry) => {
-    try {
-      const next = await startChatSession(profile, resume, session);
-      createdAtRef.current = next.createdAt;
-      conversationIdRef.current = next.conversationId;
-      customAgentIdRef.current = next.customAgentId;
-      builtInOverrideRef.current = next.builtInOverride;
-
-      setConversationId(next.conversationId);
-      setSession(next.session);
-      setMcpResults(next.mcpResults);
-      setToolsLoaded(next.toolsLoaded);
-      setSkillsLoaded(next.skillsLoaded);
-      setAgentsLoaded(next.agentsLoaded);
-      setSearchContext(next.searchContext);
-      setMessages(next.restoredMessages);
-      setSessionUsage(emptyUsage());
-      setError(null);
-
-      const failed = next.mcpResults.filter((r) => r.status === 'failed');
-      if (failed.length > 0) {
-        const names = failed.map((r) => r.name).join(', ');
-        emitToast({
-          message: `MCP server${failed.length > 1 ? 's' : ''} failed to connect: ${names}`,
-          type: 'warning',
-        });
-      }
-    } catch (err) {
-      if (err instanceof AuthError) {
-        setError(err.message);
-      }
-      // Non-auth errors already emitted as toasts by client.ts
-    }
-  }, [session]);
-
-  const endSession = useCallback(async () => {
-    await cleanupSession(session);
+    const generation = invalidateRequest();
+    const previous = sessionRef.current;
+    sessionRef.current = null;
     setSession(null);
     setMessages([]);
-    setMcpResults([]);
-    setToolsLoaded([]);
-    setSkillsLoaded([]);
-    setAgentsLoaded([]);
-    setSearchContext(false);
-    setConversationId(null);
-    conversationIdRef.current = null;
-    createdAtRef.current = null;
-    customAgentIdRef.current = null;
-    builtInOverrideRef.current = emptyBuiltInOverride();
+    setIsStreaming(false);
+    const operation = lifecycleRef.current.then(async () => {
+      try {
+        await cleanupSession(previous);
+        if (generation !== generationRef.current) return false;
+        const next = await startChatSession(profile, resume);
+        if (generation !== generationRef.current) {
+          await cleanupSession(next.session);
+          return false;
+        }
+        sessionRef.current = next.session;
+        setSession(next.session);
+        setMessages(next.restoredMessages);
+        setSessionUsage(emptyUsage());
+        setError(null);
+
+        const failed = next.session.mcp_results?.filter((r) => r.status === 'failed') ?? [];
+        if (failed.length > 0) {
+          const names = failed.map((r) => r.name).join(', ');
+          emitToast({
+            message: `MCP server${failed.length > 1 ? 's' : ''} failed to connect: ${names}`,
+            type: 'warning',
+          });
+        }
+        return true;
+      } catch (err) {
+        if (generation !== generationRef.current) return false;
+        if (err instanceof AuthError) {
+          setError(err.message);
+        }
+        return false;
+      }
+    });
+    lifecycleRef.current = operation;
+    return operation;
+  }, [invalidateRequest]);
+
+  const endSession = useCallback(async () => {
+    invalidateRequest();
+    const previous = sessionRef.current;
+    sessionRef.current = null;
+    setSession(null);
+    setIsStreaming(false);
+    setMessages([]);
     setSessionUsage(emptyUsage());
-  }, [session]);
+    lifecycleRef.current = lifecycleRef.current.then(() => cleanupSession(previous));
+    await lifecycleRef.current;
+  }, [invalidateRequest]);
 
   const send = useCallback(async (content: string, images?: File[]) => {
-    if (!session) {
+    if (!session || requestRef.current) {
       setError('No active session. Please select a profile first.');
       return;
     }
+    const controller = new AbortController();
+    requestRef.current = controller;
+    const generation = generationRef.current;
+    const isCurrent = () => generation === generationRef.current && !controller.signal.aborted;
+    let text = '';
+    let tools: ToolInvocation[] = [];
+    const assistantIndex = messages.length + 1;
+    const updateAssistant = (patch: Partial<ChatMessage>) => {
+      setMessages(previous => previous.map((message, index) =>
+        index === assistantIndex ? { ...message, ...patch } : message));
+    };
 
     // Add user message
     const userMessage: ChatMessage = {
       role: 'user',
       content,
-      images: images?.map((f) => ({
-        filename: f.name,
-        media_type: f.type,
-        data: URL.createObjectURL(f),
-      })),
+      images: images?.map(file => {
+        const data = URL.createObjectURL(file);
+        imageUrlsRef.current.push(data);
+        return { filename: file.name, media_type: file.type, data };
+      }),
     };
-    setMessages((prev) => [...prev, userMessage]);
     setIsStreaming(true);
     setError(null);
 
-    // Reset accumulators
-    textAccRef.current = '';
-    toolsRef.current = [];
-    turnUsageRef.current = null;
-
-    // Add placeholder assistant message
-    const assistantIndex = messages.length + 1; // after user message
     setMessages((prev) => [
       ...prev,
+      userMessage,
       { role: 'assistant', content: '', tool_invocations: [], usage: null },
     ]);
 
@@ -156,26 +148,21 @@ export function useChat(
         images && images.length > 0 ? images : null,
         {
           onText: (data) => {
-            textAccRef.current += data.content;
-            setMessages((prev) => {
-              const updated = [...prev];
-              updated[assistantIndex] = {
-                ...updated[assistantIndex],
-                content: textAccRef.current,
-              };
-              return updated;
-            });
+            if (!isCurrent()) return;
+            text += data.content;
+            updateAssistant({ content: text });
           },
           onFunctionCall: (data) => {
-            const existingIdx = toolsRef.current.findIndex((t) => t.call_id === data.call_id);
+            if (!isCurrent()) return;
+            const existingIdx = tools.findIndex((t) => t.call_id === data.call_id);
             if (existingIdx >= 0) {
               // Continuation chunk — update the existing tool's arguments
-              toolsRef.current = toolsRef.current.map((t, i) =>
+              tools = tools.map((t, i) =>
                 i === existingIdx ? { ...t, arguments: data.arguments } : t
               );
             } else {
-              toolsRef.current = [
-                ...toolsRef.current,
+              tools = [
+                ...tools,
                 {
                   call_id: data.call_id,
                   name: data.name,
@@ -184,68 +171,35 @@ export function useChat(
                 },
               ];
             }
-            setMessages((prev) => {
-              const updated = [...prev];
-              updated[assistantIndex] = {
-                ...updated[assistantIndex],
-                tool_invocations: [...toolsRef.current],
-              };
-              return updated;
-            });
+            updateAssistant({ tool_invocations: tools });
           },
           onFunctionResult: (data) => {
-            toolsRef.current = toolsRef.current.map((t) =>
-              t.call_id === data.call_id
+            if (!isCurrent()) return;
+            const matching = tools.findIndex(tool => tool.call_id === data.call_id);
+            const target = matching >= 0 ? matching : tools.findIndex(tool => !tool.result);
+            tools = tools.map((tool, index) =>
+              index === target
                 ? {
-                    ...t,
+                    ...tool,
                     result: data.result,
-                    arguments: (data.arguments && data.arguments.length > 0)
-                      ? data.arguments
-                      : t.arguments,
+                    arguments: data.arguments || tool.arguments,
                     ...(data.content_items ? { content_items: data.content_items } : {}),
                   }
-                : t
+                : tool
             );
-            // If no matching call_id found (MCP/framework mismatch), try matching by most recent pending tool
-            if (!toolsRef.current.some((t) => t.call_id === data.call_id)) {
-              const pending = toolsRef.current.findIndex((t) => !t.result);
-              if (pending >= 0) {
-                toolsRef.current[pending] = {
-                  ...toolsRef.current[pending],
-                  result: data.result,
-                  arguments: (data.arguments && data.arguments.length > 0)
-                    ? data.arguments
-                    : toolsRef.current[pending].arguments,
-                  ...(data.content_items ? { content_items: data.content_items } : {}),
-                };
-              }
-            }
-            setMessages((prev) => {
-              const updated = [...prev];
-              updated[assistantIndex] = {
-                ...updated[assistantIndex],
-                tool_invocations: [...toolsRef.current],
-              };
-              return updated;
-            });
+            updateAssistant({ tool_invocations: tools });
           },
           onUsage: (data) => {
-            turnUsageRef.current = data;
+            if (!isCurrent()) return;
             setSessionUsage((prev) => ({
               input_token_count: prev.input_token_count + data.input_token_count,
               output_token_count: prev.output_token_count + data.output_token_count,
               total_token_count: prev.total_token_count + data.total_token_count,
             }));
-            setMessages((prev) => {
-              const updated = [...prev];
-              updated[assistantIndex] = {
-                ...updated[assistantIndex],
-                usage: data,
-              };
-              return updated;
-            });
+            updateAssistant({ usage: data });
           },
           onError: (data) => {
+            if (!isCurrent()) return;
             const isRetryable = data.retry_after != null;
             emitToast({
               message: data.message,
@@ -253,11 +207,13 @@ export function useChat(
             });
           },
           onAgentView: (data) => {
+            if (!isCurrent()) return;
             onAgentView?.(data);
           },
           onDone: () => {
+            if (!isCurrent()) return;
             setIsStreaming(false);
-            if (toolsRef.current.some((tool) =>
+            if (tools.some((tool) =>
               tool.name === 'create_agent' || tool.name === 'edit_agent'
             )) {
               onCustomAgentsChanged?.();
@@ -265,39 +221,40 @@ export function useChat(
             // The backend already persisted this turn to Cosmos and updated the
             // conversation index; bump the save counter so the sidebar reloads
             // the server-sourced conversation list.
-            if (session) {
-              setSaveCounter((c) => c + 1);
-            }
+            setSaveCounter((c) => c + 1);
           },
         },
+        controller.signal,
       );
     } catch (err) {
+      if (!isCurrent()) return;
       if (err instanceof AuthError) {
         setError(err.message);
+      } else if (!(err instanceof RequestError)) {
+        emitToast({ message: err instanceof Error ? err.message : 'The response could not be completed.', type: 'error' });
       }
-      // Non-auth errors already emitted as toasts by client.ts
-      setIsStreaming(false);
+    } finally {
+      if (isCurrent()) {
+        requestRef.current = null;
+        setIsStreaming(false);
+      }
     }
   }, [session, messages.length, onCustomAgentsChanged, onAgentView]);
-
-  const clearError = useCallback(() => setError(null), []);
 
   return {
     messages,
     isStreaming,
     session,
     sessionUsage,
-    mcpResults,
-    toolsLoaded,
-    skillsLoaded,
-    agentsLoaded,
-    searchContext,
+    mcpResults: session?.mcp_results ?? [],
+    toolsLoaded: session?.tools_loaded ?? [],
+    skillsLoaded: session?.skills_loaded ?? [],
+    agentsLoaded: session?.agents_loaded ?? [],
+    searchContext: session?.search_context ?? false,
     error,
-    conversationId,
     saveCounter,
     startSession,
     endSession,
     send,
-    clearError,
   };
 }

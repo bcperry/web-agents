@@ -175,7 +175,7 @@ export function ChatPage({ onOpenAdmin, onOpenAutonomous, onCustomAgentsChanged,
       setCreatingSession(true);
       setSpinnerTextIndex(0);
       try {
-        await startSession(profile);
+        if (!await startSession(profile)) return;
         // Push a history entry so the back button returns to profile selection.
         window.history.pushState({ view: 'chat-active' }, '');
       } finally {
@@ -191,6 +191,7 @@ export function ChatPage({ onOpenAdmin, onOpenAutonomous, onCustomAgentsChanged,
   const handleNewChat = useCallback(async () => {
     if (isEndingSessionRef.current) return;
     isEndingSessionRef.current = true;
+    if (window.innerWidth <= 768) setSidebarCollapsed(true);
     try {
       await endSession();
       setSelectedProfile(null);
@@ -222,11 +223,6 @@ export function ChatPage({ onOpenAdmin, onOpenAutonomous, onCustomAgentsChanged,
   }, [session, handleNewChat]);
 
   const handleSelectConversation = useCallback(async (id: string) => {
-    // End the current session so the UI transitions to the spinner state.
-    if (session) {
-      await endSession();
-    }
-
     const entry = conversationIndex.find((e) => e.id === id);
     if (!entry) return;
 
@@ -245,13 +241,14 @@ export function ChatPage({ onOpenAdmin, onOpenAutonomous, onCustomAgentsChanged,
     }
 
     try {
-      await startSession(profile || {
+      const started = await startSession(profile || {
         id: entry.profileId,
         name: entry.profileName,
         description: entry.description,
         icon: '/icons/custom.svg',
         starters: [],
       }, entry);
+      if (!started) return;
       // Push a history entry so the back button returns to profile selection,
       // but only if we're not already in an active session (switching conversations
       // should not add an extra back step).
@@ -261,16 +258,17 @@ export function ChatPage({ onOpenAdmin, onOpenAutonomous, onCustomAgentsChanged,
     } finally {
       setCreatingSession(false);
     }
-  }, [session, conversationIndex, allProfiles, startSession, endSession]);
+  }, [conversationIndex, allProfiles, startSession]);
 
   const handleDeleteConversation = useCallback(async (id: string) => {
     try {
       await deleteConversation(id);
+      if (session?.session_id === id) await handleNewChat();
     } catch {
       /* surfaced by the API layer */
     }
     void loadIndex().then(setConversationIndex);
-  }, [deleteConversation, loadIndex]);
+  }, [deleteConversation, loadIndex, session, handleNewChat]);
 
   const toggleSidebar = useCallback(() => {
     setSidebarCollapsed((prev) => !prev);

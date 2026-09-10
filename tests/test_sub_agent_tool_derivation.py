@@ -97,3 +97,12 @@ def test_disambiguate_preserves_input_order() -> None:
 
 def test_disambiguate_empty_input() -> None:
     assert disambiguate_tool_names([]) == []
+
+
+def test_disambiguate_long_names_reserves_suffix_space() -> None:
+    name = "x" * 64
+    reserved = "x" * 62 + "_2"
+    result = disambiguate_tool_names([name, reserved, *([name] * 12)])
+    assert result[:3] == [name, reserved, "x" * 62 + "_3"]
+    assert len(set(result)) == len(result)
+    assert all(len(value) <= 64 for value in result)

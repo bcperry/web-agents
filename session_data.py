@@ -9,6 +9,7 @@ from agent_framework._types import UsageDetails
 from fastapi import HTTPException
 
 from eval_trace import EvalTraceLogger
+from mcp_servers import cleanup_mcp_servers
 from streaming import create_usage
 
 
@@ -18,7 +19,7 @@ class SessionData:
     __slots__ = (
         "session_id", "user_id", "profile_id", "profile_name",
         "agent", "agent_session", "tools", "usage",
-        "eval_trace_logger", "prompt_manifest", "prompt_logical_profile",
+        "eval_trace_logger", "prompt_logical_profile",
         "created_at", "context_usage", "mcp_tools",
     )
 
@@ -33,7 +34,6 @@ class SessionData:
         agent_session: AgentSession,
         tools: list[Any],
         eval_trace_logger: EvalTraceLogger,
-        prompt_manifest: dict[str, str],
         prompt_logical_profile: str,
     ):
         self.session_id = session_id
@@ -45,7 +45,6 @@ class SessionData:
         self.tools = tools
         self.usage: Optional[UsageDetails] = create_usage()
         self.eval_trace_logger = eval_trace_logger
-        self.prompt_manifest = prompt_manifest
         self.prompt_logical_profile = prompt_logical_profile
         self.created_at = datetime.now(timezone.utc)
         self.context_usage: dict[str, int] = {
@@ -60,8 +59,21 @@ class SessionData:
 _sessions: dict[str, SessionData] = {}
 
 
-def get_session(session_id: str) -> SessionData:
+def get_session(session_id: str, user_id: str) -> SessionData:
     session = _sessions.get(session_id)
-    if session is None:
+    if session is None or session.user_id != user_id:
         raise HTTPException(status_code=404, detail="Session not found")
     return session
+
+
+async def close_session(session_id: str, *, sessions: dict | None = None, expected: object | None = None) -> None:
+    from agent_views import clear_view_data_budget
+
+    store = _sessions if sessions is None else sessions
+    session = store.get(session_id)
+    if session is None or (expected is not None and session is not expected):
+        return
+    store.pop(session_id)
+    clear_view_data_budget(session_id)
+    tools, session.mcp_tools = session.mcp_tools, []
+    await cleanup_mcp_servers(tools)

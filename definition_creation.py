@@ -16,7 +16,7 @@ import cosmos_memory
 import user_data
 from prompt_config import load_agents_yaml
 from skills_manager import SkillManager
-from validators import validate_http_mcp_servers
+from validators import validate_http_mcp_servers, validate_sub_agent_tool_refs
 
 logger = logging.getLogger(__name__)
 _AGENT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
@@ -191,67 +191,47 @@ class SkillCreationService:
         self.user_repo = user_repo or user_data.get_user_skills_repository()
 
     async def create(self, request: SkillCreationRequest) -> CreationResult:
-        if not self.user_id:
-            return _unauthorized("skill")
-        try:
-            await SkillManager(
-                self.global_repo,
-                user_id=self.user_id,
-                user_repo=self.user_repo,
-            ).create(request.name, request.description, request.content)
-        except HTTPException as exc:
-            if exc.status_code == 422 and isinstance(exc.detail, list):
-                return _validation_error(
-                    "skill",
-                    [ValidationIssue.model_validate(issue) for issue in exc.detail],
-                )
-            if exc.status_code == 409:
-                return _duplicate("skill", request.name)
-            raise
-        except Exception as exc:  # provider details must never reach the caller
-            logger.error(
-                "Definition creation failed kind=skill id=%s code=temporarily_unavailable exception=%s",
-                request.name,
-                exc.__class__.__name__,
-            )
-            return _unavailable("skill")
-        return CreatedResult(
-            kind="skill",
-            id=request.name,
-            name=request.name,
-            message=f"Created skill '{request.name}'.",
-        )
+        return await self._save(request, update=False)
 
     async def update(self, request: SkillCreationRequest) -> CreationResult:
+        return await self._save(request, update=True)
+
+    async def _save(self, request: SkillCreationRequest, *, update: bool) -> CreationResult:
         if not self.user_id:
-            return _unauthorized("skill", "edit")
+            return _unauthorized("skill", "edit" if update else "create")
         try:
-            await SkillManager(
+            manager = SkillManager(
                 self.global_repo,
                 user_id=self.user_id,
                 user_repo=self.user_repo,
-            ).update(request.name, request.description, request.content)
+            )
+            save = manager.update if update else manager.create
+            await save(request.name, request.description, request.content)
         except HTTPException as exc:
             if exc.status_code == 422 and isinstance(exc.detail, list):
                 return _validation_error(
                     "skill",
                     [ValidationIssue.model_validate(issue) for issue in exc.detail],
                 )
-            if exc.status_code == 404:
+            if not update and exc.status_code == 409:
+                return _duplicate("skill", request.name)
+            if update and exc.status_code == 404:
                 return _not_found("skill", request.name)
             raise
         except Exception as exc:
             logger.error(
-                "Definition update failed kind=skill id=%s code=temporarily_unavailable exception=%s",
+                "Definition %s failed kind=skill id=%s code=temporarily_unavailable exception=%s",
+                "update" if update else "creation",
                 request.name,
                 exc.__class__.__name__,
             )
             return _unavailable("skill")
-        return UpdatedResult(
+        result_type = UpdatedResult if update else CreatedResult
+        return result_type(
             kind="skill",
             id=request.name,
             name=request.name,
-            message=f"Updated skill '{request.name}'.",
+            message=f"{'Updated' if update else 'Created'} skill '{request.name}'.",
         )
 
 
@@ -317,52 +297,24 @@ class AgentCreationService:
             issues.append(ValidationIssue(field="mcpServers", reason=str(exc.detail)))
             mcp_servers = []
 
-        hydrated_refs: list[dict[str, Any]] = []
+        references = [entry.model_dump(exclude_none=True) for entry in request.agentsAsTools]
         profiles = load_agents_yaml().get("profiles") or {}
-        seen_targets: set[tuple[str, str]] = set()
-        for index, entry_model in enumerate(request.agentsAsTools):
-            entry = entry_model.model_dump(exclude_none=True)
-            field = f"agentsAsTools[{index}].agentRef"
-            ref = entry.get("agentRef") if isinstance(entry, dict) else None
-            if not isinstance(ref, dict):
-                issues.append(ValidationIssue(field=field, reason="Sub-agent reference is required."))
-                continue
-            kind = ref.get("kind")
-            target_id = ref.get("profileId") if kind == "builtin" else ref.get("customAgentId")
-            target_id = str(target_id or "")
-            key = (str(kind), target_id)
-            if not target_id or kind not in {"builtin", "custom"}:
-                issues.append(ValidationIssue(field=field, reason="Sub-agent could not be resolved."))
-                continue
-            if target_id == agent_id:
-                issues.append(ValidationIssue(field=field, reason="An agent cannot reference itself."))
-                continue
-            if key in seen_targets:
-                issues.append(ValidationIssue(field=field, reason="Sub-agent is referenced more than once."))
-                continue
-            seen_targets.add(key)
+        targets: dict[tuple[str, str], dict | None] = {}
+        for entry in references:
+            ref = entry["agentRef"]
+            kind = ref["kind"]
+            target_id = ref["profileId"] if kind == "builtin" else ref["customAgentId"]
             if kind == "builtin":
-                if target_id not in profiles:
-                    issues.append(ValidationIssue(field=field, reason="Sub-agent could not be resolved."))
-                    continue
-                hydrated_refs.append({"agentRef": {"kind": "builtin", "profileId": target_id}})
-                continue
-            target = await self.custom_repo.get(self.user_id, target_id)
-            if not target:
-                issues.append(ValidationIssue(field=field, reason="Sub-agent could not be resolved."))
-                continue
-            nested = target.get("agentsAsTools") or []
-            if any(
-                isinstance(item, dict)
-                and isinstance(item.get("agentRef"), dict)
-                and (item["agentRef"].get("customAgentId") or item["agentRef"].get("profileId")) == agent_id
-                for item in nested
-            ):
-                issues.append(ValidationIssue(field=field, reason="Direct delegated-agent cycles are not allowed."))
-                continue
-            hydrated_refs.append({
-                "agentRef": {"kind": "custom", "customAgentId": target_id, "definition": target}
-            })
+                targets[kind, target_id] = profiles.get(target_id)
+            else:
+                targets[kind, target_id] = await self.custom_repo.get(self.user_id, target_id)
+        issues.extend(
+            ValidationIssue(field=error.field, reason=error.message)
+            for error in validate_sub_agent_tool_refs(
+                agent_id, references,
+                lambda kind, target: targets.get((kind, target)),
+            )
+        )
 
         if issues:
             return None, issues
@@ -381,7 +333,10 @@ class AgentCreationService:
             "icon": request.icon or "/favicon.png",
             "starters": [starter.model_dump() for starter in request.starters],
             "temperature": float(request.temperature),
-            "agentsAsTools": hydrated_refs,
+            "agentsAsTools": [
+                {"agentRef": {key: value for key, value in entry["agentRef"].items() if key != "definition"}}
+                for entry in references
+            ],
             "source": "custom",
             "createdAt": created_at,
             "updatedAt": now,

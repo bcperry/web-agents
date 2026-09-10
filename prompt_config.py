@@ -107,25 +107,21 @@ def _normalize_profile_name(name: Optional[str]) -> str:
     return " ".join(name.strip().lower().split())
 
 
-def _build_profile_alias_map(workspace_root: Optional[Path] = None) -> dict[str, str]:
-    """Build a {normalised display-name → profile-key} map from agents.yaml."""
-    agents_doc = load_agents_yaml(workspace_root)
-    profiles = agents_doc.get("profiles") or {}
-    alias_map: dict[str, str] = {}
-    for key, entry in profiles.items():
-        if isinstance(entry, dict):
-            name = entry.get("name")
-            if name:
-                alias_map[_normalize_profile_name(name)] = key
-    return alias_map
-
-
-def resolve_logical_profile(chat_profile: Optional[str], *, workspace_root: Optional[Path] = None) -> str:
+def resolve_logical_profile(
+    chat_profile: Optional[str], *, workspace_root: Optional[Path] = None,
+    profiles: dict[str, Any] | None = None,
+) -> str:
+    if profiles is None:
+        profiles = load_agents_yaml(workspace_root).get("profiles") or {}
+    if chat_profile in profiles:
+        return chat_profile
+    if not chat_profile:
+        return "hybrid"
     normalized = _normalize_profile_name(chat_profile)
-    alias_map = _build_profile_alias_map(workspace_root)
-    if normalized in alias_map:
-        return alias_map[normalized]
-    return "hybrid"
+    for key, entry in profiles.items():
+        if isinstance(entry, dict) and entry.get("name") and _normalize_profile_name(entry["name"]) == normalized:
+            return key
+    raise ValueError(f"Unknown profile: {chat_profile}")
 
 
 def get_profile_display_name(logical_profile: str, *, fallback: Optional[str] = None, workspace_root: Optional[Path] = None) -> str:
@@ -161,12 +157,7 @@ def load_agent_profile(
     """Load a single agent profile from agents.yaml."""
     agents_doc = load_agents_yaml(workspace_root)
     profiles = agents_doc.get("profiles") or {}
-    # Accept either a profile key (e.g. "sql") or a display name
-    # (e.g. "SQL Query Agent"). Direct id lookup wins.
-    if isinstance(chat_profile, str) and chat_profile in profiles:
-        logical_profile = chat_profile
-    else:
-        logical_profile = resolve_logical_profile(chat_profile, workspace_root=workspace_root)
+    logical_profile = resolve_logical_profile(chat_profile, profiles=profiles)
 
     if logical_profile not in profiles:
         raise ValueError(f"No agent profile found for '{logical_profile}' in agents.yaml")

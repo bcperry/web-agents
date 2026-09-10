@@ -31,105 +31,65 @@ import type {
   SSEErrorEvent,
   SSEAgentViewEvent,
 } from '../types/api';
-import { emitToast } from '../hooks/useToast';
+import { createParser } from 'eventsource-parser';
 import {
   API_BASE,
-  assertNotUnauthorized,
-  classifyError,
-  getAuthHeaders,
-  handleHttpError,
-  jsonHeaders,
+  request,
+  fetchAuthenticated,
   requestJson,
 } from './helpers';
 
 export { AuthError } from './helpers';
 
 export async function fetchTools(): Promise<ToolsResponse> {
-  const resp = await fetch(`${API_BASE}/tools`, {
-    headers: getAuthHeaders(),
-  });
-  assertNotUnauthorized(resp, 'Failed to fetch tools');
-  if (!resp.ok) await handleHttpError(resp, 'Failed to fetch tools');
-  const data = await resp.json();
-  return {
-    tools: data.tools,
-    unavailable: data.unavailable || [],
-    search_context_available: data.search_context_available ?? true,
-    search_context_reason: data.search_context_reason ?? null,
-  };
+  return requestJson(`${API_BASE}/tools`, {}, 'Failed to fetch tools');
 }
 
 export async function fetchSkills(): Promise<ToolInfo[]> {
-  const resp = await fetch(`${API_BASE}/skills`, {
-    headers: getAuthHeaders(),
-  });
-  assertNotUnauthorized(resp, 'Failed to fetch skills');
-  if (!resp.ok) await handleHttpError(resp, 'Failed to fetch skills');
-  const data = await resp.json();
+  const data = await requestJson<{ skills: ToolInfo[] }>(`${API_BASE}/skills`, {}, 'Failed to fetch skills');
   return data.skills;
 }
 
 export async function fetchSkill(name: string): Promise<SkillDefinition> {
-  return requestJson<SkillDefinition>(`${API_BASE}/skills/${encodeURIComponent(name)}`, {
-    headers: getAuthHeaders(),
-  }, 'Failed to fetch skill');
+  return requestJson(`${API_BASE}/skills/${encodeURIComponent(name)}`, {}, 'Failed to fetch skill');
 }
 
 export async function createSkill(skill: SkillCreatePayload): Promise<SkillDefinition> {
-  const resp = await fetch(`${API_BASE}/skills`, {
+  return requestJson(`${API_BASE}/skills`, {
     method: 'POST',
-    headers: jsonHeaders(),
     body: JSON.stringify(skill),
-  });
-  assertNotUnauthorized(resp, 'Failed to create skill');
-  if (!resp.ok) await handleHttpError(resp, 'Failed to create skill');
-  return resp.json();
+  }, 'Failed to create skill');
 }
 
 export async function updateSkill(name: string, payload: SkillUpdatePayload): Promise<SkillDefinition> {
-  const resp = await fetch(`${API_BASE}/skills/${encodeURIComponent(name)}`, {
+  return requestJson(`${API_BASE}/skills/${encodeURIComponent(name)}`, {
     method: 'PUT',
-    headers: jsonHeaders(),
     body: JSON.stringify(payload),
-  });
-  assertNotUnauthorized(resp, 'Failed to update skill');
-  if (!resp.ok) await handleHttpError(resp, 'Failed to update skill');
-  return resp.json();
+  }, 'Failed to update skill');
 }
 
 export async function deleteSkill(name: string): Promise<void> {
-  const resp = await fetch(`${API_BASE}/skills/${encodeURIComponent(name)}`, {
+  await request(`${API_BASE}/skills/${encodeURIComponent(name)}`, {
     method: 'DELETE',
-    headers: getAuthHeaders(),
-  });
-  assertNotUnauthorized(resp, 'Failed to delete skill');
-  if (!resp.ok && resp.status !== 204) await handleHttpError(resp, 'Failed to delete skill');
+  }, 'Failed to delete skill');
 }
 
 export async function generateSkillContent(
   description: string,
   name?: string,
 ): Promise<string> {
-  const resp = await fetch(`${API_BASE}/skills/generate`, {
+  const data = await requestJson<{ content: string }>(`${API_BASE}/skills/generate`, {
     method: 'POST',
-    headers: jsonHeaders(),
     body: JSON.stringify({ description, ...(name ? { name } : {}) }),
-  });
-  assertNotUnauthorized(resp, 'Failed to generate skill content');
-  if (!resp.ok) await handleHttpError(resp, 'Failed to generate skill content');
-  const data = await resp.json();
-  return data.content as string;
+  }, 'Failed to generate skill content');
+  return data.content;
 }
 
 export async function testMcpConnections(servers: McpServerEntry[]): Promise<McpConnectionResult[]> {
-  const resp = await fetch(`${API_BASE}/mcp/test`, {
+  const data = await requestJson<{ results: McpConnectionResult[] }>(`${API_BASE}/mcp/test`, {
     method: 'POST',
-    headers: jsonHeaders(),
     body: JSON.stringify({ mcp_servers: servers }),
-  });
-  assertNotUnauthorized(resp, 'Failed to test MCP connections');
-  if (!resp.ok) await handleHttpError(resp, 'Failed to test MCP connections');
-  const data = await resp.json();
+  }, 'Failed to test MCP connections');
   return data.results;
 }
 
@@ -152,7 +112,7 @@ export interface SessionProfileOverridePayload {
 export interface SubAgentToolWirePayload {
   agentRef:
     | { kind: 'builtin'; profileId: string }
-    | { kind: 'custom'; customAgentId: string; definition: CustomAgentDefinition };
+    | { kind: 'custom'; customAgentId: string };
 }
 
 export interface SessionRequestPayload {
@@ -174,23 +134,14 @@ export async function createSessionRequest(
   payload: SessionRequestPayload,
   failureMessage = 'Failed to create session',
 ): Promise<SessionCreateResponse> {
-  const resp = await fetch(`${API_BASE}/sessions`, {
+  return requestJson(`${API_BASE}/sessions`, {
     method: 'POST',
-    headers: jsonHeaders(),
     body: JSON.stringify(payload),
-  });
-  assertNotUnauthorized(resp, failureMessage);
-  if (!resp.ok) await handleHttpError(resp, failureMessage);
-  return resp.json();
+  }, failureMessage);
 }
 
 export async function fetchBuiltInProfileDefinition(profileId: string): Promise<BuiltInAgentDefinition> {
-  const resp = await fetch(`${API_BASE}/profiles/${encodeURIComponent(profileId)}/definition`, {
-    headers: getAuthHeaders(),
-  });
-  assertNotUnauthorized(resp, 'Failed to fetch profile definition');
-  if (!resp.ok) await handleHttpError(resp, 'Failed to fetch profile definition');
-  return resp.json();
+  return requestJson(`${API_BASE}/profiles/${encodeURIComponent(profileId)}/definition`, {}, 'Failed to fetch profile definition');
 }
 
 export interface ProfilesResponse {
@@ -199,31 +150,14 @@ export interface ProfilesResponse {
 }
 
 export async function fetchProfiles(): Promise<ProfilesResponse> {
-  const resp = await fetch(`${API_BASE}/profiles`, {
-    headers: getAuthHeaders(),
-  });
-  assertNotUnauthorized(resp, 'Failed to fetch profiles');
-  if (!resp.ok) await handleHttpError(resp, 'Failed to fetch profiles');
-  const data = await resp.json();
-  return { profiles: data.profiles, unavailable: data.unavailable || [] };
+  return requestJson(`${API_BASE}/profiles`, {}, 'Failed to fetch profiles');
 }
 
 // --- Autonomous mode (Duty Officer) ---
 
 /** List the configured autonomous directives (visible to all authenticated users). */
 export async function fetchAutonomousDirectives(): Promise<AutonomousDirectivesResponse> {
-  const resp = await fetch(`${API_BASE}/autonomous/directives`, {
-    headers: getAuthHeaders(),
-  });
-  assertNotUnauthorized(resp, 'Failed to fetch autonomous directives');
-  if (!resp.ok) await handleHttpError(resp, 'Failed to fetch autonomous directives');
-  const data = await resp.json();
-  return {
-    enabled: Boolean(data.enabled),
-    schedulerEnabled: Boolean(data.schedulerEnabled),
-    systemUserId: data.systemUserId ?? '',
-    directives: data.directives ?? [],
-  };
+  return requestJson(`${API_BASE}/autonomous/directives`, {}, 'Failed to fetch autonomous directives');
 }
 
 /** List autonomous run history (most-recent-first), shared across all users. */
@@ -233,39 +167,25 @@ export async function fetchAutonomousRuns(
 ): Promise<AutonomousRunsResponse> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (directiveId) params.set('directive_id', directiveId);
-  const resp = await fetch(`${API_BASE}/autonomous/runs?${params.toString()}`, {
-    headers: getAuthHeaders(),
-  });
-  assertNotUnauthorized(resp, 'Failed to fetch autonomous runs');
-  if (!resp.ok) await handleHttpError(resp, 'Failed to fetch autonomous runs');
-  const data = await resp.json();
-  return { runs: data.runs ?? [], count: data.count ?? 0 };
+  return requestJson(`${API_BASE}/autonomous/runs?${params}`, {}, 'Failed to fetch autonomous runs');
 }
 
 /** Trigger one autonomous cycle on demand (same behavior as the scheduled timer). */
 export async function triggerAutonomousRun(directiveId?: string): Promise<AutonomousRun> {
-  const resp = await fetch(`${API_BASE}/autonomous/run-now`, {
+  return requestJson(`${API_BASE}/autonomous/run-now`, {
     method: 'POST',
-    headers: jsonHeaders(),
     body: JSON.stringify(directiveId ? { directive_id: directiveId } : {}),
-  });
-  assertNotUnauthorized(resp, 'Failed to trigger autonomous run');
-  if (!resp.ok) await handleHttpError(resp, 'Failed to trigger autonomous run');
-  return resp.json();
+  }, 'Failed to trigger autonomous run');
 }
 
 /** Create a new automation (directive). */
 export async function createAutonomousDirective(
   body: AutonomousDirectiveCreate,
 ): Promise<AutonomousDirective> {
-  const resp = await fetch(`${API_BASE}/autonomous/directives`, {
+  return requestJson(`${API_BASE}/autonomous/directives`, {
     method: 'POST',
-    headers: jsonHeaders(),
     body: JSON.stringify(body),
-  });
-  assertNotUnauthorized(resp, 'Failed to create automation');
-  if (!resp.ok) await handleHttpError(resp, 'Failed to create automation');
-  return resp.json();
+  }, 'Failed to create automation');
 }
 
 /** Update an automation (enable/disable, schedule, instruction, …). */
@@ -273,33 +193,23 @@ export async function updateAutonomousDirective(
   id: string,
   body: AutonomousDirectiveUpdate,
 ): Promise<AutonomousDirective> {
-  const resp = await fetch(`${API_BASE}/autonomous/directives/${encodeURIComponent(id)}`, {
+  return requestJson(`${API_BASE}/autonomous/directives/${encodeURIComponent(id)}`, {
     method: 'PATCH',
-    headers: jsonHeaders(),
     body: JSON.stringify(body),
-  });
-  assertNotUnauthorized(resp, 'Failed to update automation');
-  if (!resp.ok) await handleHttpError(resp, 'Failed to update automation');
-  return resp.json();
+  }, 'Failed to update automation');
 }
 
 /** Delete an automation. */
 export async function deleteAutonomousDirective(id: string): Promise<void> {
-  const resp = await fetch(`${API_BASE}/autonomous/directives/${encodeURIComponent(id)}`, {
+  await request(`${API_BASE}/autonomous/directives/${encodeURIComponent(id)}`, {
     method: 'DELETE',
-    headers: getAuthHeaders(),
-  });
-  assertNotUnauthorized(resp, 'Failed to delete automation');
-  if (!resp.ok && resp.status !== 404) await handleHttpError(resp, 'Failed to delete automation');
+  }, 'Failed to delete automation', [404]);
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
-  const resp = await fetch(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}`, {
+  await request(`${API_BASE}/sessions/${encodeURIComponent(sessionId)}`, {
     method: 'DELETE',
-    headers: getAuthHeaders(),
-  });
-  assertNotUnauthorized(resp, 'Failed to delete session');
-  if (!resp.ok && resp.status !== 404) await handleHttpError(resp, 'Failed to delete session');
+  }, 'Failed to delete session', [404]);
 }
 
 // --- Conversations (durable per-user chat history, Cosmos-backed) ---
@@ -312,31 +222,28 @@ export interface ConversationMessagesResponse {
 }
 
 export async function listConversations(limit = 50): Promise<ConversationIndexEntry[]> {
-  const resp = await fetch(`${API_BASE}/conversations?limit=${limit}`, {
-    headers: getAuthHeaders(),
-  });
-  assertNotUnauthorized(resp, 'Failed to load conversations');
-  if (!resp.ok) await handleHttpError(resp, 'Failed to load conversations');
-  const data = await resp.json();
-  return (data.conversations ?? []) as ConversationIndexEntry[];
+  const conversations: ConversationIndexEntry[] = [];
+  let cursor: string | null = null;
+  do {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (cursor) params.set('cursor', cursor);
+    const page: { conversations: ConversationIndexEntry[]; nextCursor: string | null } = await requestJson(
+      `${API_BASE}/conversations?${params}`, {}, 'Failed to load conversations',
+    );
+    conversations.push(...page.conversations);
+    cursor = page.nextCursor;
+  } while (cursor);
+  return conversations;
 }
 
 export async function getConversationMessages(id: string): Promise<ConversationMessagesResponse> {
-  const resp = await fetch(`${API_BASE}/conversations/${encodeURIComponent(id)}/messages`, {
-    headers: getAuthHeaders(),
-  });
-  assertNotUnauthorized(resp, 'Failed to load conversation');
-  if (!resp.ok) await handleHttpError(resp, 'Failed to load conversation');
-  return resp.json();
+  return requestJson(`${API_BASE}/conversations/${encodeURIComponent(id)}/messages`, {}, 'Failed to load conversation');
 }
 
 export async function deleteConversation(id: string): Promise<void> {
-  const resp = await fetch(`${API_BASE}/conversations/${encodeURIComponent(id)}`, {
+  await request(`${API_BASE}/conversations/${encodeURIComponent(id)}`, {
     method: 'DELETE',
-    headers: getAuthHeaders(),
-  });
-  assertNotUnauthorized(resp, 'Failed to delete conversation');
-  if (!resp.ok && resp.status !== 404) await handleHttpError(resp, 'Failed to delete conversation');
+  }, 'Failed to delete conversation', [404]);
 }
 
 // --- Agent views (dynamic UI pane) ---
@@ -344,16 +251,16 @@ export async function deleteConversation(id: string): Promise<void> {
 export async function listAgentViews(sessionId: string): Promise<AgentViewSummary[]> {
   const data = await requestJson<{ views: AgentViewSummary[] }>(
     `${API_BASE}/sessions/${encodeURIComponent(sessionId)}/views`,
-    { headers: getAuthHeaders() },
+    {},
     'Failed to load agent views',
   );
-  return data.views || [];
+  return data.views;
 }
 
 export async function getAgentView(sessionId: string, viewId: string): Promise<AgentView> {
   return requestJson<AgentView>(
     `${API_BASE}/sessions/${encodeURIComponent(sessionId)}/views/${encodeURIComponent(viewId)}`,
-    { headers: getAuthHeaders() },
+    {},
     'Failed to load agent view',
   );
 }
@@ -371,11 +278,10 @@ export async function requestAgentViewData(
   args: Record<string, unknown>,
 ): Promise<AgentViewDataResponse> {
   try {
-    const resp = await fetch(
+    const resp = await fetchAuthenticated(
       `${API_BASE}/sessions/${encodeURIComponent(sessionId)}/views/${encodeURIComponent(viewId)}/data`,
       {
         method: 'POST',
-        headers: jsonHeaders(),
         body: JSON.stringify({ tool, arguments: args }),
       },
     );
@@ -397,57 +303,39 @@ export async function requestAgentViewData(
 // --- Custom agents, agent customizations, user profile (durable per-user, Cosmos) ---
 
 export async function listCustomAgents(): Promise<CustomAgentDefinition[]> {
-  const resp = await fetch(`${API_BASE}/custom-agents`, { headers: getAuthHeaders() });
-  assertNotUnauthorized(resp, 'Failed to load custom agents');
-  if (!resp.ok) await handleHttpError(resp, 'Failed to load custom agents');
-  const data = await resp.json();
-  return (data.agents ?? []) as CustomAgentDefinition[];
+  const data = await requestJson<{ agents: CustomAgentDefinition[] }>(`${API_BASE}/custom-agents`, {}, 'Failed to load custom agents');
+  return data.agents;
 }
 
-export async function saveCustomAgent(agent: CustomAgentDefinition): Promise<void> {
-  const resp = await fetch(`${API_BASE}/custom-agents/${encodeURIComponent(agent.id)}`, {
+export async function saveCustomAgent(agent: CustomAgentDefinition): Promise<CustomAgentDefinition> {
+  return requestJson(`${API_BASE}/custom-agents/${encodeURIComponent(agent.id)}`, {
     method: 'PUT',
-    headers: jsonHeaders(),
     body: JSON.stringify(agent),
-  });
-  assertNotUnauthorized(resp, 'Failed to save custom agent');
-  if (!resp.ok) await handleHttpError(resp, 'Failed to save custom agent');
+  }, 'Failed to save custom agent');
 }
 
 export async function deleteCustomAgent(id: string): Promise<void> {
-  const resp = await fetch(`${API_BASE}/custom-agents/${encodeURIComponent(id)}`, {
+  await request(`${API_BASE}/custom-agents/${encodeURIComponent(id)}`, {
     method: 'DELETE',
-    headers: getAuthHeaders(),
-  });
-  assertNotUnauthorized(resp, 'Failed to delete custom agent');
-  if (!resp.ok && resp.status !== 404) await handleHttpError(resp, 'Failed to delete custom agent');
+  }, 'Failed to delete custom agent', [404]);
 }
 
 export async function listAgentCustomizations(): Promise<AgentCustomizationOverride[]> {
-  const resp = await fetch(`${API_BASE}/agent-customizations`, { headers: getAuthHeaders() });
-  assertNotUnauthorized(resp, 'Failed to load agent customizations');
-  if (!resp.ok) await handleHttpError(resp, 'Failed to load agent customizations');
-  const data = await resp.json();
-  return (data.overrides ?? []) as AgentCustomizationOverride[];
+  const data = await requestJson<{ overrides: AgentCustomizationOverride[] }>(`${API_BASE}/agent-customizations`, {}, 'Failed to load agent customizations');
+  return data.overrides;
 }
 
 export async function saveAgentCustomization(override: AgentCustomizationOverride): Promise<void> {
-  const resp = await fetch(`${API_BASE}/agent-customizations/${encodeURIComponent(override.baseProfileId)}`, {
+  await request(`${API_BASE}/agent-customizations/${encodeURIComponent(override.baseProfileId)}`, {
     method: 'PUT',
-    headers: jsonHeaders(),
     body: JSON.stringify(override),
-  });
-  assertNotUnauthorized(resp, 'Failed to save agent customization');
-  if (!resp.ok) await handleHttpError(resp, 'Failed to save agent customization');
+  }, 'Failed to save agent customization');
 }
 
 export async function deleteAgentCustomization(baseProfileId: string): Promise<void> {
-  const resp = await fetch(`${API_BASE}/agent-customizations/${encodeURIComponent(baseProfileId)}`, {
+  await request(`${API_BASE}/agent-customizations/${encodeURIComponent(baseProfileId)}`, {
     method: 'DELETE',
-    headers: getAuthHeaders(),
-  });
-  assertNotUnauthorized(resp, 'Failed to delete agent customization');
-  if (!resp.ok && resp.status !== 404) await handleHttpError(resp, 'Failed to delete agent customization');
+  }, 'Failed to delete agent customization', [404]);
 }
 
 export interface SSECallback {
@@ -465,9 +353,9 @@ export async function sendMessage(
   content: string,
   images: File[] | null,
   callbacks: SSECallback,
+  signal?: AbortSignal,
 ): Promise<void> {
   let body: BodyInit;
-  const headers: Record<string, string> = { ...getAuthHeaders() };
   // Send the user's local date/time so the backend can give the model temporal
   // context. It is added to the model/session history only — never shown in the UI.
   const clientTime = new Date().toString();
@@ -482,26 +370,18 @@ export async function sendMessage(
     body = formData;
     // Let browser set Content-Type with boundary for multipart
   } else {
-    headers['Content-Type'] = 'application/json';
     body = JSON.stringify({ content, client_time: clientTime });
   }
 
-  const resp = await fetch(
+  const resp = await request(
     `${API_BASE}/sessions/${encodeURIComponent(sessionId)}/messages`,
     {
       method: 'POST',
-      headers,
       body,
+      signal,
     },
+    'Failed to send message',
   );
-
-  assertNotUnauthorized(resp, 'Session expired or unauthorized');
-  if (!resp.ok) {
-    const errText = await resp.text();
-    const classified = classifyError(resp.status, errText);
-    emitToast({ message: classified.userMessage, type: classified.type });
-    throw new Error(`Message request failed (${resp.status}): ${errText}`);
-  }
 
   if (!resp.body) {
     throw new Error('No response body for SSE stream');
@@ -509,53 +389,26 @@ export async function sendMessage(
 
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
-  let buffer = '';
-  // currentEvent must persist across read() iterations because a single SSE
-  // event (e.g. function_result with a large base64 image) can span multiple
-  // chunks — the "event:" line may arrive in one chunk and the "data:" line
-  // in the next.
-  let currentEvent = '';
+  let completed = false;
+  const parser = createParser({
+    onEvent: ({ event, data }) => {
+      if (signal?.aborted || completed) return;
+      const payload: unknown = JSON.parse(data);
+      if (event === 'done') completed = true;
+      dispatchSSEEvent(event as SSEEventType, payload, callbacks);
+    },
+  });
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
-
-    for (const line of lines) {
-      if (line.startsWith('event: ')) {
-        currentEvent = line.slice(7).trim();
-      } else if (line.startsWith('data: ')) {
-        const rawData = line.slice(6);
-        try {
-          const data = JSON.parse(rawData);
-          dispatchSSEEvent(currentEvent as SSEEventType, data, callbacks);
-        } catch {
-          // skip malformed data
-        }
-        currentEvent = '';
-      }
+  try {
+    while (!completed) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      parser.feed(decoder.decode(value, { stream: true }));
     }
-  }
-
-  // Process any remaining buffer
-  if (buffer.trim()) {
-    const remainingLines = buffer.split('\n');
-    for (const line of remainingLines) {
-      if (line.startsWith('event: ')) {
-        currentEvent = line.slice(7).trim();
-      } else if (line.startsWith('data: ')) {
-        try {
-          const data = JSON.parse(line.slice(6));
-          dispatchSSEEvent(currentEvent as SSEEventType, data, callbacks);
-        } catch {
-          // skip
-        }
-        currentEvent = '';
-      }
-    }
+    if (!completed && !signal?.aborted) throw new Error('The response ended before completion. Please try again.');
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
   }
 }
 

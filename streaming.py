@@ -7,6 +7,7 @@ from typing import Any, AsyncGenerator, Optional
 from agent_framework import Agent as RuntimeAgent
 from agent_framework import AgentSession
 from agent_framework._types import Content, Message as ChatMessage, UsageDetails
+from fastapi.encoders import jsonable_encoder
 
 USAGE_INPUT_KEY = "input_token_count"
 USAGE_OUTPUT_KEY = "output_token_count"
@@ -118,10 +119,11 @@ def render_tool_result(result: object) -> str:
 			item.get("text", "") for item in result
 			if isinstance(item, dict) and item.get("type") == "text"
 		]
-		return "\n".join(text_parts) if text_parts else json.dumps(result, ensure_ascii=False)
-	if isinstance(result, dict):
-		return json.dumps(result, ensure_ascii=False)
-	return str(result or "")
+		if text_parts:
+			return "\n".join(text_parts)
+	if result is None:
+		return ""
+	return result if isinstance(result, str) else json.dumps(jsonable_encoder(result), ensure_ascii=False)
 
 
 AGENT_VIEW_TOOL_NAME = "render_agent_view"
@@ -194,17 +196,16 @@ def messages_to_wire(messages: list[Any]) -> list[dict[str, Any]]:
 
 
 
-async def stream_agent_response(
+async def stream_agent_events(
 	agent: RuntimeAgent,
 	contents: list[Content],
 	session: AgentSession,
-) -> AsyncGenerator[str, None]:
+	*, result: dict[str, Any],
+) -> AsyncGenerator[tuple[str, dict], None]:
 	request_usage: Optional[UsageDetails] = None
 	final_text_parts: list[str] = []
-	tool_events: list[dict[str, Any]] = []
 	tool_event_by_call_id: dict[str, dict[str, Any]] = {}
 	active_call_id: Optional[str] = None
-	args_accumulator: dict[str, str] = {}
 
 	user_message = ChatMessage(role="user", contents=contents)
 	stream = agent.run(user_message, session=session, stream=True)
@@ -226,29 +227,18 @@ async def stream_agent_response(
 
 				if name and call_id and call_id not in tool_event_by_call_id:
 					active_call_id = call_id
-					args_accumulator[call_id] = rendered_arguments
-					event_payload = {"call_id": call_id, "name": name, "arguments": rendered_arguments, "result": None}
-					tool_events.append(event_payload)
-					tool_event_by_call_id[call_id] = event_payload
-					yield sse_event("function_call", {"call_id": call_id, "name": name, "arguments": rendered_arguments})
-				elif call_id and call_id in tool_event_by_call_id:
-					active_call_id = call_id
-					if rendered_arguments:
-						args_accumulator[call_id] = args_accumulator.get(call_id, "") + rendered_arguments
-						tool_event_by_call_id[call_id]["arguments"] = args_accumulator[call_id]
-						yield sse_event("function_call", {
-							"call_id": call_id,
-							"name": tool_event_by_call_id[call_id].get("name"),
-							"arguments": args_accumulator[call_id],
-						})
-				elif active_call_id and rendered_arguments:
-					args_accumulator[active_call_id] = args_accumulator.get(active_call_id, "") + rendered_arguments
-					if active_call_id in tool_event_by_call_id:
-						tool_event_by_call_id[active_call_id]["arguments"] = args_accumulator[active_call_id]
-						yield sse_event("function_call", {
+					tool_event_by_call_id[call_id] = {"call_id": call_id, "name": name, "arguments": rendered_arguments, "result": None}
+					yield ("function_call", {"call_id": call_id, "name": name, "arguments": rendered_arguments})
+				else:
+					if call_id in tool_event_by_call_id:
+						active_call_id = call_id
+					if active_call_id and rendered_arguments:
+						event_payload = tool_event_by_call_id[active_call_id]
+						event_payload["arguments"] += rendered_arguments
+						yield ("function_call", {
 							"call_id": active_call_id,
-							"name": tool_event_by_call_id[active_call_id].get("name"),
-							"arguments": args_accumulator[active_call_id],
+							"name": event_payload["name"],
+							"arguments": event_payload["arguments"],
 						})
 
 			elif content_type == "mcp_server_tool_call":
@@ -257,24 +247,20 @@ async def stream_agent_response(
 				arguments = content.get("arguments", "")
 				rendered_arguments = json.dumps(arguments, ensure_ascii=False) if isinstance(arguments, (dict, list)) else str(arguments)
 				if name and call_id and call_id not in tool_event_by_call_id:
-					args_accumulator[call_id] = rendered_arguments
-					event_payload = {"call_id": call_id, "name": name, "arguments": rendered_arguments, "result": None}
-					tool_events.append(event_payload)
-					tool_event_by_call_id[call_id] = event_payload
-					yield sse_event("function_call", {"call_id": call_id, "name": name, "arguments": rendered_arguments})
+					tool_event_by_call_id[call_id] = {"call_id": call_id, "name": name, "arguments": rendered_arguments, "result": None}
+					yield ("function_call", {"call_id": call_id, "name": name, "arguments": rendered_arguments})
 
 			elif content_type in ("function_result", "mcp_server_tool_result"):
 				call_id = content.get("call_id")
-				result = content.get("result") if content_type == "function_result" else content.get("output")
+				tool_result = content.get("result") if content_type == "function_result" else content.get("output")
 				converted = convert_content_items(content.get("items"))
 				content_items = converted if any(item["type"] == "image" for item in converted) else None
-				rendered_result = render_tool_result(result)
-				accumulated_args = args_accumulator.get(call_id, "") if call_id else ""
+				rendered_result = render_tool_result(tool_result)
+				accumulated_args = tool_event_by_call_id.get(call_id, {}).get("arguments", "")
 				if call_id in tool_event_by_call_id:
 					tool_event_by_call_id[call_id]["result"] = rendered_result
-					tool_event_by_call_id[call_id]["arguments"] = accumulated_args
 				active_call_id = None
-				yield sse_event("function_result", {
+				yield ("function_result", {
 					key: value for key, value in {
 						"call_id": call_id,
 						"result": rendered_result,
@@ -287,7 +273,7 @@ async def stream_agent_response(
 					(tool_event_by_call_id.get(call_id) or {}).get("name"), call_id, rendered_result
 				)
 				if view_payload:
-					yield sse_event("agent_view", view_payload)
+					yield ("agent_view", view_payload)
 
 			elif content_type == "usage":
 				usage = extract_usage_from_payload(content)
@@ -295,28 +281,38 @@ async def stream_agent_response(
 
 		if getattr(msg, "text", None):
 			final_text_parts.append(msg.text)
-			yield sse_event("text", {"content": msg.text})
+			yield ("text", {"content": msg.text})
 
 	try:
 		final_response = await stream.get_final_response()
 		if final_response and getattr(final_response, "usage_details", None):
-			request_usage = merge_usage(request_usage, final_response.usage_details)
+			request_usage = final_response.usage_details
 	except Exception:
 		pass
 
 	if request_usage:
-		yield sse_event("usage", {
+		yield ("usage", {
 			USAGE_INPUT_KEY: usage_value(request_usage, USAGE_INPUT_KEY),
 			USAGE_OUTPUT_KEY: usage_value(request_usage, USAGE_OUTPUT_KEY),
 			USAGE_TOTAL_KEY: usage_value(request_usage, USAGE_TOTAL_KEY),
 		})
 
-	yield sse_event("done", {})
-	stream_agent_response._last_result = {  # type: ignore[attr-defined]
+	result.update({
 		"text": "".join(final_text_parts).strip(),
-		"tool_events": tool_events,
+		"tool_events": list(tool_event_by_call_id.values()),
 		"usage": request_usage,
-	}
+	})
+	yield ("done", {})
+
+
+async def stream_agent_response(
+	agent: RuntimeAgent,
+	contents: list[Content],
+	session: AgentSession,
+	*, result: dict[str, Any] | None = None,
+) -> AsyncGenerator[str, None]:
+	async for event, data in stream_agent_events(agent, contents, session, result=result if result is not None else {}):
+		yield sse_event(event, data)
 
 
 __all__ = [

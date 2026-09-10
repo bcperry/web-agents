@@ -4,6 +4,7 @@ import json
 import re
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
+from urllib.parse import urlsplit
 
 from fastapi import HTTPException, UploadFile
 
@@ -67,33 +68,25 @@ def validate_temperature(raw_temperature: object, field_name: str = "custom_temp
 
 
 def validate_custom_name(value: object) -> str:
-	custom_name = str(value or "").strip()
+	if not isinstance(value, str):
+		raise HTTPException(status_code=400, detail="custom_name must be a string")
+	custom_name = value.strip()
 	if not custom_name or len(custom_name) > 100:
 		raise HTTPException(status_code=400, detail="custom_name is required and must be <= 100 characters")
 	return custom_name
 
 
 def validate_prompt(value: object, *, max_chars: int, field_name: str = "custom_prompt") -> str:
-	prompt = str(value or "").strip()
+	if not isinstance(value, str):
+		raise HTTPException(status_code=400, detail=f"{field_name} must be a string")
+	prompt = value.strip()
 	if not prompt or len(prompt) > max_chars:
 		raise HTTPException(status_code=400, detail=f"{field_name} is required and must be <= {max_chars} characters")
 	return prompt
 
 
-def known_tool_names_from_profiles(profiles_data: dict) -> set[str]:
-	from app_context import function_tool_registry
-
-	known_tools: set[str] = set(function_tool_registry())
-	for entry in profiles_data.values():
-		if isinstance(entry, dict):
-			for tool_name in entry.get("tools") or []:
-				if isinstance(tool_name, str):
-					known_tools.add(tool_name)
-	return known_tools
-
-
 def validate_tool_names(raw_tools: object, known_tools: set[str], field_name: str = "custom_tools") -> list[str]:
-	if not isinstance(raw_tools, list):
+	if not isinstance(raw_tools, list) or any(not isinstance(name, str) for name in raw_tools):
 		raise HTTPException(status_code=400, detail=f"{field_name} must be a list of tool name strings")
 	invalid_tools = [tool_name for tool_name in raw_tools if tool_name not in known_tools]
 	if invalid_tools:
@@ -134,14 +127,14 @@ async def available_skill_names(user_id: str | None = None) -> set[str]:
 
 
 def filter_known_skill_names(raw_skills: object, available_skills: set[str], field_name: str = "custom_skills") -> tuple[list[str], list[str]]:
-	if not isinstance(raw_skills, list):
+	if not isinstance(raw_skills, list) or any(not isinstance(name, str) for name in raw_skills):
 		raise HTTPException(status_code=400, detail=f"{field_name} must be a list of skill name strings")
 	known = [name for name in raw_skills if name in available_skills]
 	dropped = [name for name in raw_skills if name not in available_skills]
 	return known, dropped
 
 
-def validate_http_mcp_servers(raw_servers: object, *, override: bool) -> list[dict]:
+def validate_http_mcp_servers(raw_servers: object, *, override: bool, default_transport: str | None = None) -> list[dict]:
 	if not isinstance(raw_servers, list):
 		raise HTTPException(status_code=400, detail="mcp_servers must be a list")
 
@@ -150,7 +143,12 @@ def validate_http_mcp_servers(raw_servers: object, *, override: bool) -> list[di
 			raise HTTPException(status_code=400, detail="Each mcp_servers entry must be an object")
 		if not entry.get("name"):
 			raise HTTPException(status_code=400, detail="Each mcp_servers entry requires a 'name'")
-		if entry.get("transport") != "http":
+		allowed_tools = entry.get("allowed_tools")
+		if allowed_tools is not None and (
+			not isinstance(allowed_tools, list) or any(not isinstance(tool, str) for tool in allowed_tools)
+		):
+			raise HTTPException(status_code=400, detail="allowed_tools must be a list of tool name strings")
+		if entry.get("transport", default_transport) != "http":
 			if override:
 				raise HTTPException(status_code=400, detail="Built-in profile overrides only support 'http' MCP servers")
 			raise HTTPException(
@@ -159,8 +157,15 @@ def validate_http_mcp_servers(raw_servers: object, *, override: bool) -> list[di
 			)
 		if not entry.get("url"):
 			raise HTTPException(status_code=400, detail=f"MCP server '{entry['name']}' (http) requires a 'url'")
+		try:
+			url = urlsplit(entry["url"])
+			valid_url = url.scheme in {"http", "https"} and bool(url.hostname) and not url.username and not url.password
+		except (TypeError, ValueError, AttributeError):
+			valid_url = False
+		if not valid_url:
+			raise HTTPException(status_code=400, detail="MCP URLs must be HTTP(S) URLs without embedded credentials")
 
-	return raw_servers
+	return [{**entry, "transport": "http"} for entry in raw_servers]
 
 
 # ---------------------------------------------------------------------------
@@ -368,7 +373,6 @@ __all__ = [
 	"SubAgentRefValidationError",
 	"available_skill_names",
 	"filter_known_skill_names",
-	"known_tool_names_from_profiles",
 	"validate_custom_name",
 	"validate_http_mcp_servers",
 	"validate_image_magic_bytes",

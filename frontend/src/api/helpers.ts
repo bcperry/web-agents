@@ -10,64 +10,56 @@ export class AuthError extends Error {
   }
 }
 
-export function getAuthHeaders(): Record<string, string> {
-  const token = localStorage.getItem('auth_token');
-  if (token) {
-    return { Authorization: `Bearer ${token}` };
-  }
-  return {};
-}
+export class RequestError extends Error {}
 
-export function assertNotUnauthorized(resp: Response, context: string): void {
-  if (resp.status === 401) {
-    throw new AuthError(`Unauthorized: ${context}`);
-  }
+let tokenProvider: () => Promise<string | null> = async () => null;
+
+export function setTokenProvider(provider: () => Promise<string | null>): void {
+  tokenProvider = provider;
 }
 
 async function extractErrorDetail(resp: Response, fallback: string): Promise<string> {
   try {
     const body = await resp.json();
     if (body.detail && typeof body.detail === 'string') return body.detail;
+    const errors = Array.isArray(body.detail) ? body.detail : body.detail?.errors;
+    if (Array.isArray(errors)) {
+      return errors.map((error: { field?: string; reason?: string; msg?: string; message?: string }) =>
+        [error.field, error.reason ?? error.msg ?? error.message].filter(Boolean).join(': ')).join('; ') || fallback;
+    }
   } catch { /* not JSON or no detail field */ }
   return fallback;
 }
 
-export function classifyError(status: number, detail: string): {
-  userMessage: string;
-  type: 'error' | 'warning';
-  retryable: boolean;
-} {
-  const lowerDetail = detail.toLowerCase();
-
-  if (status === 429 || lowerDetail.includes('rate limit') || lowerDetail.includes('too many requests')) {
-    return { userMessage: detail || 'Rate limit exceeded. Please wait and try again.', type: 'warning', retryable: true };
-  }
-  if (status === 400) {
-    return { userMessage: detail || 'Invalid request.', type: 'error', retryable: false };
-  }
-  if (status >= 500) {
-    return { userMessage: detail || 'A server error occurred. Please try again later.', type: 'error', retryable: false };
-  }
-  return { userMessage: detail || `Request failed (${status})`, type: 'error', retryable: false };
+export async function fetchAuthenticated(url: string, init: RequestInit): Promise<Response> {
+  const headers = new Headers(init.headers);
+  const token = await tokenProvider();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  if (init.body && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json');
+  return fetch(url, { ...init, headers });
 }
 
-export async function handleHttpError(resp: Response, context: string): Promise<never> {
-  const detail = await extractErrorDetail(resp, `${context}: ${resp.status}`);
-  const classified = classifyError(resp.status, detail);
-  emitToast({ message: classified.userMessage, type: classified.type });
-  throw new Error(detail);
-}
-
-export function jsonHeaders(): Record<string, string> {
-  return {
-    'Content-Type': 'application/json',
-    ...getAuthHeaders(),
-  };
+export async function request(url: string, init: RequestInit, context: string, accepted: number[] = []): Promise<Response> {
+  let resp: Response;
+  try {
+    resp = await fetchAuthenticated(url, init);
+  } catch (error) {
+    if (init.signal?.aborted || error instanceof AuthError) throw error;
+    const message = `${context}: the server could not be reached. Please try again.`;
+    emitToast({ message, type: 'error' });
+    throw new RequestError(message, { cause: error });
+  }
+  if (resp.status === 401) throw new AuthError(`Unauthorized: ${context}`);
+  if (!resp.ok && !accepted.includes(resp.status)) {
+    const detail = await extractErrorDetail(resp, `${context}: ${resp.status}`);
+    const rateLimited = resp.status === 429 || /rate limit|too many requests/i.test(detail);
+    emitToast({ message: detail, type: rateLimited ? 'warning' : 'error' });
+    throw new RequestError(detail);
+  }
+  return resp;
 }
 
 export async function requestJson<T>(url: string, init: RequestInit, context: string): Promise<T> {
-  const resp = await fetch(url, init);
-  assertNotUnauthorized(resp, context);
-  if (!resp.ok) await handleHttpError(resp, context);
+  const resp = await request(url, init, context);
   return resp.json() as Promise<T>;
 }

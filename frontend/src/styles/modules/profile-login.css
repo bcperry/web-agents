@@ -752,3 +752,27 @@
 .tool-steps {
   margin-bottom: 8px;
 }
+
+.profile-card-badge {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: var(--accent-green);
+  border: 1px solid var(--accent-green);
+  padding: 1px 6px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-top: 8px;
+  display: inline-block;
+}
+
+[data-theme="light"] .disclaimer-overlay {
+  background: color-mix(in srgb, var(--bg-primary) 92%, transparent);
+}
+
+[data-theme="light"] .disclaimer-content li {
+  background: color-mix(in srgb, var(--accent-gold) 8%, var(--bg-input));
+}
+
+[data-theme="light"] .classified-warning {
+  border-color: var(--alert-red);
+}

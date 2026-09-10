@@ -1,7 +1,7 @@
 """Unit tests for the autonomous cycle, notification sinks, and config loader.
 
 These run fully offline: the agent runtime is replaced at the
-``create_chat_session`` / ``stream_agent_response`` seams, and the autouse
+``create_chat_session`` / ``stream_agent_events`` seams, and the autouse
 ``_cosmos_doubles`` fixture supplies in-memory run + conversation repositories.
 """
 
@@ -37,8 +37,8 @@ def _fake_session_builder(ctx, *, body, auth_header, user, logger):
 
 
 def _make_fake_stream(text, tool_events, usage):
-    async def fake_stream(agent, contents, session):
-        fake_stream._last_result = {"text": text, "tool_events": tool_events, "usage": usage}
+    async def fake_stream(agent, contents, session, *, result):
+        result.update({"text": text, "tool_events": tool_events, "usage": usage})
         if False:  # pragma: no cover — make this an async generator that yields nothing
             yield
 
@@ -54,7 +54,7 @@ def test_run_autonomous_cycle_success(monkeypatch):
     monkeypatch.setattr(autonomous, "create_chat_session", _fake_session_builder)
     monkeypatch.setattr(
         autonomous,
-        "stream_agent_response",
+        "stream_agent_events",
         _make_fake_stream(
             "Watch summary: all quiet.",
             [{"name": "noop", "arguments": "{}", "result": "ok"}],
@@ -84,7 +84,7 @@ def test_run_autonomous_cycle_persists_one_record(monkeypatch):
     ctx = SimpleNamespace(sessions={})
     monkeypatch.setattr(autonomous, "create_chat_session", _fake_session_builder)
     monkeypatch.setattr(
-        autonomous, "stream_agent_response", _make_fake_stream("done", [], None)
+        autonomous, "stream_agent_events", _make_fake_stream("done", [], None)
     )
     directive = Directive(id="watch-2", profile_id="chief-of-staff", instruction="Go.")
     config = AutonomousConfig(enabled=True, system_user_id="sys", directives=[directive])
@@ -96,6 +96,30 @@ def test_run_autonomous_cycle_persists_one_record(monkeypatch):
     assert len(stored) == 1
     assert stored[0].id == record.id
     assert stored[0].trigger == "timer"
+
+
+def test_overlapping_manual_and_timer_runs_are_rejected_and_lease_released(monkeypatch):
+    from fastapi import HTTPException
+
+    async def scenario():
+        started = asyncio.Event()
+        release = asyncio.Event()
+        async def execute(*args, **kwargs):
+            started.set()
+            await release.wait()
+            return "finished"
+        monkeypatch.setattr(autonomous, "_execute_autonomous_cycle", execute)
+        directive = Directive(id="overlap", profile_id="hybrid", instruction="go")
+        config = AutonomousConfig(True, "sys", [directive])
+        first = asyncio.create_task(run_autonomous_cycle(None, directive, config=config))
+        await started.wait()
+        with pytest.raises(HTTPException) as error:
+            await run_autonomous_cycle(None, directive, config=config, trigger="timer")
+        assert error.value.status_code == 409
+        release.set()
+        assert await first == "finished"
+        assert await run_autonomous_cycle(None, directive, config=config) == "finished"
+    asyncio.run(scenario())
 
 
 def test_run_autonomous_cycle_unknown_profile_records_failure(monkeypatch):
@@ -115,12 +139,12 @@ def test_run_autonomous_cycle_agent_error_is_recorded(monkeypatch):
     ctx = SimpleNamespace(sessions={})
     monkeypatch.setattr(autonomous, "create_chat_session", _fake_session_builder)
 
-    async def boom(agent, contents, session):
+    async def boom(agent, contents, session, *, result):
         raise RuntimeError("model exploded")
         if False:  # pragma: no cover
             yield
 
-    monkeypatch.setattr(autonomous, "stream_agent_response", boom)
+    monkeypatch.setattr(autonomous, "stream_agent_events", boom)
     directive = Directive(id="watch-3", profile_id="chief-of-staff", instruction="Go.")
     config = AutonomousConfig(enabled=True, system_user_id="sys", directives=[directive])
 
@@ -206,11 +230,11 @@ def test_build_notification_sink_prefers_webhook(monkeypatch):
 
     directive = Directive(id="d", profile_id="p", instruction="i", notify={"webhook": "MY_HOOK"})
     monkeypatch.setenv("MY_HOOK", "https://hook.test/in")
-    assert isinstance(build_notification_sink(directive, None), WebhookSink)
+    assert isinstance(build_notification_sink(directive), WebhookSink)
 
     monkeypatch.delenv("MY_HOOK", raising=False)
     monkeypatch.delenv("AUTONOMOUS_NOTIFY_WEBHOOK_URL", raising=False)
-    assert isinstance(build_notification_sink(directive, None), LoggingSink)
+    assert isinstance(build_notification_sink(directive), LoggingSink)
 
 
 # ---------------------------------------------------------------------------

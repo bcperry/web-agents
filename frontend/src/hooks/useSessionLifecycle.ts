@@ -3,31 +3,9 @@ import type {
   ChatMessage,
   ChatSession,
   ConversationIndexEntry,
-  McpConnectionResult,
-  SessionCreateResponse,
   UsageDetails,
 } from '../types/api';
 import { createSessionRequest, deleteSession, getConversationMessages, type SessionRequestPayload } from '../api/client';
-
-export interface BuiltInOverrideState {
-  usedBuiltInOverride: boolean;
-  baseProfileId?: string;
-  overrideUpdatedAt?: string;
-}
-
-export interface SessionStartResult {
-  session: ChatSession;
-  mcpResults: McpConnectionResult[];
-  toolsLoaded: string[];
-  skillsLoaded: string[];
-  agentsLoaded: string[];
-  searchContext: boolean;
-  restoredMessages: ChatMessage[];
-  conversationId: string;
-  createdAt: string;
-  customAgentId: string | null;
-  builtInOverride: BuiltInOverrideState;
-}
 
 export function emptyUsage(): UsageDetails {
   return {
@@ -35,10 +13,6 @@ export function emptyUsage(): UsageDetails {
     output_token_count: 0,
     total_token_count: 0,
   };
-}
-
-export function emptyBuiltInOverride(): BuiltInOverrideState {
-  return { usedBuiltInOverride: false };
 }
 
 export async function cleanupSession(session: ChatSession | null): Promise<void> {
@@ -50,37 +24,9 @@ export async function cleanupSession(session: ChatSession | null): Promise<void>
 export async function startChatSession(
   profile: AgentProfile,
   resume: ConversationIndexEntry | undefined,
-  previousSession: ChatSession | null,
-): Promise<SessionStartResult> {
-  await cleanupSession(previousSession);
-
+) {
   const payload = buildSessionRequest(profile, resume);
-  const newSession: SessionCreateResponse = await createSessionRequest(payload);
-  const customAgentId = profile.customAgent?.id ?? null;
-  let builtInOverride: BuiltInOverrideState;
-  if (profile.builtInOverride) {
-    builtInOverride = {
-      usedBuiltInOverride: true,
-      baseProfileId: profile.builtInOverride.baseProfileId,
-      overrideUpdatedAt: profile.builtInOverride.updatedAt,
-    };
-  } else if (resume?.usedBuiltInOverride) {
-    builtInOverride = {
-      usedBuiltInOverride: true,
-      baseProfileId: resume.baseProfileId ?? profile.id,
-      overrideUpdatedAt: resume.overrideUpdatedAt,
-    };
-  } else {
-    builtInOverride = emptyBuiltInOverride();
-  }
-
-  if (newSession.used_profile_override) {
-    builtInOverride = {
-      usedBuiltInOverride: true,
-      baseProfileId: profile.builtInOverride?.baseProfileId ?? profile.id,
-      overrideUpdatedAt: newSession.override_updated_at ?? profile.builtInOverride?.updatedAt,
-    };
-  }
+  const session = await createSessionRequest(payload);
 
   // History now lives server-side (Cosmos). On resume, load the prior messages
   // through the backend instead of from any client-held blob.
@@ -89,25 +35,13 @@ export async function startChatSession(
     try {
       const loaded = await getConversationMessages(resume.id);
       restoredMessages = loaded.messages ?? [];
-    } catch {
-      restoredMessages = [];
+    } catch (error) {
+      await cleanupSession(session);
+      throw error;
     }
   }
 
-  const { mcp_results, tools_loaded, skills_loaded, agents_loaded, search_context, ...session } = newSession;
-  return {
-    session,
-    mcpResults: mcp_results ?? [],
-    toolsLoaded: tools_loaded ?? [],
-    skillsLoaded: skills_loaded ?? [],
-    agentsLoaded: agents_loaded ?? [],
-    searchContext: search_context ?? false,
-    restoredMessages,
-    conversationId: resume?.id ?? newSession.session_id,
-    createdAt: resume?.createdAt ?? new Date().toISOString(),
-    customAgentId,
-    builtInOverride,
-  };
+  return { session, restoredMessages };
 }
 
 function buildSessionRequest(

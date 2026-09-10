@@ -58,7 +58,10 @@ class InMemoryConversationRepository:
             key=lambda r: r.last_activity_at,
             reverse=True,
         )
-        return records[: max(0, limit)], None
+        offset = int(cursor or 0)
+        page = records[offset:offset + max(0, limit)]
+        next_offset = offset + len(page)
+        return page, str(next_offset) if next_offset < len(records) else None
 
     async def get_owned(self, user_id: str, conversation_id: str) -> ConversationRecord | None:
         return self._by_user.get(user_id, {}).get(conversation_id)
@@ -122,6 +125,17 @@ class InMemoryAutonomousLeaseRepository:
 
     def __init__(self) -> None:
         self._claimed: set[str] = set()
+        self._running: dict[str, str] = {}
+
+    async def try_start(self, directive_id: str, run_id: str, *, ttl: int) -> bool:
+        if directive_id in self._running:
+            return False
+        self._running[directive_id] = run_id
+        return True
+
+    async def finish(self, directive_id: str, run_id: str) -> None:
+        if self._running.get(directive_id) == run_id:
+            self._running.pop(directive_id)
 
     async def try_acquire(self, directive_id: str, slot: str, *, ttl: int = 3600) -> bool:
         key = f"{directive_id}:{slot}"

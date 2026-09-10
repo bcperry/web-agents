@@ -5,8 +5,30 @@ import asyncio
 import pytest
 from fastapi import HTTPException
 
-from skills_manager import SkillManager
+from skills_manager import SkillManager, filesystem_skill_docs
 from tests._doubles import InMemoryByIdRepository, InMemoryUserScopedRepository
+
+
+@pytest.mark.parametrize("metadata, expected", [
+    ('name: "quoted-skill"\ndescription: >-\n  First line\n  second line', ("quoted-skill", "First line second line")),
+    ('description: "A: description" # comment', ("fallback", "A: description")),
+    ('description: [broken', None),
+    ('- not a mapping', None),
+    ('name: 123\ndescription: valid', None),
+    ('description: false', None),
+])
+def test_filesystem_skill_metadata_uses_yaml(tmp_path, metadata, expected):
+    skill_dir = tmp_path / "fallback"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(f"---\n{metadata}\n---\n# Body\n", encoding="utf-8")
+
+    docs = filesystem_skill_docs(tmp_path)
+    if expected is None:
+        assert docs == []
+    else:
+        assert [(doc["id"], doc["description"], doc["content"]) for doc in docs] == [
+            (*expected, "# Body\n")
+        ]
 
 
 def test_list_and_get_skills(make_skill):
@@ -19,6 +41,7 @@ def test_list_and_get_skills(make_skill):
         "name": "alpha",
         "description": "Alpha skill",
         "content": "# Alpha\nBody",
+        "scope": "shared",
     }
 
 

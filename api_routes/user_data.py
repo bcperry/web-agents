@@ -7,12 +7,23 @@ from pydantic import ValidationError
 
 from auth import AuthenticatedUser, get_current_user
 from definition_creation import AgentCreationRequest, AgentCreationService
+from prompt_config import load_agents_yaml
 from user_data import get_agent_customizations_repository, get_custom_agents_repository
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _USER_DATA_UNAVAILABLE = "User data store is temporarily unavailable. Please try again."
+
+
+def _parse_agent_definition(payload: dict) -> AgentCreationRequest:
+    try:
+        return AgentCreationRequest.model_validate(payload)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=[{
+            "field": ".".join(str(part) for part in error["loc"]),
+            "reason": error["msg"],
+        } for error in exc.errors()]) from exc
 
 
 @router.get("/api/custom-agents")
@@ -32,13 +43,7 @@ async def save_custom_agent(agent_id: str, request: Request, user: Authenticated
         raise HTTPException(status_code=400, detail="Body must be a JSON object")
     if str(body.get("id") or "") != agent_id:
         raise HTTPException(status_code=400, detail="Path agent_id must match body id")
-    try:
-        definition = AgentCreationRequest.model_validate(body)
-    except ValidationError as exc:
-        raise HTTPException(status_code=422, detail=[{
-            "field": ".".join(str(part) for part in error["loc"]),
-            "reason": error["msg"],
-        } for error in exc.errors()]) from exc
+    definition = _parse_agent_definition(body)
     try:
         saved, issues = await AgentCreationService(user.user_id).upsert(definition)
     except Exception as exc:  # noqa: BLE001 - route maps store errors to HTTP
@@ -78,8 +83,28 @@ async def save_agent_customization(base_profile_id: str, request: Request, user:
     body = await request.json()
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="Body must be a JSON object")
+    if body.get("baseProfileId") != base_profile_id:
+        raise HTTPException(status_code=400, detail="Path base_profile_id must match body baseProfileId")
+    profile = (load_agents_yaml().get("profiles") or {}).get(base_profile_id)
+    if not profile:
+        raise HTTPException(status_code=400, detail=f"Unknown profile: {base_profile_id}")
+    payload = {key: value for key, value in body.items() if key not in {"baseProfileId", "baseProfileName"}}
+    payload.update(id=base_profile_id, name=profile.get("name", base_profile_id))
+    definition = _parse_agent_definition(payload)
     try:
-        saved = await get_agent_customizations_repository().upsert(user.user_id, base_profile_id, body)
+        repository = get_agent_customizations_repository()
+        existing = await repository.get(user.user_id, base_profile_id)
+        normalized, issues = await AgentCreationService(user.user_id).validate_and_normalize(definition, existing=existing)
+        if issues:
+            raise HTTPException(status_code=422, detail=[issue.model_dump() for issue in issues])
+        assert normalized is not None
+        normalized.update(
+            id=str(body.get("id") or base_profile_id), baseProfileId=base_profile_id,
+            baseProfileName=definition.name, source="builtin-override",
+        )
+        saved = await repository.upsert(user.user_id, base_profile_id, normalized)
+    except HTTPException:
+        raise
     except Exception as exc:  # noqa: BLE001 - route maps store errors to HTTP
         logger.error("Failed to save agent customization %s: %s", base_profile_id, exc)
         raise HTTPException(status_code=503, detail=_USER_DATA_UNAVAILABLE) from exc

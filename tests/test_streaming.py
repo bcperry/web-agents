@@ -1,7 +1,10 @@
 """Tests for streaming, usage, and error helpers."""
 
 import json
+from datetime import datetime, timezone
+from uuid import UUID
 
+import pytest
 from agent_framework._types import UsageDetails
 
 from streaming import (
@@ -80,6 +83,19 @@ def test_render_tool_result_matches_current_display_behavior():
     assert render_tool_result(None) == ""
 
 
+def test_render_tool_result_encodes_structured_values_without_losing_false_or_zero():
+    assert render_tool_result(False) == "false"
+    assert render_tool_result(0) == "0"
+    assert render_tool_result("True and None are words") == "True and None are words"
+    assert json.loads(render_tool_result({
+        "when": datetime(2026, 9, 10, tzinfo=timezone.utc),
+        "id": UUID(int=0), "values": [False, 0, None],
+    })) == {
+        "when": "2026-09-10T00:00:00+00:00",
+        "id": "00000000-0000-0000-0000-000000000000", "values": [False, 0, None],
+    }
+
+
 def test_agent_view_payload_maps_a_rendered_result():
     result = json.dumps({
         "status": "rendered",
@@ -107,3 +123,47 @@ def test_agent_view_payload_skips_rejections_and_other_tools():
     assert agent_view_payload("render_agent_view", None, '{"status": "rendered", "view_id": "v"}') is None
     assert agent_view_payload("render_agent_view", "call-1", "not json") is None
     assert agent_view_payload("render_agent_view", "call-1", '{"status": "rendered"}') is None
+
+
+@pytest.mark.parametrize("result_type, result_key", [("function_result", "result"), ("mcp_server_tool_result", "output")])
+@pytest.mark.parametrize("tool_output", ["tool text", {"ok": True}])
+def test_structured_stream_and_sse_publish_request_local_results(result_type, result_key, tool_output):
+    import asyncio
+    from types import SimpleNamespace
+    from agent_framework import AgentResponseUpdate, Content
+    from streaming import stream_agent_events, stream_agent_response
+
+    class Stream:
+        def __aiter__(self):
+            async def updates():
+                yield AgentResponseUpdate(contents=[Content.from_text("hello")])
+                yield SimpleNamespace(text=None, to_dict=lambda: {"contents": [
+                    {"type": "function_call", "call_id": "call-1", "name": "lookup", "arguments": '{"id":'},
+                    {"type": "function_call", "arguments": '1'},
+                    {"type": "function_call", "call_id": "call-2", "name": "other", "arguments": '{}'},
+                    {"type": "function_call", "call_id": "call-1", "arguments": '}'},
+                    {"type": "mcp_server_tool_call", "call_id": "call-3", "tool_name": "remote", "arguments": {}},
+                    {"type": result_type, "call_id": "call-1", result_key: tool_output},
+                ]})
+            return updates()
+
+        async def get_final_response(self):
+            return SimpleNamespace(usage_details=create_usage(total_token_count=3))
+
+    async def scenario():
+        agent = SimpleNamespace(run=lambda *args, **kwargs: Stream())
+        result = {}
+        events = [event async for event in stream_agent_events(agent, [], None, result=result)]
+        assert events[0] == ("text", {"content": "hello"})
+        assert events[-1] == ("done", {})
+        assert result["text"] == "hello"
+        assert result["tool_events"][0]["result"] == render_tool_result(tool_output)
+        assert [event["call_id"] for event in result["tool_events"]] == ["call-1", "call-2", "call-3"]
+        assert result["tool_events"][0]["arguments"] == '{"id":1}'
+        assert [payload["arguments"] for kind, payload in events if kind == "function_result"] == ['{"id":1}']
+        other_result = {}
+        encoded = [event async for event in stream_agent_response(agent, [], None, result=other_result)]
+        assert encoded[0].startswith("event: text\n")
+        assert other_result == result
+        assert not hasattr(stream_agent_response, "_last_result")
+    asyncio.run(scenario())

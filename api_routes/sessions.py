@@ -12,8 +12,7 @@ from agent_views import clear_view_data_budget, delete_views_for_conversation
 from app_context import DEFAULT_MAX_USER_INPUT_CHARS, session_context
 from auth import AuthenticatedUser, get_current_user
 from cosmos_memory import get_conversation_repository, get_history_provider
-from mcp_servers import cleanup_mcp_servers
-from session_data import _sessions, get_session
+from session_data import close_session, get_session
 from session_orchestration import create_chat_session
 from streaming import (
     USAGE_INPUT_KEY,
@@ -40,7 +39,12 @@ async def create_session(
     request: Request,
     user: AuthenticatedUser = Depends(get_current_user),
 ):
-    body = await request.json()
+    try:
+        body = await request.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Body must be valid JSON") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Body must be a JSON object")
     return await create_chat_session(
         session_context,
         body=body,
@@ -56,7 +60,7 @@ async def send_message(
     request: Request,
     user: AuthenticatedUser = Depends(get_current_user),
 ):
-    session_data = get_session(session_id)
+    session_data = get_session(session_id, user.user_id)
 
     content_type = request.headers.get("content-type", "")
     text_content = ""
@@ -74,7 +78,12 @@ async def send_message(
                 image_files.append(item)
                 image_data_list.append(data)
     else:
-        body = await request.json()
+        try:
+            body = await request.json()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Body must be valid JSON") from exc
+        if not isinstance(body, dict) or not isinstance(body.get("content", ""), str):
+            raise HTTPException(status_code=400, detail="Body must be an object with string content")
         text_content = body.get("content", "")
         client_time = str(body.get("client_time", "") or "")
 
@@ -111,8 +120,9 @@ async def send_message(
         except Exception:  # noqa: BLE001 - title update should not interrupt streaming
             logger.warning("Failed to update conversation index for %s", session_id, exc_info=True)
 
+        result = {}
         try:
-            async for event in stream_agent_response(session_data.agent, contents, session_data.agent_session):
+            async for event in stream_agent_response(session_data.agent, contents, session_data.agent_session, result=result):
                 yield event
         except Exception as exc:  # noqa: BLE001 - route translates stream errors to SSE
             if is_retryable_error(exc):
@@ -136,13 +146,12 @@ async def send_message(
             else:
                 logger.error("Error processing message: %s", exc, exc_info=True)
                 yield sse_event("error", {
-                    "message": f"An error occurred while processing your request: {str(exc)}",
+                    "message": "An error occurred while processing your request. Please try again.",
                     "retry_after": None,
                 })
             yield sse_event("done", {})
             return
 
-        result = getattr(stream_agent_response, "_last_result", None)
         if result:
             request_usage = result.get("usage")
             if request_usage:
@@ -159,7 +168,7 @@ async def send_message(
                     "session_id": session_id,
                     "chat_profile": session_data.profile_id,
                     "prompt_logical_profile": session_data.prompt_logical_profile,
-                    "prompt_manifest": session_data.prompt_manifest,
+                    "prompt_manifest": {},
                     "input": text_content,
                     "output": result.get("text", ""),
                     "tool_events": result.get("tool_events", []),
@@ -180,14 +189,8 @@ async def delete_session(
     session_id: str,
     user: AuthenticatedUser = Depends(get_current_user),
 ):
-    session_data = _sessions.pop(session_id, None)
-    if session_data is None:
-        raise HTTPException(status_code=404, detail="Session not found or already ended")
-
-    clear_view_data_budget(session_id)
-
-    if session_data.mcp_tools:
-        await cleanup_mcp_servers(session_data.mcp_tools)
+    session_data = get_session(session_id, user.user_id)
+    await close_session(session_id, expected=session_data)
 
     if session_data.usage:
         session_cleanup_logger.info(
@@ -261,9 +264,7 @@ async def delete_conversation(
 
     history_provider = get_history_provider()
     try:
-        clear = getattr(history_provider, "clear", None)
-        if clear is not None:
-            await clear(conversation_id)
+        await history_provider.clear(conversation_id)
         await delete_views_for_conversation(user.user_id, conversation_id)
         await repo.delete(user.user_id, conversation_id)
     except Exception as exc:  # noqa: BLE001 - route maps store errors to HTTP
@@ -271,5 +272,5 @@ async def delete_conversation(
         raise HTTPException(status_code=503, detail="Conversation store is temporarily unavailable. Please try again.") from exc
 
     clear_view_data_budget(conversation_id)
-    _sessions.pop(conversation_id, None)
+    await close_session(conversation_id)
     return None

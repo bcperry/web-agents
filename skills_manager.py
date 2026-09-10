@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import yaml
 from fastapi import HTTPException
 
 import cosmos_memory
@@ -64,16 +65,19 @@ def _parse_skill_md(skill_dir: Path) -> dict[str, str] | None:
 	name = skill_dir.name
 	description = ""
 	content = raw
-	if raw.startswith("---"):
-		end = raw.find("\n---", 3)
-		if end != -1:
-			frontmatter = raw[3:end].strip()
-			content = raw[end + 4:].lstrip("\n")
-			for line in frontmatter.splitlines():
-				if line.startswith("description:"):
-					description = line[len("description:"):].strip().strip('"').strip("'")
-				elif line.startswith("name:"):
-					name = line[len("name:"):].strip()
+	parts = re.split(r"^---[ \t]*$", raw, maxsplit=2, flags=re.MULTILINE)
+	if len(parts) == 3 and not parts[0]:
+		try:
+			metadata = yaml.safe_load(parts[1])
+		except yaml.YAMLError:
+			return None
+		if not isinstance(metadata, dict):
+			return None
+		name = metadata.get("name", name)
+		description = metadata.get("description", "")
+		if not isinstance(name, str) or not isinstance(description, str):
+			return None
+		content = parts[2].lstrip("\n")
 	return {"name": name, "description": description, "content": content}
 
 
@@ -119,14 +123,17 @@ class SkillManager:
 	async def get(self, name: str) -> dict[str, str]:
 		safe_name = self.validate_name(name)
 		doc = await self._repository().get(safe_name)
+		scope = "shared"
 		if not doc and self._user_id:
 			doc = await self._user_repository().get(self._user_id, safe_name)
+			scope = "user"
 		if not doc:
 			raise HTTPException(status_code=404, detail=f"Skill not found: {safe_name}")
 		return {
 			"name": str(doc.get("name") or doc["id"]),
 			"description": str(doc.get("description") or ""),
 			"content": str(doc.get("content") or ""),
+			"scope": scope,
 		}
 
 	async def create(self, name: str, description: str, content: str) -> dict[str, str]:
@@ -174,7 +181,10 @@ class SkillManager:
 
 	async def delete(self, name: str) -> None:
 		safe_name = self.validate_name(name)
-		deleted = await self._repository().delete(safe_name)
+		deleted = (
+			await self._user_repository().delete(self._user_id, safe_name)
+			if self._user_id else await self._repository().delete(safe_name)
+		)
 		if not deleted:
 			raise HTTPException(status_code=404, detail=f"Skill not found: {safe_name}")
 

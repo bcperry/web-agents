@@ -31,7 +31,7 @@ def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-class CosmosUserScopedRepository:
+class CosmosUserScopedRepository(cosmos_memory._CosmosContainer):
     """Generic per-user document collection, partitioned by ``/user_id``.
 
     Each document wraps an arbitrary JSON payload::
@@ -44,20 +44,7 @@ class CosmosUserScopedRepository:
     """
 
     def __init__(self, container_name: str) -> None:
-        self._container_name = container_name
-        self._container: Any = None
-
-    async def _get_container(self) -> Any:
-        if self._container is None:
-            from azure.cosmos import PartitionKey
-
-            client = cosmos_memory.get_cosmos_client()
-            database = await client.create_database_if_not_exists(_database_name())
-            self._container = await database.create_container_if_not_exists(
-                id=self._container_name,
-                partition_key=PartitionKey(path="/user_id"),
-            )
-        return self._container
+        super().__init__(None, _database_name(), container_name, partition_key="/user_id")
 
     async def list_for_user(self, user_id: str) -> list[dict[str, Any]]:
         container = await self._get_container()
@@ -122,7 +109,7 @@ class CosmosUserScopedRepository:
             return False
 
 
-class CosmosAgentViewRepository:
+class CosmosAgentViewRepository(cosmos_memory._CosmosContainer):
     """Agent-authored UI views, partitioned by ``/user_id``.
 
     Unlike ``CosmosUserScopedRepository`` the document is stored flat rather than
@@ -132,20 +119,7 @@ class CosmosAgentViewRepository:
     """
 
     def __init__(self, container_name: str) -> None:
-        self._container_name = container_name
-        self._container: Any = None
-
-    async def _get_container(self) -> Any:
-        if self._container is None:
-            from azure.cosmos import PartitionKey
-
-            client = cosmos_memory.get_cosmos_client()
-            database = await client.create_database_if_not_exists(_database_name())
-            self._container = await database.create_container_if_not_exists(
-                id=self._container_name,
-                partition_key=PartitionKey(path="/user_id"),
-            )
-        return self._container
+        super().__init__(None, _database_name(), container_name, partition_key="/user_id")
 
     async def list_for_conversation(self, user_id: str, conversation_id: str) -> list[dict[str, Any]]:
         container = await self._get_container()
@@ -196,6 +170,11 @@ _agent_customizations_repo: Any = None
 _user_profile_repo: Any = None
 _user_skills_repo: Any = None
 _agent_views_repo: Any = None
+
+
+def reset_repositories() -> None:
+    global _custom_agents_repo, _agent_customizations_repo, _user_profile_repo, _user_skills_repo, _agent_views_repo
+    _custom_agents_repo = _agent_customizations_repo = _user_profile_repo = _user_skills_repo = _agent_views_repo = None
 
 
 def get_custom_agents_repository() -> Any:

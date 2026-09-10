@@ -6,11 +6,6 @@ import {
   deleteAgentCustomization as deleteAgentCustomizationApi,
 } from '../api/client';
 
-/**
- * Server-backed built-in agent customizations (overrides). The authoritative
- * store is Azure Cosmos DB (via the backend API); mutations update local state
- * optimistically and persist in the background.
- */
 export function useBuiltInAgentCustomizations() {
   const [overrides, setOverrides] = useState<AgentCustomizationOverride[]>([]);
 
@@ -22,23 +17,18 @@ export function useBuiltInAgentCustomizations() {
     return () => { cancelled = true; };
   }, []);
 
-  const save = useCallback((override: AgentCustomizationOverride) => {
+  const save = useCallback(async (override: AgentCustomizationOverride) => {
+    await saveAgentCustomizationApi(override);
     setOverrides((prev) => {
       const idx = prev.findIndex((item) => item.baseProfileId === override.baseProfileId);
       return idx >= 0 ? prev.map((item, i) => (i === idx ? override : item)) : [...prev, override];
     });
-    void saveAgentCustomizationApi(override).catch(() => { /* surfaced by the API layer */ });
   }, []);
 
-  const remove = useCallback((baseProfileId: string) => {
+  const remove = useCallback(async (baseProfileId: string) => {
+    await deleteAgentCustomizationApi(baseProfileId);
     setOverrides((prev) => prev.filter((item) => item.baseProfileId !== baseProfileId));
-    void deleteAgentCustomizationApi(baseProfileId).catch(() => { /* surfaced by the API layer */ });
   }, []);
 
-  const get = useCallback(
-    (baseProfileId: string) => overrides.find((item) => item.baseProfileId === baseProfileId) ?? null,
-    [overrides],
-  );
-
-  return { overrides, save, remove, get } as const;
+  return { overrides, save, remove } as const;
 }

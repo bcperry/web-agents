@@ -24,6 +24,42 @@ def test_raises_when_cosmos_not_configured(monkeypatch):
         cosmos_memory.require_cosmos_configured()
 
 
+def test_cosmos_close_resets_user_repository_singletons():
+    import user_data
+
+    assert user_data._custom_agents_repo is not None
+    asyncio.run(cosmos_memory.close_cosmos())
+    assert user_data._custom_agents_repo is None
+    assert user_data._agent_views_repo is None
+
+
+def test_real_repository_passes_continuation_token_to_sdk():
+    from types import SimpleNamespace
+
+    calls = {}
+    class Pages:
+        continuation_token = "next-token"
+        async def __anext__(self):
+            async def records():
+                yield {"id": "record", "user_id": "owner"}
+            return records()
+    class Items:
+        def by_page(self, *, continuation_token):
+            calls["cursor"] = continuation_token
+            return Pages()
+    def query_items(**kwargs):
+        calls.update(kwargs)
+        return Items()
+    repo = cosmos_memory.CosmosConversationRepository(None, "test", "test")
+    repo._container = SimpleNamespace(query_items=query_items)
+    records, cursor = asyncio.run(repo.list_for_user("owner", limit=2, cursor="previous-token"))
+    assert [record.id for record in records] == ["record"]
+    assert calls["cursor"] == "previous-token"
+    assert calls["partition_key"] == "owner"
+    assert calls["max_item_count"] == 2
+    assert cursor == "next-token"
+
+
 def test_cosmos_selected_with_endpoint(monkeypatch):
     monkeypatch.setenv("AZURE_COSMOS_ENDPOINT", "https://localhost:8081/")
     # well-known public emulator key (valid base64; not a secret)
@@ -157,7 +193,8 @@ def test_repo_per_user_isolation(cosmos_emulator):
 
 
 @pytest.mark.emulator
-def test_repo_list_orders_by_last_activity_desc(cosmos_emulator):
+@pytest.mark.parametrize("page_size", [50, 1])
+def test_repo_list_orders_by_last_activity_desc(cosmos_emulator, page_size):
     async def scenario():
         repo = cosmos_memory.get_conversation_repository()
         user = f"u-{uuid4()}"
@@ -165,7 +202,12 @@ def test_repo_list_orders_by_last_activity_desc(cosmos_emulator):
             await repo.create(user, "c1", "search", "A")
             await repo.create(user, "c2", "search", "B")
             await repo.touch(user, "c1", title="hello world")  # c1 becomes most recent
-            records, _ = await repo.list_for_user(user)
+            records, cursor = await repo.list_for_user(user, limit=page_size)
+            if len(records) > page_size:
+                pytest.xfail("vNext emulator ignores max_item_count for ORDER BY queries; verify ordered pagination against Cosmos service")
+            while cursor:
+                page, cursor = await repo.list_for_user(user, limit=page_size, cursor=cursor)
+                records.extend(page)
             assert [r.id for r in records] == ["c1", "c2"]
             assert records[0].title == "hello world"
         finally:
@@ -187,6 +229,41 @@ def test_repo_touch_sets_title_only_once(cosmos_emulator):
             await repo.touch(user, "c1", title="second message")
             got = await repo.get_owned(user, "c1")
             assert got.title == "first message"
+        finally:
+            await repo.delete(user, "c1")
+            await cosmos_memory.close_cosmos()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.emulator
+@pytest.mark.parametrize("concurrent_action", ["delete", "update"])
+def test_repo_touch_preserves_concurrent_changes(cosmos_emulator, monkeypatch, concurrent_action):
+    async def scenario():
+        repo = cosmos_memory.get_conversation_repository()
+        user = f"u-{uuid4()}"
+        try:
+            await repo.create(user, "c1", "search", "A")
+            container = await repo._get_container()
+            read_item = container.read_item
+
+            async def read_then_change(*args, **kwargs):
+                item = await read_item(*args, **kwargs)
+                if concurrent_action == "delete":
+                    await container.delete_item(item="c1", partition_key=user)
+                else:
+                    await container.replace_item(item="c1", body={**item, "title": "first writer"})
+                return item
+
+            with monkeypatch.context() as patch:
+                patch.setattr(container, "read_item", read_then_change)
+                await repo.touch(user, "c1", title="late message")
+
+            stored = await repo.get_owned(user, "c1")
+            if concurrent_action == "delete":
+                assert stored is None
+            else:
+                assert stored.title == "first writer"
         finally:
             await repo.delete(user, "c1")
             await cosmos_memory.close_cosmos()

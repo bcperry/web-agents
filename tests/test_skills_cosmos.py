@@ -102,7 +102,7 @@ def test_skill_persists_across_manager_instances():
     # store still reads the skill — it was never on process-local disk.
     fresh = SkillManager(durable_store)
     got = asyncio.run(fresh.get("durable"))
-    assert got == {"name": "durable", "description": "Survives", "content": "# Durable body"}
+    assert got == {"name": "durable", "description": "Survives", "content": "# Durable body", "scope": "shared"}
 
 
 # ---------------------------------------------------------------------------

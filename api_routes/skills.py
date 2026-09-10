@@ -1,6 +1,7 @@
 """Skill catalog endpoints."""
 
 import logging
+from typing import Literal
 
 from agent_framework._types import Content, Message as ChatMessage
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -23,6 +24,7 @@ class SkillResponse(BaseModel):
     name: str
     description: str
     content: str
+    scope: Literal["shared", "user"] = "shared"
 
 
 class SkillGenerateRequest(BaseModel):
@@ -106,11 +108,14 @@ async def create_skill(body: SkillCreationRequest, user: AuthenticatedUser = Dep
 
 
 @router.put("/api/skills/{name}", response_model=SkillResponse)
-async def update_skill(name: str, body: SkillUpdateRequest, user: AuthenticatedUser = Depends(get_current_user)):
-    return SkillResponse(**await SkillManager().update(name, body.description, body.content))
+async def update_skill(name: str, body: SkillUpdateRequest, user: AuthenticatedUser = Depends(get_current_user), scope: Literal["shared", "user"] | None = None):
+    scope = scope or (await SkillManager(user_id=user.user_id).get(name))["scope"]
+    manager = SkillManager(user_id=user.user_id if scope == "user" else None)
+    return SkillResponse(**await manager.update(name, body.description, body.content), scope=scope)
 
 
 @router.delete("/api/skills/{name}", status_code=204)
-async def delete_skill(name: str, user: AuthenticatedUser = Depends(get_current_user)):
-    await SkillManager().delete(name)
+async def delete_skill(name: str, user: AuthenticatedUser = Depends(get_current_user), scope: Literal["shared", "user"] | None = None):
+    scope = scope or (await SkillManager(user_id=user.user_id).get(name))["scope"]
+    await SkillManager(user_id=user.user_id if scope == "user" else None).delete(name)
     return Response(status_code=204)

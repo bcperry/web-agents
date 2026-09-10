@@ -17,6 +17,7 @@ its caller — dependency/profile failures become a recorded ``failure`` run.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -29,15 +30,17 @@ from typing import Any
 import yaml
 
 from agent_framework._types import Content
+from fastapi import HTTPException
 
 from auth import AuthenticatedUser
 from cosmos_memory import (
     AutonomousRunRecord,
     get_autonomous_directive_repository,
     get_autonomous_run_repository,
+    get_autonomous_lease_repository,
     get_conversation_repository,
 )
-from mcp_servers import cleanup_mcp_servers
+from session_data import close_session
 from notifications import build_notification_sink, notify_descriptor, sanitize_error
 from prompt_config import load_agents_yaml
 from session_orchestration import create_chat_session
@@ -45,7 +48,7 @@ from streaming import (
     USAGE_INPUT_KEY,
     USAGE_OUTPUT_KEY,
     USAGE_TOTAL_KEY,
-    stream_agent_response,
+    stream_agent_events,
     usage_value,
     with_user_time,
 )
@@ -382,17 +385,14 @@ def directive_to_wire(directive: Directive, *, now: datetime | None = None) -> d
 
 def _resolve_profile_name(profile_id: str) -> str | None:
     """Return the display name if the profile resolves (by id or name), else None."""
-    profiles = (load_agents_yaml().get("profiles") or {})
-    if profile_id in profiles and isinstance(profiles[profile_id], dict):
-        return str(profiles[profile_id].get("name", profile_id))
-    normalized = " ".join(profile_id.strip().lower().split())
-    for key, entry in profiles.items():
-        if not isinstance(entry, dict):
-            continue
-        name = " ".join(str(entry.get("name", "")).strip().lower().split())
-        if name and name == normalized:
-            return str(entry.get("name", key))
-    return None
+    from prompt_config import resolve_logical_profile
+
+    profiles = load_agents_yaml().get("profiles") or {}
+    try:
+        logical_profile = resolve_logical_profile(profile_id, profiles=profiles)
+    except ValueError:
+        return None
+    return str(profiles[logical_profile].get("name", logical_profile))
 
 
 def _usage_to_dict(usage: Any) -> dict[str, int]:
@@ -406,19 +406,11 @@ def _usage_to_dict(usage: Any) -> dict[str, int]:
 
 
 async def collect_agent_response(agent: Any, contents: list[Content], session: Any) -> dict[str, Any]:
-    """Drive the agent unattended by consuming the SSE stream, discarding events.
-
-    Reuses the exact streaming/usage/tool-event extraction the interactive
-    ``send_message`` endpoint uses, then reads the final aggregate the streamer
-    publishes on ``stream_agent_response._last_result``.
-    """
-    async for _event in stream_agent_response(agent, contents, session):
+    """Collect the shared agent events into a request-local structured result."""
+    result: dict[str, Any] = {}
+    async for _event in stream_agent_events(agent, contents, session, result=result):
         pass
-    return getattr(stream_agent_response, "_last_result", None) or {
-        "text": "",
-        "tool_events": [],
-        "usage": None,
-    }
+    return result
 
 
 async def _ensure_conversation(
@@ -440,6 +432,32 @@ async def _ensure_conversation(
 
 
 async def run_autonomous_cycle(
+    ctx: Any, directive: Directive, *, trigger: str = "manual",
+    logger: logging.Logger = logger, config: AutonomousConfig | None = None,
+) -> AutonomousRunRecord:
+    config = config or await get_autonomous_config()
+    lease = get_autonomous_lease_repository()
+    run_id = uuid.uuid4().hex
+    timeout = max(1, int(os.getenv("AUTONOMOUS_RUN_TIMEOUT_SECONDS", "840")))
+    if not await lease.try_start(directive.id, run_id, ttl=timeout + 60):
+        raise HTTPException(status_code=409, detail="This automation is already running.")
+    started = datetime.now(timezone.utc)
+    try:
+        async with asyncio.timeout(timeout):
+            return await _execute_autonomous_cycle(ctx, directive, trigger=trigger, logger=logger, config=config)
+    except TimeoutError:
+        record = AutonomousRunRecord(
+            id=run_id, directive_id=directive.id, profile_id=directive.profile_id,
+            session_id=f"autonomous-{directive.id}", status="failure",
+            started_at=started.isoformat(), finished_at=datetime.now(timezone.utc).isoformat(),
+            error="Automation exceeded its execution time limit.", trigger=trigger,
+        )
+        return await _finalize(record, directive, config, started, logger)
+    finally:
+        await lease.finish(directive.id, run_id)
+
+
+async def _execute_autonomous_cycle(
     ctx: Any,
     directive: Directive,
     *,
@@ -449,10 +467,10 @@ async def run_autonomous_cycle(
 ) -> AutonomousRunRecord:
     """Execute one autonomous cycle for a directive and return its audit record.
 
-    Reuses ``create_chat_session`` + ``stream_agent_response`` (no agent-logic
+    Reuses ``create_chat_session`` + ``stream_agent_events`` (no agent-logic
     fork). Persists exactly one run record at the end (success or caught
     failure) and delivers the result to a notification sink (failure non-fatal).
-    Never raises to the caller.
+    Cancellation propagates after owned resources are closed.
     """
     config = config or await get_autonomous_config()
     sys_user = system_user(config)
@@ -515,12 +533,7 @@ async def run_autonomous_cycle(
         finally:
             # Reuse durable Cosmos history next cycle; tear down this run's live
             # session + MCP connections so they do not leak across cycles.
-            stale = ctx.sessions.pop(session_id, None)
-            if stale is not None and getattr(stale, "mcp_tools", None):
-                try:
-                    await cleanup_mcp_servers(stale.mcp_tools)
-                except Exception:  # noqa: BLE001 — cleanup is best-effort
-                    logger.debug("MCP cleanup failed for %s", session_id, exc_info=True)
+            await close_session(session_id, sessions=ctx.sessions, expected=session_data)
     except Exception as exc:  # noqa: BLE001 — never raise to the caller (FR: recorded failure)
         record.status = "failure"
         record.error = sanitize_error(str(exc))
@@ -547,7 +560,7 @@ async def _finalize(
 
     if record.status == "success":
         try:
-            sink = build_notification_sink(directive, config)
+            sink = build_notification_sink(directive)
             outcome = await sink.deliver(record.to_wire())
             record.notify_status = outcome.status
             record.notify_error = outcome.error

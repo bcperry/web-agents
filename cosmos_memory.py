@@ -187,7 +187,8 @@ class _CosmosContainer:
         if self._container is None:
             from azure.cosmos import PartitionKey
 
-            database = await self._client.create_database_if_not_exists(self._database_name)
+            client = self._client if self._client is not None else get_cosmos_client()
+            database = await client.create_database_if_not_exists(self._database_name)
             kwargs: dict[str, Any] = {
                 "id": self._container_name,
                 "partition_key": PartitionKey(path=self._partition_key),
@@ -243,17 +244,16 @@ class CosmosConversationRepository(_CosmosContainer):
             "ORDER BY c.last_activity_at DESC"
         )
         parameters = [{"name": "@uid", "value": user_id}]
-        records: list[ConversationRecord] = []
         items = container.query_items(
             query=query,
             parameters=parameters,
             partition_key=user_id,
+            max_item_count=max(1, min(limit, 200)),
         )
-        async for item in items:
-            records.append(ConversationRecord.from_doc(item))
-            if len(records) >= max(0, limit):
-                break
-        return records, None
+        pages = items.by_page(continuation_token=cursor)
+        page = await anext(pages, None)
+        records = [ConversationRecord.from_doc(item) async for item in page] if page is not None else []
+        return records, pages.continuation_token
 
     async def get_owned(self, user_id: str, conversation_id: str) -> ConversationRecord | None:
         from azure.cosmos.exceptions import CosmosResourceNotFoundError
@@ -266,17 +266,21 @@ class CosmosConversationRepository(_CosmosContainer):
         return ConversationRecord.from_doc(item)
 
     async def touch(self, user_id: str, conversation_id: str, *, title: str | None = None) -> None:
-        from azure.cosmos.exceptions import CosmosResourceNotFoundError
+        from azure.core import MatchConditions
+        from azure.cosmos.exceptions import CosmosResourceNotFoundError, CosmosAccessConditionFailedError
 
         container = await self._get_container()
         try:
             item = await container.read_item(item=conversation_id, partition_key=user_id)
-        except CosmosResourceNotFoundError:
+            item["last_activity_at"] = datetime.now(timezone.utc).isoformat()
+            if title and not item.get("title"):
+                item["title"] = title
+            await container.replace_item(
+                item=conversation_id, body=item,
+                etag=item["_etag"], match_condition=MatchConditions.IfNotModified,
+            )
+        except (CosmosResourceNotFoundError, CosmosAccessConditionFailedError):
             return
-        item["last_activity_at"] = datetime.now(timezone.utc).isoformat()
-        if title and not item.get("title"):
-            item["title"] = title
-        await container.upsert_item(item)
 
     async def delete(self, user_id: str, conversation_id: str) -> bool:
         from azure.cosmos.exceptions import CosmosResourceNotFoundError
@@ -441,6 +445,30 @@ class CosmosAutonomousLeaseRepository(_CosmosContainer):
         super().__init__(
             client, database_name, container_name, partition_key="/directive_id", default_ttl=-1
         )
+
+    async def try_start(self, directive_id: str, run_id: str, *, ttl: int) -> bool:
+        from azure.cosmos.exceptions import CosmosResourceExistsError
+
+        container = await self._get_container()
+        try:
+            await container.create_item({"id": "execution", "directive_id": directive_id,
+                                         "run_id": run_id, "ttl": ttl})
+            return True
+        except CosmosResourceExistsError:
+            return False
+
+    async def finish(self, directive_id: str, run_id: str) -> None:
+        from azure.core import MatchConditions
+        from azure.cosmos.exceptions import CosmosResourceNotFoundError, CosmosAccessConditionFailedError
+
+        container = await self._get_container()
+        try:
+            doc = await container.read_item(item="execution", partition_key=directive_id)
+            if doc.get("run_id") == run_id:
+                await container.delete_item(item="execution", partition_key=directive_id,
+                                            etag=doc["_etag"], match_condition=MatchConditions.IfNotModified)
+        except (CosmosResourceNotFoundError, CosmosAccessConditionFailedError):
+            return
 
     async def try_acquire(self, directive_id: str, slot: str, *, ttl: int = 3600) -> bool:
         from azure.cosmos.exceptions import CosmosResourceExistsError
@@ -728,3 +756,5 @@ async def close_cosmos() -> None:
     _autonomous_lease_repo = None
     _autonomous_directive_repo = None
     _skill_repo = None
+    import user_data
+    user_data.reset_repositories()

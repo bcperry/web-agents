@@ -3,18 +3,57 @@
 import asyncio
 import os
 from types import SimpleNamespace
+import pytest
 
 os.environ.setdefault("AUTH_DISABLED", "true")
 os.environ.setdefault("AZURE_SQL_CONNECTIONSTRING", "")
 
 import user_data
 from auth import AuthenticatedUser, get_current_user
-from main import _sessions
+from session_data import _sessions
 from prompt_config import load_agents_yaml
+
+
+@pytest.mark.parametrize("scheme", ["Bearer", "bearer", "BEARER"])
+def test_mcp_test_defaults_transport_and_extracts_bearer_token(client, monkeypatch, scheme):
+    from mcp_servers import MCPConnectionResult
+
+    async def connect(configs, *, user_token):
+        assert len(configs) == 1
+        assert configs[0].transport == "http"
+        assert user_token == "test-token"
+        return [], [MCPConnectionResult(name="lookup", transport="http", status="connected")]
+
+    monkeypatch.setattr("api_routes.profiles.connect_mcp_servers", connect)
+    response = client.post("/api/mcp/test", json={
+        "mcp_servers": [{"name": "lookup", "url": "https://example.com/mcp"}],
+    }, headers={"Authorization": f"{scheme} test-token"})
+    assert response.status_code == 200
+    assert response.json()["results"][0]["name"] == "lookup"
 
 
 def faa_profile_name() -> str:
     return str(load_agents_yaml()["profiles"]["faa"].get("name", "faa"))
+
+
+@pytest.mark.parametrize("body", ["", "not-json", '{"mcp_servers":', "[]", "null", "42"])
+def test_mcp_test_rejects_invalid_json_body(client, monkeypatch, body):
+    from unittest.mock import AsyncMock
+
+    connect = AsyncMock()
+    monkeypatch.setattr("api_routes.profiles.connect_mcp_servers", connect)
+    response = client.post("/api/mcp/test", content=body, headers={"Content-Type": "application/json"})
+    assert response.status_code == 400
+    assert "Body must be" in response.json()["detail"]
+    connect.assert_not_called()
+
+
+@pytest.mark.parametrize("body", ['[]', 'null', '42', '{"content": null}', '{"content": 7}', '{"content": []}', 'not-json'])
+def test_messages_reject_malformed_content_before_runtime_access(client, body):
+    _sessions["invalid-message"] = SimpleNamespace(user_id="dev-user", mcp_tools=[])
+    response = client.post("/api/sessions/invalid-message/messages", content=body, headers={"Content-Type": "application/json"})
+    assert response.status_code == 400
+    assert "Body must be" in response.json()["detail"]
 
 
 def test_health_endpoint(client):
@@ -104,11 +143,26 @@ def test_get_builtin_profile_definition_does_not_expose_secret_fields(client):
 
 def test_create_session_invalid_profile(client):
     resp = client.post("/api/sessions", json={"profile_id": "nonexistent_xyz"})
-    # Should fail with 400 or 500 depending on profile resolution
-    assert resp.status_code in (400, 500)
+    assert resp.status_code == 400
 
 
-def test_standard_profile_session_preserves_runtime_request_and_response(client, monkeypatch):
+@pytest.mark.parametrize("field", ["custom_name", "custom_prompt"])
+@pytest.mark.parametrize("value", [None, 42, True, ["text"], {"text": "value"}])
+def test_custom_session_rejects_non_string_text(client, field, value):
+    body = {"profile_id": "custom", "custom_name": "Test", "custom_prompt": "Be helpful"}
+    body[field] = value
+    response = client.post("/api/sessions", json=body)
+    assert response.status_code == 400
+    assert response.json()["detail"] == f"{field} must be a string"
+
+
+@pytest.mark.parametrize("body", ['[]', 'null', '42', 'not-json'])
+def test_create_session_rejects_non_object_json(client, body):
+    assert client.post("/api/sessions", content=body, headers={"Content-Type": "application/json"}).status_code == 400
+
+
+@pytest.mark.parametrize("scheme", ["Bearer", "bearer", "BEARER"])
+def test_standard_profile_session_preserves_runtime_request_and_response(client, monkeypatch, scheme):
     import session_orchestration
 
     calls: dict[str, object] = {}
@@ -123,7 +177,7 @@ def test_standard_profile_session_preserves_runtime_request_and_response(client,
             agent=object(),
             session=DummySession(),
             tools=kwargs.get("function_tools", []),
-            prompt_manifest={},
+            sub_agent_tool_names=[],
             prompt_logical_profile="search",
         )
 
@@ -146,6 +200,7 @@ def test_standard_profile_session_preserves_runtime_request_and_response(client,
         json={
             "profile_id": "search",
         },
+        headers={"Authorization": f"{scheme} test-token"},
     )
 
     assert resp.status_code == 201
@@ -160,6 +215,7 @@ def test_standard_profile_session_preserves_runtime_request_and_response(client,
     assert data["override_updated_at"] is None
 
     runtime_kwargs = calls["runtime"]
+    assert calls["user_token"] == "test-token"
     assert runtime_kwargs["chat_profile"] == "Search Agent"
     assert "Known User Profile" in runtime_kwargs["extra_instructions"]
     assert runtime_kwargs["mcp_servers"] == []
@@ -181,7 +237,7 @@ def test_custom_session_preserves_runtime_request_and_response(client, monkeypat
             agent=object(),
             session=DummySession(),
             tools=kwargs.get("function_tools", []),
-            prompt_manifest={},
+            sub_agent_tool_names=[],
             prompt_logical_profile="custom",
         )
 
@@ -243,7 +299,7 @@ def test_builtin_profile_override_session_preserves_canonical_name(client, monke
             agent=object(),
             session=DummySession(),
             tools=kwargs.get("function_tools", []),
-            prompt_manifest={},
+            sub_agent_tool_names=[],
             prompt_logical_profile="custom",
         )
 
@@ -315,7 +371,7 @@ def test_custom_session_drops_unknown_skills(client, monkeypatch, caplog):
             agent=object(),
             session=DummySession(),
             tools=kwargs.get("function_tools", []),
-            prompt_manifest={},
+            sub_agent_tool_names=[],
             prompt_logical_profile="custom",
         )
 
@@ -364,7 +420,7 @@ def test_builtin_profile_override_drops_unknown_skills(client, monkeypatch, capl
             agent=object(),
             session=DummySession(),
             tools=kwargs.get("function_tools", []),
-            prompt_manifest={},
+            sub_agent_tool_names=[],
             prompt_logical_profile="custom",
         )
 
@@ -501,7 +557,7 @@ def test_custom_session_creation_tool_grants_are_exact(client, monkeypatch):
             agent=object(),
             session=DummySession(),
             tools=kwargs.get("function_tools", []),
-            prompt_manifest={},
+            sub_agent_tool_names=[],
             prompt_logical_profile="custom",
         )
 
@@ -573,9 +629,8 @@ def _stub_runtime(monkeypatch):
             agent=object(),
             session=_DummySession(),
             tools=kwargs.get("function_tools", []),
-            prompt_manifest={},
-            prompt_logical_profile="custom",
             sub_agent_tool_names=[],
+            prompt_logical_profile="custom",
         )
 
     async def fake_connect_mcp_servers(configs, *, user_token=None):

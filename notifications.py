@@ -117,7 +117,7 @@ def resolve_webhook_url(directive: Any) -> str | None:
     )
 
 
-def build_notification_sink(directive: Any, config: Any = None) -> NotificationSink:
+def build_notification_sink(directive: Any) -> NotificationSink:
     """Resolve the sink for a directive: a webhook if one resolves, else logging."""
     url = resolve_webhook_url(directive)
     if url:

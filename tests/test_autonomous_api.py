@@ -1,6 +1,6 @@
 """API tests for the /api/autonomous/* endpoints (normal user auth).
 
-The real agent cycle is replaced at the ``main.run_autonomous_cycle`` seam so
+The real agent cycle is replaced at ``api_routes.autonomous.run_autonomous_cycle`` so
 these tests exercise endpoint wiring (directive resolution, gating, wire shape,
 persistence read-back) without a live model or Cosmos account.
 """
@@ -37,8 +37,6 @@ def _seed_run(**overrides) -> AutonomousRunRecord:
 # ---------------------------------------------------------------------------
 
 def test_run_now_default_runs_first_enabled_directive(client, monkeypatch):
-    import main
-
     captured = {}
 
     async def fake_cycle(ctx, directive, *, trigger, logger, config):
@@ -57,7 +55,7 @@ def test_run_now_default_runs_first_enabled_directive(client, monkeypatch):
             notify_status="logged",
         )
 
-    monkeypatch.setattr(main, "run_autonomous_cycle", fake_cycle)
+    monkeypatch.setattr("api_routes.autonomous.run_autonomous_cycle", fake_cycle)
 
     resp = client.post("/api/autonomous/run-now", json={})
     assert resp.status_code == 200

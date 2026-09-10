@@ -157,6 +157,10 @@ HTTP entry point is the user-authenticated `POST /api/autonomous/run-now`.
   `AUTONOMOUS_USER_ID` override the file.
 - **Scheduler gate**: `AUTONOMOUS_SCHEDULER_ENABLED` (off by default locally; empty ⇒
   enabled in the deployed App Service). `run-now` works regardless of this flag.
+- **Concurrent execution**: a separate per-directive execution lease coordinates
+  manual and scheduled runs across workers. A conflicting run receives HTTP 409.
+  `AUTONOMOUS_RUN_TIMEOUT_SECONDS` defaults to 840 seconds; timeout produces a
+  failure audit record and releases the execution lease after resource cleanup.
 - **Endpoints** (all normal-user auth): `POST /api/autonomous/run-now`,
   `GET /api/autonomous/runs`, `GET /api/autonomous/directives`.
 - **Manage automations**: directives are durable in Cosmos (seeded from the YAML the

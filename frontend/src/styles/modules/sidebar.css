@@ -259,3 +259,7 @@
 .header-sidebar-toggle:hover {
   background-color: var(--bg-hover);
 }
+
+[data-theme="light"] .sidebar-entry.active {
+  background-color: color-mix(in srgb, var(--accent-gold) 10%, transparent);
+}

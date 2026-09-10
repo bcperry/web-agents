@@ -1,3 +1,14 @@
+def test_agent_delegates_persist_identity_without_definition_snapshots():
+    repo = InMemoryUserScopedRepository()
+    _run(repo.create("owner", "child", {"id": "child", "name": "Child", "systemPrompt": "Current prompt"}))
+    result = _run(AgentCreationService("owner", custom_repo=repo).create(AgentCreationRequest(
+        id="parent", name="Parent", systemPrompt="Delegate.",
+        agentsAsTools=[{"agentRef": {"kind": "custom", "customAgentId": "child"}}],
+    )))
+    assert result.status == "created"
+    stored = _run(repo.get("owner", "parent"))
+    assert stored["agentsAsTools"] == [{"agentRef": {"kind": "custom", "customAgentId": "child"}}]
+
 """Focused contracts for durable skill and custom-agent creation services."""
 
 import asyncio
@@ -16,6 +27,35 @@ from tests._doubles import InMemoryByIdRepository, InMemoryUserScopedRepository
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+@pytest.mark.parametrize("inline_id", ["child", "wrong-child"])
+def test_delegate_snapshots_are_validated_before_removal_without_mutating_request(inline_id):
+    repo = InMemoryUserScopedRepository()
+    _run(repo.create("owner", "child", {"id": "child", "name": "Child", "systemPrompt": "Current"}))
+    request = AgentCreationRequest(
+        id="parent", name="Parent", systemPrompt="Delegate.",
+        agentsAsTools=[
+            {"agentRef": {"kind": "builtin", "profileId": "search"}},
+            {"agentRef": {"kind": "custom", "customAgentId": "child",
+                          "definition": {"id": inline_id, "systemPrompt": "Old snapshot"}}},
+        ],
+    )
+    original = request.model_dump()
+    result = _run(AgentCreationService("owner", custom_repo=repo).create(request))
+
+    assert request.model_dump() == original
+    stored = _run(repo.get("owner", "parent"))
+    if inline_id == "child":
+        assert result.status == "created"
+        assert stored["agentsAsTools"] == [
+            {"agentRef": {"kind": "builtin", "profileId": "search"}},
+            {"agentRef": {"kind": "custom", "customAgentId": "child"}},
+        ]
+    else:
+        assert result.code == "validation_error"
+        assert [issue.field for issue in result.issues] == ["agentsAsTools[1].agentRef.definition.id"]
+        assert stored is None
 
 
 def test_skill_creation_is_bounded_durable_and_owner_scoped():
@@ -221,16 +261,56 @@ def test_agent_creation_rejects_temperature_mcp_self_cycle_and_cross_owner_deleg
     assert _run(custom_repo.get("user-a", "parent")) is None
 
 
-def test_storage_failures_are_sanitized_and_log_only_exception_class(caplog):
+def test_skill_update_requires_owned_record_and_preserves_it_on_validation_failure():
+    repo = InMemoryUserScopedRepository()
+    service = SkillCreationService("owner", InMemoryByIdRepository(), repo)
+    request = SkillCreationRequest(name="owned", description="Original", content="Original")
+    assert _run(service.update(request)).code == "not_found"
+    assert _run(service.create(request)).status == "created"
+    original = _run(repo.get("owner", "owned"))
+    invalid = _run(service.update(request.model_copy(update={"content": ""})))
+    assert invalid.code == "validation_error"
+    assert _run(repo.get("owner", "owned")) == original
+    updated = _run(service.update(request.model_copy(update={"content": "Revised"})))
+    assert updated.model_dump() == {
+        "status": "updated", "kind": "skill", "id": "owned", "name": "owned",
+        "message": "Updated skill 'owned'.",
+    }
+    assert _run(repo.get("owner", "owned"))["content"] == "Revised"
+    assert _run(repo.get("owner", "owned"))["created_at"] == original["created_at"]
+
+
+@pytest.mark.parametrize("operation, action", [("create", "create"), ("update", "edit")])
+def test_skill_writes_require_authenticated_owner(operation, action):
+    repo = InMemoryUserScopedRepository()
+    service = SkillCreationService(" ", InMemoryByIdRepository(), repo)
+    result = _run(getattr(service, operation)(SkillCreationRequest(
+        name="owned", description="Description", content="Content",
+    )))
+    assert result.code == "unauthorized"
+    assert result.message == f"An authenticated user is required to {action} a skill."
+    assert _run(repo.list_for_user("")) == []
+
+
+@pytest.mark.parametrize("operation", ["create", "update"])
+def test_storage_failures_are_sanitized_and_log_only_exception_class(caplog, operation):
     class FailingRepository(InMemoryUserScopedRepository):
         async def create(self, *_args, **_kwargs):
             raise RuntimeError("credential=SECRET full private content")
 
+        async def upsert(self, *_args, **_kwargs):
+            raise RuntimeError("credential=SECRET full private content")
+
+    repo = FailingRepository()
+    if operation == "update":
+        _run(InMemoryUserScopedRepository.create(repo, "user-a", "safe-id", {
+            "id": "safe-id", "content": "original",
+        }))
     service = SkillCreationService(
-        "user-a", InMemoryByIdRepository(), FailingRepository()
+        "user-a", InMemoryByIdRepository(), repo
     )
 
-    result = _run(service.create(SkillCreationRequest(
+    result = _run(getattr(service, operation)(SkillCreationRequest(
         name="safe-id", description="description", content="private content"
     )))
 

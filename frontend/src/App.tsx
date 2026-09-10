@@ -1,20 +1,21 @@
-import { useState, useEffect, useCallback } from 'react'
-import { useAuth } from './hooks/useAuth'
+import { useState, useEffect, useCallback, lazy, Suspense } from 'react'
+import { AuthProvider, useAuth } from './hooks/useAuth'
 import { useBuiltInAgentCustomizations } from './hooks/useBuiltInAgentCustomizations'
 import { useCustomAgents } from './hooks/useCustomAgents'
 import { useConversationStore } from './hooks/useConversationStore'
 import { ThemeProvider } from './hooks/useTheme'
 import { ToastProvider } from './hooks/useToast'
 import { ChatPage } from './pages/ChatPage'
-import { AdminPage, type AdminOpenOptions } from './pages/AdminPage'
-import { AutonomousPage } from './pages/AutonomousPage'
+import type { AdminOpenOptions } from './pages/AdminPage'
 import { Disclaimer } from './components/Disclaimer'
 import { getRuntimeConfigSnapshot } from './config/runtimeConfig'
 import './styles/index.css'
 
+const AdminPage = lazy(() => import('./pages/AdminPage').then(module => ({ default: module.AdminPage })))
+const AutonomousPage = lazy(() => import('./pages/AutonomousPage').then(module => ({ default: module.AutonomousPage })))
+
 function AppContent() {
-  const { isAuthenticated, isLoading, login, user } = useAuth()
-  const { appName } = getRuntimeConfigSnapshot()
+  const { user } = useAuth()
   const [currentView, setCurrentView] = useState<'chat' | 'admin' | 'autonomous'>('chat')
   const [adminIntent, setAdminIntent] = useState<AdminOpenOptions | undefined>(undefined)
   const {
@@ -65,35 +66,14 @@ function AppContent() {
     window.history.back()
   }, [])
 
-  const handleDeleteAgent = (id: string) => {
-    removeCustomAgent(id)
-    void deleteConversationsByCustomAgent(id)
-  }
-
-  if (isLoading) {
-    return (
-      <div className="app-loading">
-        <div className="loading-indicator">Loading...</div>
-      </div>
-    )
-  }
-
-  if (!isAuthenticated) {
-    return (
-      <Disclaimer>
-        <div className="app-login">
-          <h1>{appName}</h1>
-          <p>AUTHENTICATION REQUIRED</p>
-          <button className="login-btn" onClick={login} type="button">
-            AUTHENTICATE
-          </button>
-        </div>
-      </Disclaimer>
-    )
+  const handleDeleteAgent = async (id: string) => {
+    await removeCustomAgent(id)
+    await deleteConversationsByCustomAgent(id)
   }
 
   return (
     <Disclaimer>
+      <Suspense fallback={<div className="app-loading">Loading...</div>}>
       {currentView === 'admin' ? (
         <AdminPage
           onBack={handleAdminBack}
@@ -119,15 +99,31 @@ function AppContent() {
           builtInOverrides={builtInOverrides}
         />
       )}
+      </Suspense>
     </Disclaimer>
   )
+}
+
+function AuthenticatedApp() {
+  const { isAuthenticated, isLoading, login } = useAuth()
+  if (isLoading) return <div className="app-loading">Loading...</div>
+  if (!isAuthenticated) return (
+    <Disclaimer>
+      <div className="app-login">
+        <h1>{getRuntimeConfigSnapshot().appName}</h1>
+        <p>AUTHENTICATION REQUIRED</p>
+        <button className="login-btn" onClick={login} type="button">AUTHENTICATE</button>
+      </div>
+    </Disclaimer>
+  )
+  return <AppContent />
 }
 
 function App() {
   return (
     <ThemeProvider>
       <ToastProvider>
-        <AppContent />
+        <AuthProvider><AuthenticatedApp /></AuthProvider>
       </ToastProvider>
     </ThemeProvider>
   )

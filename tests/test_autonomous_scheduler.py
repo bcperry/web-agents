@@ -148,20 +148,32 @@ def test_two_instances_sharing_lease_fire_slot_exactly_once():
     assert len(rec_a.calls) + len(rec_b.calls) == 1
 
 
-def test_scheduler_start_stop_is_clean():
+@pytest.mark.parametrize("during_poll", [False, True])
+def test_scheduler_start_stop_is_clean(monkeypatch, during_poll):
     recorder = _Recorder()
-    # A very small poll interval so the loop runs at least once, then stops cleanly.
     scheduler = AutonomousScheduler(
         SimpleNamespace(sessions={}),
-        poll_interval=0.01,
+        poll_interval=3600,
         config_loader=_loader(enabled=False),
         lease_repo_factory=InMemoryAutonomousLeaseRepository,
         cycle_runner=recorder,
     )
 
     async def scenario():
+        entered = asyncio.Event()
+
+        async def poll():
+            entered.set()
+            if during_poll:
+                await asyncio.Event().wait()
+
+        monkeypatch.setattr(scheduler, "poll_once", poll)
         await scheduler.start()
-        await asyncio.sleep(0.05)
+        task = scheduler._task
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        await scheduler.stop()
+        assert task.done()
+        assert scheduler._task is None
         await scheduler.stop()
 
     asyncio.run(scenario())

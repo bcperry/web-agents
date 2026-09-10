@@ -37,11 +37,8 @@ function buildRef(option: AgentToolOption): SubAgentToolRef {
   if (option.kind === 'builtin') {
     return { agentRef: { kind: 'builtin', profileId: option.id } };
   }
-  if (!option.definition) {
-    throw new Error(`Custom agent option "${option.id}" missing definition`);
-  }
   return {
-    agentRef: { kind: 'custom', customAgentId: option.id, definition: option.definition },
+    agentRef: { kind: 'custom', customAgentId: option.id },
   };
 }
 

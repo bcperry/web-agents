@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { createContext, createElement, useContext, useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from 'react';
 import {
   PublicClientApplication,
   InteractionRequiredAuthError,
@@ -8,6 +8,7 @@ import type {
   AccountInfo,
 } from '@azure/msal-browser';
 import { fetchRuntimeConfig, getRuntimeConfigSnapshot, type RuntimeConfig } from '../config/runtimeConfig';
+import { AuthError, setTokenProvider } from '../api/helpers';
 
 interface AuthState {
   isAuthenticated: boolean;
@@ -20,6 +21,8 @@ interface AuthState {
 }
 
 let msalInstance: PublicClientApplication | null = null;
+let initialization: Promise<void> | null = null;
+const AuthContext = createContext<AuthState | null>(null);
 
 function getMsalInstance(clientId: string, authority: string, tenantId: string): PublicClientApplication {
   if (!msalInstance) {
@@ -38,7 +41,7 @@ function getMsalInstance(clientId: string, authority: string, tenantId: string):
   return msalInstance;
 }
 
-export function useAuth(): AuthState {
+function useAuthState(): AuthState {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [account, setAccount] = useState<AccountInfo | null>(null);
@@ -70,36 +73,15 @@ export function useAuth(): AuthState {
           return;
         }
 
-        const scopes = [`${cfg.clientId}/.default`];
         const msal = getMsalInstance(cfg.clientId, cfg.authority, cfg.tenantId);
-        await msal.initialize();
-        const response = await msal.handleRedirectPromise();
-        if (response?.account) {
-          msal.setActiveAccount(response.account);
-          setAccount(response.account);
-          setIsAuthenticated(true);
-          if (response.accessToken) {
-            localStorage.setItem('auth_token', response.accessToken);
-          }
-        } else {
-          const accounts = msal.getAllAccounts();
-          if (accounts.length > 0) {
-            msal.setActiveAccount(accounts[0]);
-            setAccount(accounts[0]);
-            setIsAuthenticated(true);
-            try {
-              const tokenResponse = await msal.acquireTokenSilent({
-                scopes,
-                account: accounts[0],
-              });
-              if (tokenResponse.accessToken) {
-                localStorage.setItem('auth_token', tokenResponse.accessToken);
-              }
-            } catch {
-              // Token will be acquired on next API call via getToken()
-            }
-          }
-        }
+        initialization ??= msal.initialize().then(async () => {
+          const response = await msal.handleRedirectPromise();
+          msal.setActiveAccount(response?.account ?? msal.getAllAccounts()[0] ?? null);
+        });
+        await initialization;
+        const activeAccount = msal.getActiveAccount();
+        setAccount(activeAccount);
+        setIsAuthenticated(Boolean(activeAccount));
       } catch (err) {
         console.error('MSAL init error:', err);
       } finally {
@@ -116,7 +98,7 @@ export function useAuth(): AuthState {
 
     const msal = getMsalInstance(cfg.clientId, cfg.authority, cfg.tenantId);
     const activeAccount = msal.getActiveAccount();
-    if (!activeAccount) return null;
+    if (!activeAccount) throw new AuthError('Please sign in to continue.');
 
     const scopes = [`${cfg.clientId}/.default`];
 
@@ -125,25 +107,13 @@ export function useAuth(): AuthState {
         scopes,
         account: activeAccount,
       });
-      if (response.accessToken) {
-        localStorage.setItem('auth_token', response.accessToken);
-      }
       return response.accessToken;
     } catch (err) {
       if (err instanceof InteractionRequiredAuthError) {
-        try {
-          const response = await msal.acquireTokenPopup({ scopes });
-          if (response.accessToken) {
-            localStorage.setItem('auth_token', response.accessToken);
-          }
-          return response.accessToken;
-        } catch (popupErr) {
-          console.error('Token acquisition failed:', popupErr);
-          return null;
-        }
+        setIsAuthenticated(false);
+        throw new AuthError('Your session has expired. Please sign in again.');
       }
-      console.error('Silent token error:', err);
-      return null;
+      throw err;
     }
   }, []);
 
@@ -173,4 +143,19 @@ export function useAuth(): AuthState {
     configRef.current?.classificationBanner || getRuntimeConfigSnapshot().classificationBanner;
 
   return { isAuthenticated, isLoading, user, classificationBanner, getToken, login, logout };
+}
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const state = useAuthState();
+  useEffect(() => {
+    localStorage.removeItem('auth_token');
+    setTokenProvider(state.getToken);
+  }, [state.getToken]);
+  return createElement(AuthContext.Provider, { value: state }, children);
+}
+
+export function useAuth(): AuthState {
+  const state = useContext(AuthContext);
+  if (!state) throw new Error('useAuth requires AuthProvider');
+  return state;
 }
