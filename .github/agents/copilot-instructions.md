@@ -34,6 +34,7 @@
 - Existing `agent-memory` Cosmos database. Custom agents remain in `custom-agents` (014-agent-creation-tools)
 - Python 3.12+ (backend), TypeScript 5.9 / React 19 (frontend) + FastAPI, `agent-framework-core`, `azure-cosmos` (async), Vite 8 — **no new runtime dependencies in either tier** (016-agent-ui-pane)
 - Azure Cosmos DB — new `agent-views` container partitioned by `/user_id` (mirrors `user-profiles`) (016-agent-ui-pane)
+- Python 3.12.6; Terraform with AzureRM ~> 4.0; Google Cloud IaC language/repository to be confirmed with its network owner. + Existing FastAPI and Agent Framework runtime; one SAP HANA client selected by the driver spike (`hdbcli` or SAP HANA Client ODBC + existing `pyodbc`); no frontend dependency. (015-sap-hana-private-connectivity)
 
 ## Project Structure
 
@@ -67,5 +68,6 @@ uv run pytest                      # Run tests
 
 ## Recent Changes
 - 016-agent-ui-pane: Added Python 3.12+ (backend), TypeScript 5.9 / React 19 (frontend) + FastAPI, `agent-framework-core`, `azure-cosmos` (async), Vite 8 — **no new runtime dependencies in either tier**
+- 015-sap-hana-private-connectivity: Added Python 3.12.6; Terraform with AzureRM ~> 4.0; Google Cloud IaC language/repository to be confirmed with its network owner. + Existing FastAPI and Agent Framework runtime; one SAP HANA client selected by the driver spike (`hdbcli` or SAP HANA Client ODBC + existing `pyodbc`); no frontend dependency.
 - 014-agent-creation-tools: Added Python 3.12.6 backend; existing TypeScript/React frontend contracts remain + FastAPI, Pydantic, Agent Framework function tools, async Azure Cosmos DB
 - 011-cosmos-agent-memory: Added Python 3.12.6 (FastAPI backend); TypeScript 5.9.x + React 19.x (frontend) + `agent-framework-core`/`agent-framework-openai` (existing); NEW `agent-framework-azure-cosmos` (provides `CosmosHistoryProvider`, re-exported as `agent_framework.azure.CosmosHistoryProvider`); `azure-cosmos` (async SDK, pulled in by the provider); `azure-identity` (`DefaultAzureCredential`, already used)

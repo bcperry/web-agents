@@ -88,17 +88,17 @@ def test_create_chat_runtime_binds_profile_tools_and_creates_session(monkeypatch
     denied_tool = SimpleNamespace(name="denied_tool")
 
     monkeypatch.setattr(agent_factory, "_build_openai_clients", lambda: (FakeClient(), FakeClient()))
-    monkeypatch.setattr(agent_factory, "load_agent_profile", lambda chat_profile=None: AgentProfile(
+    profile = AgentProfile(
         name="Profile Name",
         description="Profile description",
         system_prompt="System prompt",
         tool_names=["allowed_tool"],
         logical_profile="profile-key",
         temperature=0.4,
-    ))
+    )
 
     runtime = agent_factory.create_chat_runtime(
-        chat_profile="Profile Name",
+        profile=profile,
         function_tools=[allowed_tool, denied_tool],
     )
 

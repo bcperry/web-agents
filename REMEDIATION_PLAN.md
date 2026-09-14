@@ -1,5 +1,14 @@
 # Code Review Remediation
 
+## September 10 Follow-Up
+
+- Session replacement now publishes the new runtime without an intervening await and disposes only the displaced instance. Cancellation finishes detached cleanup and removes the replacement only if the cancelled request still owns it. Deterministic regressions cover overlapping replacements and cancellation with and without a newer runtime.
+- Autonomous execution uses one run ID and one record, shared with its execution lease. The execution deadline no longer covers notification/audit finalization; the record is finalized once after execution succeeds, fails, or times out.
+- Session inputs normalize to a typed `SessionDefinition` containing the existing `AgentProfile`, parsed MCP configuration, and conversation metadata. The runtime factory no longer reloads the parent profile, switches between custom/built-in modes, or accepts parallel capability options. Built-in parsing reuses the loaded configuration snapshot.
+- Built-in override saves retain the server-normalized response, matching custom-agent saves. Transport and desktop/mobile browser regressions verify server-supplied temperature is immediately visible without reloading.
+- Verification: 456 backend/browser/emulator tests passed, with the existing ordered-paging expected failure; 10 frontend tests, TypeScript, lint, production build, editor diagnostics, and diff checks passed.
+- Limits: live sessions remain process-local; replacement is atomic within the owning event loop, not a distributed session registry. The existing autonomous lease TTL remains the crash-recovery mechanism. Live MCP connections, MSAL renewal, and cross-worker lease expiry were not exercised. Finalization is outside the execution deadline and remains subject to provider timeouts.
+
 ## Constraints
 
 - Preserve FastAPI, React, Cosmos DB, existing public routes, and the iframe sandbox.

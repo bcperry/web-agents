@@ -442,16 +442,18 @@ async def run_autonomous_cycle(
     if not await lease.try_start(directive.id, run_id, ttl=timeout + 60):
         raise HTTPException(status_code=409, detail="This automation is already running.")
     started = datetime.now(timezone.utc)
+    record = AutonomousRunRecord(
+        id=run_id, directive_id=directive.id, profile_id=directive.profile_id,
+        session_id=f"autonomous-{directive.id}", status="failure",
+        started_at=started.isoformat(), finished_at=started.isoformat(), trigger=trigger,
+    )
     try:
-        async with asyncio.timeout(timeout):
-            return await _execute_autonomous_cycle(ctx, directive, trigger=trigger, logger=logger, config=config)
-    except TimeoutError:
-        record = AutonomousRunRecord(
-            id=run_id, directive_id=directive.id, profile_id=directive.profile_id,
-            session_id=f"autonomous-{directive.id}", status="failure",
-            started_at=started.isoformat(), finished_at=datetime.now(timezone.utc).isoformat(),
-            error="Automation exceeded its execution time limit.", trigger=trigger,
-        )
+        try:
+            async with asyncio.timeout(timeout):
+                await _execute_autonomous_cycle(ctx, directive, record, started=started, logger=logger, config=config)
+        except TimeoutError:
+            record.status = "failure"
+            record.error = "Automation exceeded its execution time limit."
         return await _finalize(record, directive, config, started, logger)
     finally:
         await lease.finish(directive.id, run_id)
@@ -460,48 +462,29 @@ async def run_autonomous_cycle(
 async def _execute_autonomous_cycle(
     ctx: Any,
     directive: Directive,
+    record: AutonomousRunRecord,
     *,
-    trigger: str = "manual",
+    started: datetime,
     logger: logging.Logger = logger,
-    config: AutonomousConfig | None = None,
-) -> AutonomousRunRecord:
-    """Execute one autonomous cycle for a directive and return its audit record.
-
-    Reuses ``create_chat_session`` + ``stream_agent_events`` (no agent-logic
-    fork). Persists exactly one run record at the end (success or caught
-    failure) and delivers the result to a notification sink (failure non-fatal).
-    Cancellation propagates after owned resources are closed.
-    """
-    config = config or await get_autonomous_config()
+    config: AutonomousConfig,
+) -> None:
+    """Populate the owned run record; cancellation propagates after cleanup."""
     sys_user = system_user(config)
-    run_id = uuid.uuid4().hex
-    session_id = f"autonomous-{directive.id}"
-    started = datetime.now(timezone.utc)
+    session_id = record.session_id
 
     logger.info(
         "Autonomous cycle start: directive=%s profile=%s trigger=%s run=%s",
         directive.id,
         directive.profile_id,
-        trigger,
-        run_id,
-    )
-
-    record = AutonomousRunRecord(
-        id=run_id,
-        directive_id=directive.id,
-        profile_id=directive.profile_id,
-        session_id=session_id,
-        status="failure",
-        started_at=started.isoformat(),
-        finished_at=started.isoformat(),
-        trigger=trigger,
+        record.trigger,
+        record.id,
     )
 
     profile_name = _resolve_profile_name(directive.profile_id)
     if profile_name is None:
         record.error = f"Unknown profile: {directive.profile_id}"
         logger.error("Autonomous cycle aborted: %s", record.error)
-        return await _finalize(record, directive, config, started, logger)
+        return
 
     try:
         await _ensure_conversation(sys_user, session_id, directive, profile_name)
@@ -540,12 +523,10 @@ async def _execute_autonomous_cycle(
         logger.error(
             "Autonomous cycle failed: directive=%s run=%s error=%s",
             directive.id,
-            run_id,
+            record.id,
             record.error,
             exc_info=True,
         )
-
-    return await _finalize(record, directive, config, started, logger)
 
 
 async def _finalize(

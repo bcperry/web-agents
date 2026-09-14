@@ -34,11 +34,6 @@ output "WEB_APP_URL" {
   value       = module.app_service.app_service_url
 }
 
-output "MANAGED_IDENTITY_CLIENT_ID" {
-  description = "The client ID of the managed identity"
-  value       = module.managed_identity.managed_identity_client_id
-}
-
 output "AZURE_COSMOS_ENDPOINT" {
   description = "The Cosmos DB account endpoint"
   value       = module.cosmos.endpoint
@@ -50,8 +45,8 @@ output "AZURE_COSMOS_ACCOUNT_NAME" {
 }
 
 output "MANAGED_IDENTITY_PRINCIPAL_ID" {
-  description = "The principal ID of the managed identity"
-  value       = module.managed_identity.managed_identity_principal_id
+  description = "The principal ID of the App Service system-assigned managed identity"
+  value       = module.app_service.system_assigned_principal_id
 }
 
 # Persist commonly used application configuration inputs via outputs
@@ -65,10 +60,9 @@ output "AZURE_OPENAI_MODEL" {
   value       = var.azure_openai_model
 }
 
-output "AZURE_OPENAI_API_KEY" {
-  description = "Azure OpenAI API key (empty indicates managed identity)"
-  value       = var.azure_openai_api_key
-  sensitive   = true
+output "AZURE_OPENAI_RESOURCE_ID" {
+  description = "Azure OpenAI account resource ID"
+  value       = var.azure_openai_resource_id
 }
 
 output "AZURE_OPENAI_API_VERSION" {
@@ -80,6 +74,24 @@ output "AZURE_SQL_CONNECTIONSTRING" {
   description = "Azure SQL connection string (empty indicates managed identity)"
   value       = var.azure_sql_connectionstring
   sensitive   = true
+}
+
+# Emitted under its own name: azd writes outputs back into the environment, so
+# aliasing a computed value onto a user-set input would feed it back to Terraform.
+output "SAP_EMULATOR_CONNECTIONSTRING" {
+  description = "Passwordless ODBC connection string for the SAP emulator; null when disabled"
+  value       = local.sap_emulator_enabled ? module.sap_emulator[0].connection_string : null
+  sensitive   = true
+}
+
+output "SAP_EMULATOR_SERVER_FQDN" {
+  description = "Azure SQL SAP emulator server FQDN; null when disabled"
+  value       = local.sap_emulator_enabled ? module.sap_emulator[0].server_fqdn : null
+}
+
+output "SAP_EMULATOR_DATABASE_NAME" {
+  description = "Azure SQL SAP emulator database name; null when disabled"
+  value       = local.sap_emulator_enabled ? module.sap_emulator[0].database_name : null
 }
 
 output "SEARCH_SERVICE_ENDPOINT" {

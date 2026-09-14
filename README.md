@@ -69,7 +69,7 @@ Create a `.env` file at the repository root:
 # Azure OpenAI
 AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
 AZURE_OPENAI_MODEL=gpt-4o
-# Leave empty to authenticate with Entra ID (managed identity in Azure, `az login` locally).
+# Optional for local development only. Leave empty to authenticate with `az login`.
 # Requires the "Cognitive Services OpenAI User" role on the account.
 AZURE_OPENAI_API_KEY=
 AZURE_OPENAI_API_VERSION=2025-01-01-preview
@@ -94,6 +94,19 @@ APP_TAGLINE=AI Agent Framework
 # Cosmos user-owned skills container (partition key /user_id)
 AZURE_COSMOS_USER_SKILLS_CONTAINER=user-skills
 ```
+
+Terraform deployments require `AZURE_OPENAI_RESOURCE_ID`. Provisioning assigns
+the App Service system-assigned managed identity the `Cognitive Services
+OpenAI User` role and does not configure an API key on the app. It does not change
+the Azure OpenAI account's local-auth setting.
+
+The feature 015 SAP force-equipment emulator can provision a real Azure SQL database and load the
+workbook-derived schema with synthetic records. It is reached over the public endpoint restricted to
+the App Service outbound IPs and an optional developer IP range — private endpoints are reserved for
+the real HANA target described in
+[specs/015-sap-hana-private-connectivity/contracts/network-security-handoff.md](specs/015-sap-hana-private-connectivity/contracts/network-security-handoff.md).
+See [database_emulator/README.md](database_emulator/README.md) for its data assumptions, opt-in
+Terraform settings, migration commands, and verification query.
 
 Frontend environment variables (for Azure AD auth in the browser) go in `frontend/.env`:
 

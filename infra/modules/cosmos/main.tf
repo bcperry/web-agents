@@ -142,16 +142,6 @@ resource "azurerm_cosmosdb_sql_container" "user_skills" {
   partition_key_paths = ["/user_id"]
 }
 
-# Grant the app's managed identity data-plane access via the built-in
-# "Cosmos DB Built-in Data Contributor" role (id ...0002).
-resource "azurerm_cosmosdb_sql_role_assignment" "data_contributor" {
-  resource_group_name = var.resource_group_name
-  account_name        = azurerm_cosmosdb_account.cosmos.name
-  role_definition_id  = "${azurerm_cosmosdb_account.cosmos.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002"
-  principal_id        = var.principal_id
-  scope               = azurerm_cosmosdb_account.cosmos.id
-}
-
 # Optional developer/user data-plane access for running the app locally against
 # this live account (Cosmos data-plane RBAC is separate from control-plane RBAC).
 # Gated by the ENABLE_DEV_COSMOS_ACCESS deployment env var; empty = not granted.

@@ -153,10 +153,12 @@ def load_agents_yaml(workspace_root: Optional[Path] = None) -> dict[str, Any]:
 def load_agent_profile(
     chat_profile: Optional[str],
     workspace_root: Optional[Path] = None,
+    *,
+    profiles: dict[str, Any] | None = None,
 ) -> AgentProfile:
     """Load a single agent profile from agents.yaml."""
-    agents_doc = load_agents_yaml(workspace_root)
-    profiles = agents_doc.get("profiles") or {}
+    if profiles is None:
+        profiles = load_agents_yaml(workspace_root).get("profiles") or {}
     logical_profile = resolve_logical_profile(chat_profile, profiles=profiles)
 
     if logical_profile not in profiles:

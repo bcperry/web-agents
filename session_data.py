@@ -1,5 +1,6 @@
 """Runtime state for currently active chat sessions."""
 
+import asyncio
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -66,14 +67,35 @@ def get_session(session_id: str, user_id: str) -> SessionData:
     return session
 
 
-async def close_session(session_id: str, *, sessions: dict | None = None, expected: object | None = None) -> None:
-    from agent_views import clear_view_data_budget
-
+async def close_session(session_id: str, *, sessions: dict[str, SessionData] | None = None, expected: SessionData | None = None) -> None:
     store = _sessions if sessions is None else sessions
     session = store.get(session_id)
     if session is None or (expected is not None and session is not expected):
         return
     store.pop(session_id)
+    await _dispose_session(session_id, session)
+
+
+async def replace_session(session: SessionData, *, sessions: dict[str, SessionData]) -> None:
+    """Publish a runtime atomically, then dispose only the displaced instance."""
+    previous = sessions.get(session.session_id)
+    sessions[session.session_id] = session
+    try:
+        if previous is not None and previous is not session:
+            await _dispose_session(session.session_id, previous)
+    except asyncio.CancelledError:
+        await close_session(session.session_id, sessions=sessions, expected=session)
+        raise
+
+
+async def _dispose_session(session_id: str, session: SessionData) -> None:
+    from agent_views import clear_view_data_budget
+
     clear_view_data_budget(session_id)
     tools, session.mcp_tools = session.mcp_tools, []
-    await cleanup_mcp_servers(tools)
+    cleanup = asyncio.create_task(cleanup_mcp_servers(tools))
+    try:
+        await asyncio.shield(cleanup)
+    except asyncio.CancelledError:
+        await cleanup
+        raise

@@ -12,9 +12,17 @@ locals {
   }
 
   # Use existing resource group if name is provided, otherwise use the created one
-  use_existing            = var.existing_resource_group_name != ""
-  resource_group_name     = local.use_existing ? data.azurerm_resource_group.existing[0].name : azurerm_resource_group.rg[0].name
-  resource_group_location = local.use_existing ? data.azurerm_resource_group.existing[0].location : azurerm_resource_group.rg[0].location
+  use_existing                     = var.existing_resource_group_name != ""
+  resource_group_name              = local.use_existing ? data.azurerm_resource_group.existing[0].name : azurerm_resource_group.rg[0].name
+  resource_group_location          = local.use_existing ? data.azurerm_resource_group.existing[0].location : azurerm_resource_group.rg[0].location
+  sap_emulator_enabled             = lower(trimspace(var.sap_emulator_enabled)) == "true"
+  sap_emulator_public_access       = lower(trimspace(var.sap_emulator_public_network_access_enabled)) == "true"
+  sap_emulator_admin_object_id     = trimspace(var.sap_emulator_admin_object_id) != "" ? var.sap_emulator_admin_object_id : var.principal_id
+  sap_emulator_admin_login         = trimspace(var.sap_emulator_admin_login) != "" ? var.sap_emulator_admin_login : "sap-emulator-admin"
+  sap_emulator_database_sku        = trimspace(var.sap_emulator_database_sku) != "" ? var.sap_emulator_database_sku : "Basic"
+  sap_emulator_default_server_name = substr(lower(replace("sql-${var.environment_name}-sap", "/[^0-9a-z-]/", "-")), 0, 63)
+  sap_emulator_server_name         = trimspace(var.sap_emulator_sql_server_name) != "" ? lower(var.sap_emulator_sql_server_name) : local.sap_emulator_default_server_name
+  sap_emulator_app_outbound_ips    = toset([for ip in split(",", var.sap_emulator_app_outbound_ips) : trimspace(ip) if trimspace(ip) != ""])
 }
 
 # Resource group (only created if not using existing)
@@ -25,17 +33,6 @@ resource "azurerm_resource_group" "rg" {
   tags     = local.tags
 }
 
-# User-assigned managed identity
-module "managed_identity" {
-  source = "./modules/managed-identity"
-
-  name     = "id-${var.environment_name}"
-  location = local.resource_group_location
-  tags     = local.tags
-
-  resource_group_name = local.resource_group_name
-}
-
 # Azure Cosmos DB (durable agent memory + per-user chat history)
 module "cosmos" {
   source = "./modules/cosmos"
@@ -44,7 +41,6 @@ module "cosmos" {
   location            = local.resource_group_location
   tags                = local.tags
   resource_group_name = local.resource_group_name
-  principal_id        = module.managed_identity.managed_identity_principal_id
 
   # Optional: grant the deploying user (AZURE_PRINCIPAL_ID) Cosmos data-plane
   # access so you can run the app locally against this live account. Toggle with
@@ -52,31 +48,59 @@ module "cosmos" {
   dev_principal_id = lower(trimspace(var.enable_dev_cosmos_access)) == "true" ? var.principal_id : ""
 }
 
+# Optional Azure SQL database containing the synthetic SAP force-equipment model.
+module "sap_emulator" {
+  count  = local.sap_emulator_enabled ? 1 : 0
+  source = "./modules/sap-emulator"
+
+  server_name                   = local.sap_emulator_server_name
+  database_name                 = "sap-force-emulator"
+  resource_group_name           = local.resource_group_name
+  location                      = local.resource_group_location
+  tenant_id                     = data.azurerm_client_config.current.tenant_id
+  azuread_admin_login           = local.sap_emulator_admin_login
+  azuread_admin_object_id       = local.sap_emulator_admin_object_id
+  sku_name                      = local.sap_emulator_database_sku
+  public_network_access_enabled = local.sap_emulator_public_access
+  allowed_ip_start              = trimspace(var.sap_emulator_allowed_ip_start)
+  allowed_ip_end                = trimspace(var.sap_emulator_allowed_ip_end)
+  app_service_outbound_ips      = local.sap_emulator_app_outbound_ips
+  tags                          = local.tags
+}
+
 # App Service Plan and App Service
 module "app_service" {
   source = "./modules/app-service"
 
-  name                       = "app-${var.environment_name}"
-  location                   = local.resource_group_location
-  app_service_tags           = merge(local.tags, { "azd-service-name" = "web" })
-  app_service_plan_tags      = local.tags
-  app_service_plan_name      = "asp-${var.environment_name}"
-  app_service_plan_sku       = var.app_service_plan_sku
-  python_version             = var.python_version
-  managed_identity_id        = module.managed_identity.managed_identity_id
-  managed_identity_client_id = module.managed_identity.managed_identity_client_id
+  name                  = "app-${var.environment_name}"
+  location              = local.resource_group_location
+  app_service_tags      = merge(local.tags, { "azd-service-name" = "web" })
+  app_service_plan_tags = local.tags
+  app_service_plan_name = "asp-${var.environment_name}"
+  app_service_plan_sku  = var.app_service_plan_sku
+  python_version        = var.python_version
 
   resource_group_name = local.resource_group_name
 
   # Application environment variables
   azure_openai_endpoint      = var.azure_openai_endpoint
   azure_openai_model         = var.azure_openai_model
-  azure_openai_api_key       = var.azure_openai_api_key
   azure_openai_api_version   = var.azure_openai_api_version
   azure_sql_connectionstring = var.azure_sql_connectionstring
-  search_service_endpoint    = var.search_service_endpoint
-  search_index_name          = var.search_index_name
-  search_api_key             = var.search_api_key
+  sap_emulator_enabled       = local.sap_emulator_enabled
+  sap_emulator_connectionstring = (
+    local.sap_emulator_enabled ? module.sap_emulator[0].connection_string : ""
+  )
+  sap_emulator_server_fqdn = (
+    local.sap_emulator_enabled ? module.sap_emulator[0].server_fqdn : ""
+  )
+  sap_emulator_database_name = (
+    local.sap_emulator_enabled ? module.sap_emulator[0].database_name : ""
+  )
+  sap_emulator_entitled_group_ids = var.sap_emulator_entitled_group_ids
+  search_service_endpoint         = var.search_service_endpoint
+  search_index_name               = var.search_index_name
+  search_api_key                  = var.search_api_key
 
   # Azure Cosmos DB (durable agent memory)
   azure_cosmos_endpoint                = module.cosmos.endpoint
@@ -102,4 +126,19 @@ module "app_service" {
   app_name              = var.app_name
   app_tagline           = var.app_tagline
   app_logo              = var.app_logo
+}
+
+resource "azurerm_role_assignment" "azure_openai_user" {
+  scope                = var.azure_openai_resource_id
+  role_definition_name = "Cognitive Services OpenAI User"
+  principal_id         = module.app_service.system_assigned_principal_id
+  principal_type       = "ServicePrincipal"
+}
+
+resource "azurerm_cosmosdb_sql_role_assignment" "app_data_contributor" {
+  resource_group_name = local.resource_group_name
+  account_name        = module.cosmos.account_name
+  role_definition_id  = "${module.cosmos.account_id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002"
+  principal_id        = module.app_service.system_assigned_principal_id
+  scope               = module.cosmos.account_id
 }

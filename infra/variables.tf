@@ -57,10 +57,14 @@ variable "azure_openai_model" {
   type        = string
 }
 
-variable "azure_openai_api_key" {
-  description = "Azure OpenAI API key (leave empty to use managed identity)"
+variable "azure_openai_resource_id" {
+  description = "Resource ID of the existing Azure OpenAI account used to grant the App Service system-assigned identity access"
   type        = string
-  sensitive   = true
+
+  validation {
+    condition     = can(regex("(?i)^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\\.CognitiveServices/accounts/[^/]+$", var.azure_openai_resource_id))
+    error_message = "azure_openai_resource_id must be the full resource ID of a Microsoft.CognitiveServices/accounts resource."
+  }
 }
 
 variable "azure_openai_api_version" {
@@ -72,6 +76,66 @@ variable "azure_sql_connectionstring" {
   description = "Azure SQL connection string: 'Driver={ODBC Driver 18 for SQL Server};Server=tcp:<yourserver>.database.usgovcloudapi.net,1433;Database=<yourdatabase>;Encrypt=yes;TrustServerCertificate=no;Connection Timeout=30;Authentication=ActiveDirectoryMsi'"
   type        = string
   sensitive   = true
+}
+
+variable "sap_emulator_enabled" {
+  description = "Set to 'true' to provision the Azure SQL SAP force-equipment emulator"
+  type        = string
+  default     = "false"
+}
+
+variable "sap_emulator_sql_server_name" {
+  description = "Optional globally unique Azure SQL server name; empty derives one from the environment"
+  type        = string
+  default     = ""
+}
+
+variable "sap_emulator_database_sku" {
+  description = "Azure SQL database SKU; empty uses Basic"
+  type        = string
+  default     = ""
+}
+
+variable "sap_emulator_admin_object_id" {
+  description = "Entra object ID for the Azure SQL administrator; empty uses principal_id"
+  type        = string
+  default     = ""
+}
+
+variable "sap_emulator_admin_login" {
+  description = "Display name for the Azure SQL Entra administrator"
+  type        = string
+  default     = ""
+}
+
+variable "sap_emulator_public_network_access_enabled" {
+  description = "Set to 'true' for exact-IP-restricted application or trusted developer access"
+  type        = string
+  default     = "false"
+}
+
+variable "sap_emulator_allowed_ip_start" {
+  description = "First trusted developer IPv4 address allowed when public access is enabled"
+  type        = string
+  default     = ""
+}
+
+variable "sap_emulator_allowed_ip_end" {
+  description = "Last trusted developer IPv4 address; empty reuses sap_emulator_allowed_ip_start"
+  type        = string
+  default     = ""
+}
+
+variable "sap_emulator_app_outbound_ips" {
+  description = "Comma-separated App Service possible outbound IPv4 addresses allowed to reach the emulator"
+  type        = string
+  default     = ""
+}
+
+variable "sap_emulator_entitled_group_ids" {
+  description = "Comma-separated Entra security group object IDs entitled to the SAP emulator agent"
+  type        = string
+  default     = ""
 }
 
 variable "search_service_endpoint" {

@@ -43,16 +43,6 @@ variable "python_version" {
   default     = "3.12"
 }
 
-variable "managed_identity_id" {
-  description = "The managed identity resource ID"
-  type        = string
-}
-
-variable "managed_identity_client_id" {
-  description = "The managed identity client ID"
-  type        = string
-}
-
 variable "resource_group_name" {
   description = "The name of the resource group"
   type        = string
@@ -68,12 +58,6 @@ variable "azure_openai_model" {
   type        = string
 }
 
-variable "azure_openai_api_key" {
-  description = "Azure OpenAI API key"
-  type        = string
-  sensitive   = true
-}
-
 variable "azure_openai_api_version" {
   description = "Azure OpenAI API version"
   type        = string
@@ -83,6 +67,37 @@ variable "azure_sql_connectionstring" {
   description = "Azure SQL connection string"
   type        = string
   sensitive   = true
+}
+
+variable "sap_emulator_enabled" {
+  description = "Whether the native SAP emulator database provider is enabled"
+  type        = bool
+  default     = false
+}
+
+variable "sap_emulator_connectionstring" {
+  description = "Passwordless ODBC connection string for the SAP emulator database"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "sap_emulator_server_fqdn" {
+  description = "Azure SQL server FQDN for the SAP emulator provider"
+  type        = string
+  default     = ""
+}
+
+variable "sap_emulator_database_name" {
+  description = "Azure SQL database name for the SAP emulator provider"
+  type        = string
+  default     = ""
+}
+
+variable "sap_emulator_entitled_group_ids" {
+  description = "Comma-separated Entra group object IDs entitled to the SAP emulator agent"
+  type        = string
+  default     = ""
 }
 
 variable "search_service_endpoint" {

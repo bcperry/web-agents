@@ -20,10 +20,7 @@ resource "azurerm_linux_web_app" "app_service" {
   https_only = true
 
   identity {
-    type = "UserAssigned"
-    identity_ids = [
-      var.managed_identity_id
-    ]
+    type = "SystemAssigned"
   }
 
   site_config {
@@ -41,17 +38,20 @@ resource "azurerm_linux_web_app" "app_service" {
 
   app_settings = {
     SCM_DO_BUILD_DURING_DEPLOYMENT = "true"
-    AZURE_CLIENT_ID                = var.managed_identity_client_id
     WEBSITES_PORT                  = "8000"
 
     # Azure OpenAI settings
     AZURE_OPENAI_ENDPOINT    = var.azure_openai_endpoint
     AZURE_OPENAI_MODEL       = var.azure_openai_model
-    AZURE_OPENAI_API_KEY     = var.azure_openai_api_key
     AZURE_OPENAI_API_VERSION = var.azure_openai_api_version
 
     # Azure SQL settings
-    AZURE_SQL_CONNECTIONSTRING = var.azure_sql_connectionstring
+    AZURE_SQL_CONNECTIONSTRING      = var.azure_sql_connectionstring
+    SAP_EMULATOR_ENABLED            = tostring(var.sap_emulator_enabled)
+    SAP_EMULATOR_CONNECTIONSTRING   = var.sap_emulator_connectionstring
+    SAP_EMULATOR_SERVER_FQDN        = var.sap_emulator_server_fqdn
+    SAP_EMULATOR_DATABASE_NAME      = var.sap_emulator_database_name
+    SAP_EMULATOR_ENTITLED_GROUP_IDS = var.sap_emulator_entitled_group_ids
 
     # Azure AI Search settings
     SEARCH_SERVICE_ENDPOINT = var.search_service_endpoint

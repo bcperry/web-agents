@@ -325,8 +325,8 @@ export async function listAgentCustomizations(): Promise<AgentCustomizationOverr
   return data.overrides;
 }
 
-export async function saveAgentCustomization(override: AgentCustomizationOverride): Promise<void> {
-  await request(`${API_BASE}/agent-customizations/${encodeURIComponent(override.baseProfileId)}`, {
+export async function saveAgentCustomization(override: AgentCustomizationOverride): Promise<AgentCustomizationOverride> {
+  return requestJson(`${API_BASE}/agent-customizations/${encodeURIComponent(override.baseProfileId)}`, {
     method: 'PUT',
     body: JSON.stringify(override),
   }, 'Failed to save agent customization');

@@ -411,62 +411,24 @@ def _build_sub_agent_tools(
 
 def create_chat_runtime(
     *,
-    chat_profile: str | None = None,
+    profile: AgentProfile,
     function_tools: Sequence[Any] = (),
     mcp_servers: Sequence[Any] = (),
     token_budget: int = 16_000,
-    temperature: float | None = None,
-    custom_name: str | None = None,
-    custom_instructions: str | None = None,
-    enable_search_context: bool = False,
-    custom_skills: list[str] | None = None,
     extra_instructions: str | None = None,
-    agents_as_tools: Sequence[SubAgentToolRef] = (),
     sub_agent_resources: dict[str, SubAgentResources] | None = None,
     user_id: str | None = None,
 ) -> ChatRuntime:
-    is_custom = custom_name is not None and custom_instructions is not None
-
-    if is_custom:
-        agent_name = custom_name
-        runtime_instructions = custom_instructions
-        description = f"Custom agent: {custom_name}"
-        logical_profile = "custom"
-        all_tools: list[Any] = [*function_tools, *mcp_servers]
-        skill_names = custom_skills
-        sub_agent_refs = agents_as_tools
-    else:
-        agent_profile = load_agent_profile(chat_profile=chat_profile)
-        runtime_instructions = agent_profile.system_prompt
-        if not runtime_instructions:
-            raise ValueError("Loaded agent profile but system prompt text is empty")
-
-        bound_function_tools = _resolve_enabled_tools(
-            profile_tool_names=agent_profile.tool_names,
-            function_tools=function_tools,
-        )
-        all_tools = [*bound_function_tools, *mcp_servers]
-        agent_name = chat_profile or agent_profile.name
-        description = agent_profile.description
-        logical_profile = agent_profile.logical_profile
-        if not enable_search_context:
-            enable_search_context = agent_profile.search_context
-        if temperature is None and agent_profile.temperature is not None:
-            temperature = agent_profile.temperature
-        skill_names = agent_profile.skills or None
-        # Caller-supplied refs override profile refs (e.g., session-time overrides);
-        # otherwise fall back to whatever the YAML profile declared.
-        sub_agent_refs = agents_as_tools or agent_profile.agents_as_tools
-
-    if extra_instructions:
-        runtime_instructions = runtime_instructions + extra_instructions
-
+    runtime_instructions = profile.system_prompt + (extra_instructions or "")
+    all_tools = [
+        *_resolve_enabled_tools(profile.tool_names, function_tools),
+        *mcp_servers,
+    ]
     primary_client, summarizer_client = _build_openai_clients()
-
-    resolved_temperature = temperature if temperature is not None else _get_default_temperature()
+    resolved_temperature = profile.temperature if profile.temperature is not None else _get_default_temperature()
 
     sub_agent_tools, sub_agent_tool_names = _build_sub_agent_tools(
-        sub_agent_refs, primary_client, sub_agent_resources, user_id,
+        profile.agents_as_tools, primary_client, sub_agent_resources, user_id,
         reserved_tool_names=[
             getattr(tool, "name", None) or getattr(tool, "__name__", "")
             for tool in all_tools
@@ -475,24 +437,24 @@ def create_chat_runtime(
     all_tools.extend(sub_agent_tools)
 
     agent = primary_client.as_agent(
-        name=_sanitize_agent_name(agent_name),
+        name=_sanitize_agent_name(profile.name),
         instructions=runtime_instructions,
-        description=description,
+        description=profile.description,
         tools=all_tools,
         default_options={"temperature": resolved_temperature},
         context_providers=_build_context_providers(
             token_budget=token_budget,
             summarizer_client=summarizer_client,
-            enable_search_context=enable_search_context,
-            skill_names=skill_names,
+            enable_search_context=profile.search_context,
+            skill_names=profile.skills or None,
             user_id=user_id,
         ),
     )
 
     logger.info(
         "Created chat runtime profile=%s logical_profile=%s temperature=%s tools=%s context_providers=%s summarizer=%s",
-        custom_name or chat_profile,
-        logical_profile,
+        profile.name,
+        profile.logical_profile,
         resolved_temperature,
         [getattr(t, "name", None) or getattr(t, "__name__", str(t)) for t in all_tools],
         [type(p).__name__ for p in agent.context_providers],
@@ -503,6 +465,6 @@ def create_chat_runtime(
         agent=agent,
         session=agent.create_session(),
         tools=all_tools,
-        prompt_logical_profile=logical_profile,
+        prompt_logical_profile=profile.logical_profile,
         sub_agent_tool_names=sub_agent_tool_names,
     )

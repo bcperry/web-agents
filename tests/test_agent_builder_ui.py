@@ -195,6 +195,8 @@ def test_agent_builder_renders_and_preserves_independent_creation_tools(viewport
             assert stored_override["baseProfileName"] == "Built In"
             assert stored_override["systemPrompt"] == override_write["systemPrompt"]
             assert stored_override["tools"] == override_write["tools"]
+            assert "temperature" not in override_write
+            assert stored_override["temperature"] == 0.2
 
             fail_writes = True
             page.get_by_placeholder("e.g. Data Analyst").fill("Unsaved draft")
@@ -208,6 +210,7 @@ def test_agent_builder_renders_and_preserves_independent_creation_tools(viewport
 
             page.get_by_title("Customize built-in agent").click()
             playwright.expect(page.get_by_placeholder("You are a specialized agent that...")).to_have_value("Built-in prompt")
+            playwright.expect(page.get_by_role("spinbutton")).to_have_value("0.2")
             page.get_by_placeholder("You are a specialized agent that...").fill("Retain failed override.")
             page.get_by_role("button", name="SAVE CUSTOMIZATION").click()
             playwright.expect(page.get_by_placeholder("You are a specialized agent that...")).to_have_value("Retain failed override.")

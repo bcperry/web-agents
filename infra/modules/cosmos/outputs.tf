@@ -8,6 +8,11 @@ output "account_name" {
   value       = azurerm_cosmosdb_account.cosmos.name
 }
 
+output "account_id" {
+  description = "Cosmos DB account resource ID."
+  value       = azurerm_cosmosdb_account.cosmos.id
+}
+
 output "database_name" {
   description = "Cosmos DB SQL database name."
   value       = azurerm_cosmosdb_sql_database.db.name

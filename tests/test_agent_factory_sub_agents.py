@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import pytest
@@ -111,13 +111,23 @@ def _builtin_profile_loader(profiles: dict[str, AgentProfile]):
     return loader
 
 
+def _create_parent_runtime(*, custom_name, custom_instructions, agents_as_tools=(), function_tools=(), **kwargs):
+    profile = AgentProfile(
+        name=custom_name, logical_profile="custom", system_prompt=custom_instructions,
+        description=f"Custom agent: {custom_name}",
+        tool_names=[getattr(tool, "name", None) or tool.__name__ for tool in function_tools],
+        agents_as_tools=list(agents_as_tools),
+    )
+    return agent_factory.create_chat_runtime(profile=profile, function_tools=function_tools, **kwargs)
+
+
 # ---------------------------------------------------------------------------
 # T011 — wrap-via-as_tool tests
 # ---------------------------------------------------------------------------
 
 
 def test_no_sub_agent_refs_produces_no_extra_tools(fake_clients: _FakeClient) -> None:
-    runtime = agent_factory.create_chat_runtime(
+    runtime = _create_parent_runtime(
         custom_name="Parent",
         custom_instructions="You are the parent.",
     )
@@ -125,7 +135,31 @@ def test_no_sub_agent_refs_produces_no_extra_tools(fake_clients: _FakeClient) ->
     assert runtime.tools == []
 
 
-@pytest.mark.parametrize("override", [False, True])
+@pytest.mark.parametrize("temperature, expected", [(None, 0.9), (0, 0), (0.7, 0.7)])
+def test_resolved_profile_is_the_only_runtime_configuration(fake_clients, monkeypatch, temperature, expected):
+    from unittest.mock import Mock
+
+    reload_profile = Mock(side_effect=AssertionError("Resolved parent profiles must not be reloaded"))
+    context_providers = Mock(return_value=[])
+    monkeypatch.setattr(agent_factory, "load_agent_profile", reload_profile)
+    monkeypatch.setattr(agent_factory, "_build_context_providers", context_providers)
+    monkeypatch.setenv("LLM_TEMPERATURE", "0.9")
+    profile = AgentProfile(
+        name="Resolved", logical_profile="resolved", system_prompt="Use this snapshot.",
+        description="Resolved description", tool_names=[], temperature=temperature,
+        skills=["selected"], search_context=False,
+    )
+    runtime = agent_factory.create_chat_runtime(profile=profile, extra_instructions=" Extra context.", user_id="owner")
+    reload_profile.assert_not_called()
+    assert runtime.prompt_logical_profile == "resolved"
+    assert fake_clients.as_agent_calls[0]["instructions"] == "Use this snapshot. Extra context."
+    assert fake_clients.as_agent_calls[0]["default_options"] == {"temperature": expected}
+    assert context_providers.call_args.kwargs["skill_names"] == ["selected"]
+    assert context_providers.call_args.kwargs["enable_search_context"] is False
+    assert context_providers.call_args.kwargs["user_id"] == "owner"
+
+
+@pytest.mark.parametrize("override", [None, [], ["override"]])
 def test_profile_delegate_defaults_and_overrides_are_not_mutated(fake_clients, monkeypatch, override):
     default_ref = SubAgentToolRef(agent_ref=CustomAgentRef(
         custom_agent_id="default", definition={"name": "Default", "systemPrompt": "Help."},
@@ -135,21 +169,20 @@ def test_profile_delegate_defaults_and_overrides_are_not_mutated(fake_clients, m
     ))
     profile = AgentProfile(name="Parent", logical_profile="parent", system_prompt="Coordinate.",
                            description="Parent", tool_names=[], agents_as_tools=[default_ref])
-    monkeypatch.setattr(agent_factory, "load_agent_profile", _builtin_profile_loader({"parent": profile}))
-    supplied = (override_ref,) if override else ()
+    supplied = [override_ref] if override else []
+    resolved = replace(profile, agents_as_tools=supplied) if override is not None else profile
+    runtime = agent_factory.create_chat_runtime(profile=resolved)
 
-    runtime = agent_factory.create_chat_runtime(chat_profile="parent", agents_as_tools=supplied)
-
-    assert runtime.sub_agent_tool_names == (["override"] if override else ["default"])
+    assert runtime.sub_agent_tool_names == (["default"] if override is None else override)
     assert profile.agents_as_tools == [default_ref]
-    assert supplied == ((override_ref,) if override else ())
+    assert supplied == ([override_ref] if override else [])
 
 
 def test_delegate_does_not_shadow_parent_function(fake_clients: _FakeClient) -> None:
     def get_user_profile():
         return {}
 
-    runtime = agent_factory.create_chat_runtime(
+    runtime = _create_parent_runtime(
         custom_name="Parent", custom_instructions="Coordinate.",
         function_tools=[get_user_profile],
         agents_as_tools=[SubAgentToolRef(agent_ref=CustomAgentRef(
@@ -175,7 +208,7 @@ def test_builtin_sub_agent_ref_is_wrapped_via_as_tool(
     )
     monkeypatch.setattr(agent_factory, "load_agent_profile", _builtin_profile_loader({"azgov": target}))
 
-    runtime = agent_factory.create_chat_runtime(
+    runtime = _create_parent_runtime(
         custom_name="Parent",
         custom_instructions="You coordinate.",
         agents_as_tools=[SubAgentToolRef(agent_ref=BuiltinAgentRef(profile_id="azgov"))],
@@ -205,7 +238,7 @@ def test_custom_sub_agent_ref_uses_inlined_definition(fake_clients: _FakeClient,
         "systemPrompt": "You are Blaine.",
         "temperature": temperature,
     }
-    runtime = agent_factory.create_chat_runtime(
+    runtime = _create_parent_runtime(
         custom_name="Parent",
         custom_instructions="You coordinate.",
         agents_as_tools=[
@@ -230,7 +263,7 @@ def test_custom_sub_agent_receives_owner_bound_selected_skills(
         return sentinel_provider
 
     monkeypatch.setattr(agent_factory, "_build_skills_provider", fake_skills_provider)
-    runtime = agent_factory.create_chat_runtime(
+    runtime = _create_parent_runtime(
         custom_name="Parent",
         custom_instructions="Coordinate.",
         user_id="user-a",
@@ -269,7 +302,7 @@ def test_builtin_delegate_receives_only_resolved_resources(fake_clients, monkeyp
         function_tools=[function_tool], mcp_tools=[mcp_tool],
         skill_names=["selected"], enable_search_context=True,
     )} if with_resources else None
-    agent_factory.create_chat_runtime(
+    _create_parent_runtime(
         custom_name="Parent", custom_instructions="Coordinate.", user_id="owner",
         agents_as_tools=[SubAgentToolRef(agent_ref=BuiltinAgentRef(profile_id="child"))],
         sub_agent_resources=resources,
@@ -304,7 +337,7 @@ def test_disambiguates_colliding_derived_tool_names(
         agent_factory, "load_agent_profile", _builtin_profile_loader({"a": target_a, "b": target_b})
     )
 
-    runtime = agent_factory.create_chat_runtime(
+    runtime = _create_parent_runtime(
         custom_name="Parent",
         custom_instructions="prompt",
         agents_as_tools=[
@@ -324,7 +357,7 @@ def test_orphaned_builtin_ref_is_skipped_not_fatal(
     """A reference to a missing profile must NOT crash the parent (FR-008)."""
     monkeypatch.setattr(agent_factory, "load_agent_profile", _builtin_profile_loader({}))
 
-    runtime = agent_factory.create_chat_runtime(
+    runtime = _create_parent_runtime(
         custom_name="Parent",
         custom_instructions="prompt",
         agents_as_tools=[SubAgentToolRef(agent_ref=BuiltinAgentRef(profile_id="ghost"))],
@@ -336,7 +369,7 @@ def test_orphaned_builtin_ref_is_skipped_not_fatal(
 
 def test_orphaned_custom_ref_with_empty_prompt_is_skipped(fake_clients: _FakeClient) -> None:
     bad_def = {"id": "x", "name": "X", "description": "no prompt"}
-    runtime = agent_factory.create_chat_runtime(
+    runtime = _create_parent_runtime(
         custom_name="Parent",
         custom_instructions="prompt",
         agents_as_tools=[
@@ -362,7 +395,7 @@ def test_as_tool_failure_does_not_crash_parent(
     monkeypatch.setattr(agent_factory, "load_agent_profile", _builtin_profile_loader({"flaky": target}))
     _FakeAgent.raise_on_as_tool = True
 
-    runtime = agent_factory.create_chat_runtime(
+    runtime = _create_parent_runtime(
         custom_name="Parent",
         custom_instructions="prompt",
         agents_as_tools=[SubAgentToolRef(agent_ref=BuiltinAgentRef(profile_id="flaky"))],

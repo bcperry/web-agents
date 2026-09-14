@@ -1,5 +1,6 @@
 """Application dependency wiring shared by API routes and background work."""
 
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -7,6 +8,8 @@ from typing import Any, Callable
 
 from dotenv import load_dotenv
 
+from database import ConfigurationError
+from database_tools import DatabaseAccess, sap_emulator_access
 from session_data import SessionData, _sessions
 from session_orchestration import SessionContext
 from tools import (
@@ -20,6 +23,7 @@ from tools import (
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
 DEFAULT_MAX_USER_INPUT_CHARS = int(os.getenv("MAX_USER_INPUT_CHARS", "8000"))
 
 
@@ -73,12 +77,11 @@ def build_tool_instances(
     user_id: str | None = None,
 ) -> list[Any]:
     """Instantiate the selected backend tools for a session or inventory call."""
-    registry = function_tool_registry()
     return [
         registration.factory(user_id or "", session_id)
         if registration.session_scoped
         else registration.factory(user_id or "")
-        for name, registration in registry.items()
+        for name, registration in function_tool_registry().items()
         if name in tool_names
     ]
 
@@ -102,9 +105,20 @@ def get_skills_dir() -> Path:
     return Path(__file__).resolve().parent / "skills"
 
 
+def configured_database_access() -> DatabaseAccess | None:
+    """Never let an incomplete database configuration stop the app from starting."""
+    try:
+        return sap_emulator_access(os.environ)
+    except ConfigurationError as error:
+        logger.error("Database tools are disabled: %s", error.message)
+        return None
+
+
 session_context = SessionContext(
     sessions=_sessions,
     session_data_cls=SessionData,
     build_tool_instances=build_tool_instances,
     build_user_profile_context=build_user_profile_context,
+    database_access=configured_database_access(),
 )
+

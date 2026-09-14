@@ -18,10 +18,10 @@ export function useBuiltInAgentCustomizations() {
   }, []);
 
   const save = useCallback(async (override: AgentCustomizationOverride) => {
-    await saveAgentCustomizationApi(override);
+    const saved = await saveAgentCustomizationApi(override);
     setOverrides((prev) => {
-      const idx = prev.findIndex((item) => item.baseProfileId === override.baseProfileId);
-      return idx >= 0 ? prev.map((item, i) => (i === idx ? override : item)) : [...prev, override];
+      const idx = prev.findIndex((item) => item.baseProfileId === saved.baseProfileId);
+      return idx >= 0 ? prev.map((item, i) => (i === idx ? saved : item)) : [...prev, saved];
     });
   }, []);
 

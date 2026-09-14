@@ -81,6 +81,17 @@ test('conversation loading follows opaque cursors until exhausted', async contex
   assert.deepEqual(cursors, [null, 'opaque+/=']);
 });
 
+test('override saves return the canonical server definition', async context => {
+  const draft = { baseProfileId: 'search', systemPrompt: '  Help  ', updatedAt: 'draft' };
+  const saved = { ...draft, systemPrompt: 'Help', temperature: 0.2, updatedAt: 'server' };
+  context.mock.method(globalThis, 'fetch', async (url, init) => {
+    assert.equal(url, '/api/agent-customizations/search');
+    assert.deepEqual(JSON.parse(init.body), draft);
+    return Response.json(saved);
+  });
+  assert.deepEqual(await client.saveAgentCustomization(draft), saved);
+});
+
 test('validation details remain visible to callers', async context => {
   context.mock.method(globalThis, 'fetch', async () => Response.json({
     detail: [{ field: 'tools[0]', reason: 'Tool is not available.' }],

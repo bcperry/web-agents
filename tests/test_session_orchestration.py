@@ -8,7 +8,7 @@ from fastapi import HTTPException
 
 import session_orchestration
 from mcp_servers import sanitize_mcp_result_error
-from prompt_config import BuiltinAgentRef, CustomAgentRef
+from prompt_config import AgentProfile, BuiltinAgentRef, CustomAgentRef
 from session_orchestration import (
     _build_validated_sub_agent_refs,
     _create_conversation_index,
@@ -32,6 +32,76 @@ def test_sanitize_mcp_result_error_removes_credentials_and_tokens():
     assert "password=" not in sanitized
     assert "connectionString=" not in sanitized
     assert "https://example.test/mcp" in sanitized
+
+
+def test_overlapping_session_replacements_dispose_displaced_runtime(monkeypatch):
+    from types import SimpleNamespace
+    import session_data
+
+    async def scenario():
+        closing = asyncio.Event()
+        release = asyncio.Event()
+        closed = []
+
+        async def cleanup(tools):
+            if tools == ["old"]:
+                closing.set()
+                await release.wait()
+            closed.extend(tools)
+
+        monkeypatch.setattr(session_data, "cleanup_mcp_servers", cleanup)
+        old, first, second = [
+            SimpleNamespace(session_id="same", mcp_tools=[name])
+            for name in ("old", "first", "second")
+        ]
+        sessions = {"same": old}
+        replacing = asyncio.create_task(session_data.replace_session(first, sessions=sessions))
+        await closing.wait()
+        await session_data.replace_session(second, sessions=sessions)
+        release.set()
+        await replacing
+        assert sessions["same"] is second
+        assert sorted(closed) == ["first", "old"]
+        await session_data.close_session("same", sessions=sessions, expected=first)
+        assert sessions["same"] is second
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("replace_again", [False, True])
+def test_cancelled_replacement_cleans_only_owned_resources(monkeypatch, replace_again):
+    from types import SimpleNamespace
+    import session_data
+
+    async def scenario():
+        closing = asyncio.Event()
+        release = asyncio.Event()
+        closed = []
+
+        async def cleanup(tools):
+            if tools == ["old"]:
+                closing.set()
+                await release.wait()
+            closed.extend(tools)
+
+        monkeypatch.setattr(session_data, "cleanup_mcp_servers", cleanup)
+        old, first, second = [
+            SimpleNamespace(session_id="same", mcp_tools=[name])
+            for name in ("old", "first", "second")
+        ]
+        sessions = {"same": old}
+        replacing = asyncio.create_task(session_data.replace_session(first, sessions=sessions))
+        await closing.wait()
+        replacing.cancel()
+        if replace_again:
+            await session_data.replace_session(second, sessions=sessions)
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await replacing
+        assert sessions == ({"same": second} if replace_again else {})
+        assert sorted(closed) == ["first", "old"]
+
+    asyncio.run(scenario())
 
 
 def test_mcp_environment_expansion_requires_trusted_configuration(monkeypatch):
@@ -102,7 +172,10 @@ def test_session_setup_rolls_back_connected_resources(monkeypatch, failure_stage
     from session_data import SessionData
 
     close = AsyncMock()
-    dependencies = session_orchestration.RuntimeDependencies([], [], [object()], [], "", {})
+    dependencies = session_orchestration.RuntimeDependencies(
+        function_tools=[], tool_names=[], mcp_tools=[], session_mcp_tools=[object()],
+        mcp_results=[], profile_context="", sub_agent_resources={},
+    )
     runtime = SimpleNamespace(agent=object(), tools=[], prompt_logical_profile="custom", sub_agent_tool_names=[])
     monkeypatch.setattr(session_orchestration, "_resolve_runtime_dependencies", AsyncMock(return_value=dependencies))
     monkeypatch.setattr(session_orchestration, "cleanup_mcp_servers", close)
@@ -114,8 +187,11 @@ def test_session_setup_rolls_back_connected_resources(monkeypatch, failure_stage
     with pytest.raises(HTTPException) as error:
         asyncio.run(session_orchestration._start_session(
             ctx, body={}, user=_SimpleUser(), logger=logging.getLogger("test"),
-            profile_id="custom", profile_name="Test", tool_names=[], skills=[], search_context=False,
-            mcp_source={}, sub_agent_refs=[], user_bearer_token=None, runtime_options={}, index_options={},
+            definition=session_orchestration.SessionDefinition(
+                profile_id="custom", mcp_configs=[],
+                profile=AgentProfile(name="Test", logical_profile="custom", system_prompt="Help",
+                                     description="Test", tool_names=[]),
+            ), user_bearer_token=None,
         ))
     assert error.value.status_code == (500 if failure_stage == "runtime" else 503)
     assert ctx.sessions == {}

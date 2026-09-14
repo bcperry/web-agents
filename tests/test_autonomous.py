@@ -104,10 +104,10 @@ def test_overlapping_manual_and_timer_runs_are_rejected_and_lease_released(monke
     async def scenario():
         started = asyncio.Event()
         release = asyncio.Event()
-        async def execute(*args, **kwargs):
+        async def execute(ctx, directive, record, **kwargs):
             started.set()
             await release.wait()
-            return "finished"
+            record.status = "success"
         monkeypatch.setattr(autonomous, "_execute_autonomous_cycle", execute)
         directive = Directive(id="overlap", profile_id="hybrid", instruction="go")
         config = AutonomousConfig(True, "sys", [directive])
@@ -117,8 +117,78 @@ def test_overlapping_manual_and_timer_runs_are_rejected_and_lease_released(monke
             await run_autonomous_cycle(None, directive, config=config, trigger="timer")
         assert error.value.status_code == 409
         release.set()
-        assert await first == "finished"
-        assert await run_autonomous_cycle(None, directive, config=config) == "finished"
+        assert (await first).status == "success"
+        assert (await run_autonomous_cycle(None, directive, config=config)).status == "success"
+    asyncio.run(scenario())
+
+
+def test_execution_deadline_does_not_cover_audit_commit(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    async def scenario():
+        real_timeout = asyncio.timeout
+        scope = None
+        records = []
+        deadline_finished_at_commit = []
+        lease = SimpleNamespace(try_start=AsyncMock(return_value=True), finish=AsyncMock())
+
+        def capture_timeout(seconds):
+            nonlocal scope
+            scope = real_timeout(seconds)
+            return scope
+
+        async def commit(record):
+            records.append(record)
+            try:
+                scope.reschedule(None)
+            except RuntimeError:
+                deadline_finished_at_commit.append(True)
+            else:
+                deadline_finished_at_commit.append(False)
+
+        monkeypatch.setattr(asyncio, "timeout", capture_timeout)
+        monkeypatch.setattr(autonomous, "get_autonomous_lease_repository", lambda: lease)
+        monkeypatch.setattr(autonomous, "get_autonomous_run_repository", lambda: SimpleNamespace(create_run=commit))
+        monkeypatch.setattr(autonomous, "create_chat_session", _fake_session_builder)
+        monkeypatch.setattr(autonomous, "collect_agent_response", AsyncMock(return_value={"text": "done"}))
+        directive = Directive(id="audit", profile_id="search", instruction="Go")
+        config = AutonomousConfig(True, "sys", [directive])
+        record = await run_autonomous_cycle(SimpleNamespace(sessions={}), directive, config=config)
+        assert records == [record]
+        assert deadline_finished_at_commit == [True]
+        assert record.status == "success"
+        assert lease.try_start.await_args.args == (directive.id, record.id)
+        lease.finish.assert_awaited_once_with(directive.id, record.id)
+
+    asyncio.run(scenario())
+
+
+def test_execution_timeout_finalizes_the_same_record_once(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    async def scenario():
+        real_timeout = asyncio.timeout
+        lease = SimpleNamespace(try_start=AsyncMock(return_value=True), finish=AsyncMock())
+        repository = SimpleNamespace(create_run=AsyncMock())
+
+        async def blocked(*args):
+            await asyncio.Future()
+
+        monkeypatch.setattr(asyncio, "timeout", lambda _: real_timeout(0))
+        monkeypatch.setattr(autonomous, "get_autonomous_lease_repository", lambda: lease)
+        monkeypatch.setattr(autonomous, "get_autonomous_run_repository", lambda: repository)
+        monkeypatch.setattr(autonomous, "create_chat_session", _fake_session_builder)
+        monkeypatch.setattr(autonomous, "collect_agent_response", blocked)
+        directive = Directive(id="timeout", profile_id="search", instruction="Go")
+        ctx = SimpleNamespace(sessions={})
+        record = await run_autonomous_cycle(ctx, directive, config=AutonomousConfig(True, "sys", [directive]))
+        assert record.status == "failure"
+        assert "execution time limit" in record.error
+        repository.create_run.assert_awaited_once_with(record)
+        assert lease.try_start.await_args.args == (directive.id, record.id)
+        lease.finish.assert_awaited_once_with(directive.id, record.id)
+        assert ctx.sessions == {}
+
     asyncio.run(scenario())
 
 

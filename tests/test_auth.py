@@ -11,7 +11,13 @@ os.environ.setdefault("AUTH_DISABLED", "true")
 os.environ.setdefault("AZURE_SQL_CONNECTIONSTRING", "")
 
 import auth
-from auth import AuthenticatedUser, get_current_user, clear_jwks_cache, _auth_disabled
+from auth import (
+    AuthenticatedUser,
+    _auth_disabled,
+    _authenticated_user_from_payload,
+    clear_jwks_cache,
+    get_current_user,
+)
 
 
 def test_auth_disabled_returns_dev_user():
@@ -38,6 +44,28 @@ def test_authenticated_user_dataclass():
     user = AuthenticatedUser(user_id="test-id", username="testuser")
     assert user.user_id == "test-id"
     assert user.username == "testuser"
+
+
+def test_authenticated_user_carries_validated_tenant_and_group_claims():
+    user = _authenticated_user_from_payload(
+        {
+            "oid": "user-1",
+            "preferred_username": "user@example.test",
+            "tid": "tenant-1",
+            "groups": ["group-1", "group-2"],
+        }
+    )
+
+    assert user.tenant_id == "tenant-1"
+    assert user.group_ids == ("group-1", "group-2")
+
+
+def test_authenticated_user_ignores_a_non_list_groups_claim():
+    user = _authenticated_user_from_payload(
+        {"oid": "user-1", "tid": "tenant-1", "_claim_names": {"groups": "src1"}}
+    )
+
+    assert user.group_ids == ()
 
 
 def test_clear_jwks_cache():

@@ -216,10 +216,99 @@ def test_standard_profile_session_preserves_runtime_request_and_response(client,
 
     runtime_kwargs = calls["runtime"]
     assert calls["user_token"] == "test-token"
-    assert runtime_kwargs["chat_profile"] == "Search Agent"
+    assert runtime_kwargs["profile"].name == "Search Agent"
+    assert runtime_kwargs["profile"].logical_profile == "search"
     assert "Known User Profile" in runtime_kwargs["extra_instructions"]
     assert runtime_kwargs["mcp_servers"] == []
     assert data["session_id"] in _sessions
+
+
+def test_sap_sessions_report_authorized_database_tools(client, monkeypatch):
+    import session_orchestration
+
+    requested_profile_id = ""
+
+    class DummySession:
+        def to_dict(self):
+            return {"items": []}
+
+    async def database_schema():
+        return {}
+
+    async def database_query():
+        return {}
+
+    async def fake_database_tools(ctx, *, user, agent_id, tool_names, logger):
+        assert agent_id == requested_profile_id
+        assert {"database_schema", "database_query"} <= tool_names
+        return {"database_schema": database_schema, "database_query": database_query}
+
+    def fake_create_chat_runtime(**kwargs):
+        return SimpleNamespace(
+            agent=object(),
+            session=DummySession(),
+            tools=kwargs.get("function_tools", []),
+            sub_agent_tool_names=[],
+            prompt_manifest={},
+            prompt_logical_profile=requested_profile_id,
+        )
+
+    async def fake_connect_mcp_servers(configs, *, user_token=None):
+        return [], []
+
+    monkeypatch.setattr(session_orchestration, "_database_tools", fake_database_tools)
+    monkeypatch.setattr(session_orchestration, "create_chat_runtime", fake_create_chat_runtime)
+    monkeypatch.setattr(session_orchestration, "connect_mcp_servers", fake_connect_mcp_servers)
+
+    for profile_id in ("sap_force_equipment", "sap_financial_execution"):
+        requested_profile_id = profile_id
+        response = client.post("/api/sessions", json={"profile_id": profile_id})
+
+        assert response.status_code == 201
+        assert response.json()["tools_loaded"] == [
+            "get_user_profile",
+            "save_user_profile",
+            "render_agent_view",
+            "database_schema",
+            "database_query",
+        ]
+
+
+def test_sap_session_omits_database_tools_when_unentitled(client, monkeypatch):
+    import session_orchestration
+
+    class DummySession:
+        def to_dict(self):
+            return {"items": []}
+
+    async def fake_database_tools(ctx, *, user, agent_id, tool_names, logger):
+        return {}
+
+    def fake_create_chat_runtime(**kwargs):
+        return SimpleNamespace(
+            agent=object(),
+            session=DummySession(),
+            tools=kwargs.get("function_tools", []),
+            sub_agent_tool_names=[],
+            prompt_manifest={},
+            prompt_logical_profile="sap_force_equipment",
+        )
+
+    async def fake_connect_mcp_servers(configs, *, user_token=None):
+        return [], []
+
+    monkeypatch.setattr(session_orchestration, "_database_tools", fake_database_tools)
+    monkeypatch.setattr(session_orchestration, "create_chat_runtime", fake_create_chat_runtime)
+    monkeypatch.setattr(session_orchestration, "connect_mcp_servers", fake_connect_mcp_servers)
+
+    response = client.post("/api/sessions", json={"profile_id": "sap_force_equipment"})
+
+    assert response.status_code == 201
+    assert response.json()["tools_loaded"] == [
+        "get_user_profile",
+        "save_user_profile",
+        "render_agent_view",
+    ]
 
 
 def test_custom_session_preserves_runtime_request_and_response(client, monkeypatch):
@@ -277,11 +366,11 @@ def test_custom_session_preserves_runtime_request_and_response(client, monkeypat
     assert data["mcp_results"] == []
 
     runtime_kwargs = calls["runtime"]
-    assert runtime_kwargs["custom_name"] == "Planner"
-    assert runtime_kwargs["custom_instructions"] == "Plan carefully."
-    assert runtime_kwargs["temperature"] == 0.7
-    assert runtime_kwargs["enable_search_context"] is True
-    assert runtime_kwargs["custom_skills"] is None
+    assert runtime_kwargs["profile"].name == "Planner"
+    assert runtime_kwargs["profile"].system_prompt == "Plan carefully."
+    assert runtime_kwargs["profile"].temperature == 0.7
+    assert runtime_kwargs["profile"].search_context is True
+    assert runtime_kwargs["profile"].skills == []
     assert "Known User Profile" in runtime_kwargs["extra_instructions"]
 
 
@@ -293,8 +382,8 @@ def test_builtin_profile_override_session_preserves_canonical_name(client, monke
             return {"items": []}
 
     def fake_create_chat_runtime(**kwargs):
-        assert kwargs["custom_name"] == faa_profile_name()
-        assert kwargs["custom_instructions"] == "Override prompt"
+        assert kwargs["profile"].name == faa_profile_name()
+        assert kwargs["profile"].system_prompt == "Override prompt"
         return SimpleNamespace(
             agent=object(),
             session=DummySession(),
@@ -397,7 +486,7 @@ def test_custom_session_drops_unknown_skills(client, monkeypatch, caplog):
 
     assert resp.status_code == 201
     assert resp.json()["skills_loaded"] == []
-    assert calls["runtime"]["custom_skills"] is None
+    assert calls["runtime"]["profile"].skills == []
     assert any("__deleted_skill__" in record.message for record in caplog.records)
 
 
@@ -448,7 +537,7 @@ def test_builtin_profile_override_drops_unknown_skills(client, monkeypatch, capl
         )
 
     assert resp.status_code == 201
-    assert calls["runtime"]["custom_skills"] is None
+    assert calls["runtime"]["profile"].skills == []
     assert any("__deleted_skill__" in record.message for record in caplog.records)
 
 
@@ -590,22 +679,23 @@ def test_custom_session_creation_tool_grants_are_exact(client, monkeypatch):
         assert loaded == set(selected)
 
 
-def test_custom_session_rejects_sql_when_database_is_unconfigured(client, monkeypatch):
-    monkeypatch.setenv("AZURE_SQL_CONNECTIONSTRING", "")
+def test_custom_agents_cannot_select_database_capabilities(client):
+    from database import DATABASE_TOOL_NAMES
+    from prompt_config import load_agents_yaml
 
-    resp = client.post(
-        "/api/sessions",
-        json={
-            "profile_id": "custom",
-            "custom_name": "SQL Custom",
-            "custom_prompt": "Use sql_read_query when needed.",
-            "custom_tools": ["sql_read_query"],
-            "custom_search_context": False,
-        },
-    )
+    profiles = load_agents_yaml()["profiles"]
+    declared = {
+        name for entry in profiles.values() for name in (entry.get("tools") or [])
+    }
 
-    assert resp.status_code == 400
-    assert resp.json()["detail"] == "Unknown tools: sql_read_query"
+    assert DATABASE_TOOL_NAMES & declared, "a built-in profile should declare database tools"
+    for tool_name in DATABASE_TOOL_NAMES:
+        response = client.post("/api/sessions", json={
+            "profile_id": "custom", "custom_name": "Unauthorized database agent",
+            "custom_prompt": "Answer questions.", "custom_tools": [tool_name],
+        })
+        assert response.status_code == 400
+        assert "Unknown tools" in response.json()["detail"]
 
 
 # ---------------------------------------------------------------------------
@@ -676,7 +766,7 @@ def test_custom_session_with_valid_custom_sub_agent_succeeds(client, monkeypatch
     resp = client.post("/api/sessions", json=payload)
     assert resp.status_code == 201, resp.json()
     runtime_kwargs = captured["runtime"]
-    refs = runtime_kwargs["agents_as_tools"]
+    refs = runtime_kwargs["profile"].agents_as_tools
     assert len(refs) == 1
     assert refs[0].agent_ref.kind == "custom"
     assert refs[0].agent_ref.custom_agent_id == "child-1"
