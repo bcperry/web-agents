@@ -22,8 +22,10 @@ infra/
 
 - **Resource Group**: Container for all resources
 - **Managed Identity**: System-assigned identity on the App Service
-- **Azure OpenAI access**: Grants the app identity the
-  `Cognitive Services OpenAI User` role on an existing account
+- **Microsoft Foundry**: Terraform-managed `AIServices` account, `web-agents`
+  project, and `gpt-5.6-luna` deployment
+  (version `2026-07-09`, DataZoneStandard capacity 10), with key authentication
+  disabled and the app identity granted `Cognitive Services OpenAI User`
 - **App Service Plan**: Linux-based hosting plan
 - **App Service**: Web app for running the Chainlit application
 - **Cosmos DB**: Durable chat/configuration database, including global `skills`
@@ -82,14 +84,36 @@ terraform apply -var="environment_name=dev" -var="location=eastus" -var="subscri
 | `principal_id` | User/app principal ID | "" | No |
 | `app_service_plan_sku` | App Service Plan SKU | "B1" | No |
 | `python_version` | Python version | "3.12" | No |
-| `azure_openai_resource_id` | Full resource ID of the existing Azure OpenAI account | - | Yes |
+| `azure_openai_account_name` | OpenAI account name | Empty derives `aoai-<environment_name>-luna` | No |
 
 *Required for azd deployments, handled automatically
 
-Set `AZURE_OPENAI_RESOURCE_ID` before provisioning. The deploying principal must
-be able to create role assignments at that scope. Terraform does not change the
-Azure OpenAI account's local-auth setting. The application receives no Azure
-OpenAI API key and authenticates with its system-assigned managed identity.
+Set `AZURE_OPENAI_ACCOUNT_NAME` to override the derived account name. The
+`azd-web-agents` environment uses `aoai-web-agents-luna-20260914`; that account
+and its Luna deployment have been imported into this environment's Terraform
+state. Preserve this state when provisioning again. In another state, import
+existing resources before applying or choose a new globally unique account name.
+
+The Foundry account `foundry-<environment_name>-luna`, project, and deployment
+are defined in `openai.tf`. The earlier OpenAI-only account and its deployment
+remain managed and protected; Azure rejected an in-place kind conversion. They
+are not the application's configured target. Remove them only through an
+explicitly reviewed cleanup plan.
+
+The selected region must
+support the model and have sufficient DataZoneStandard quota. The deploying
+principal must be able to create the account, deployments, and role assignments.
+The application authenticates with its system-assigned managed identity.
+`AZURE_OPENAI_RESOURCE_ID`, `AZURE_OPENAI_ENDPOINT`, and `AZURE_OPENAI_MODEL`
+are now resource-derived outputs, not Terraform inputs. The account has
+`prevent_destroy` enabled to guard against accidental replacement.
+
+The backend continues using the Foundry account's OpenAI-compatible endpoint
+and `AZURE_OPENAI_*` settings. The project endpoint is exposed separately as
+`AZURE_AI_PROJECT_ENDPOINTS`; it is not a replacement for the chat client's
+inference endpoint. Creating the Foundry resources with a targeted apply does
+not update App Service or its role assignments; those require the normal
+reviewed provisioning plan.
 
 ## Outputs
 

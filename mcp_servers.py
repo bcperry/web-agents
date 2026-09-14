@@ -7,8 +7,7 @@ from functools import lru_cache
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from azure.core.credentials import AzureKeyCredential
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureAuthorityHosts, DefaultAzureCredential
 from agent_framework import MCPStdioTool
 from agent_framework import MCPStreamableHTTPTool
 from agent_framework.azure import AzureAISearchContextProvider
@@ -330,7 +329,6 @@ async def cleanup_mcp_servers(tools: list[Any]) -> None:
 class SearchServiceConfig:
     endpoint: str | None
     index_name: str | None
-    api_key: str | None
     top_k: int
     semantic_configuration_name: str | None
 
@@ -356,18 +354,29 @@ def get_search_service_config() -> SearchServiceConfig:
     return SearchServiceConfig(
         endpoint=_clean_env("SEARCH_SERVICE_ENDPOINT"),
         index_name=_clean_env("SEARCH_INDEX_NAME"),
-        api_key=_clean_env("SEARCH_API_KEY"),
         top_k=_env_positive_int("SEARCH_TOP_K", 5),
         semantic_configuration_name=_clean_env("SEARCH_SEMANTIC_CONFIGURATION_NAME"),
     )
 
 
+class SearchTokenCredential:
+    def __init__(self, endpoint: str):
+        government = (urlsplit(endpoint).hostname or "").endswith(".us")
+        self.scope = "https://search.azure.us/.default" if government else "https://search.azure.com/.default"
+        self.credential = DefaultAzureCredential(
+            authority=AzureAuthorityHosts.AZURE_GOVERNMENT if government else AzureAuthorityHosts.AZURE_PUBLIC_CLOUD
+        )
+
+    def get_token(self, *scopes, **kwargs):
+        return self.credential.get_token(self.scope, **kwargs)
+
+    def close(self):
+        self.credential.close()
+
+
 @lru_cache(maxsize=1)
-def get_search_credential() -> AzureKeyCredential | DefaultAzureCredential:
-    config = get_search_service_config()
-    if config.api_key:
-        return AzureKeyCredential(config.api_key)
-    return DefaultAzureCredential()
+def get_search_credential() -> SearchTokenCredential:
+    return SearchTokenCredential(get_search_service_config().endpoint or "")
 
 
 @lru_cache(maxsize=1)
@@ -381,10 +390,7 @@ def get_search_context_provider() -> AzureAISearchContextProvider:
         "top_k": config.top_k,
         "semantic_configuration_name": config.semantic_configuration_name,
     }
-    if config.api_key:
-        provider_kwargs["api_key"] = config.api_key
-    else:
-        provider_kwargs["credential"] = get_search_credential()
+    provider_kwargs["credential"] = get_search_credential()
 
     return AzureAISearchContextProvider(
         **provider_kwargs,

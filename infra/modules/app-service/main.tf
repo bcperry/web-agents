@@ -56,7 +56,6 @@ resource "azurerm_linux_web_app" "app_service" {
     # Azure AI Search settings
     SEARCH_SERVICE_ENDPOINT = var.search_service_endpoint
     SEARCH_INDEX_NAME       = var.search_index_name
-    SEARCH_API_KEY          = var.search_api_key
 
     # Azure Cosmos DB (durable agent memory + per-user chat history)
     AZURE_COSMOS_ENDPOINT                = var.azure_cosmos_endpoint

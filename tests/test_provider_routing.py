@@ -80,6 +80,8 @@ def test_create_chat_runtime_binds_profile_tools_and_creates_session(monkeypatch
             return {"session": "created"}
 
     class FakeClient:
+        model = "gpt-4o"
+
         def as_agent(self, **kwargs):
             calls["as_agent"] = kwargs
             return FakeAgent()

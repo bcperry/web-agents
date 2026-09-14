@@ -194,9 +194,17 @@ def build_chat_client(**kwargs: Any) -> OpenAIChatClient:
     OpenAI-compatible).
     """
     endpoint = kwargs.get("azure_endpoint") or (os.getenv("AZURE_OPENAI_ENDPOINT") or "").strip()
-    if endpoint and kwargs.get("credential") is None and not kwargs.get("api_key") and not (os.getenv("AZURE_OPENAI_API_KEY") or "").strip():
-        kwargs["credential"] = _azure_token_provider(endpoint)
+    if endpoint:
+        kwargs.pop("api_key", None)
+        if kwargs.get("credential") is None:
+            kwargs["credential"] = _azure_token_provider(endpoint)
     return OpenAIChatClient(**kwargs)
+
+
+def _temperature_options(client: OpenAIChatClient, temperature: float | None) -> dict[str, float]:
+    if client.model == "gpt-5.6" or client.model.startswith("gpt-5.6-") or temperature is None:
+        return {}
+    return {"temperature": temperature}
 
 
 def _build_context_providers(
@@ -255,7 +263,6 @@ def _build_openai_clients() -> tuple[OpenAIChatClient, OpenAIChatClient]:
             summarizer = build_chat_client(
                 azure_endpoint=secondary_endpoint,
                 model=(os.getenv("AZURE_OPENAI_SECONDARY_MODEL") or "").strip() or None,
-                api_key=(os.getenv("AZURE_OPENAI_SECONDARY_API_KEY") or "").strip() or None,
                 api_version=(
                     (os.getenv("AZURE_OPENAI_SECONDARY_API_VERSION") or "").strip()
                     or (os.getenv("AZURE_OPENAI_API_VERSION") or "").strip()
@@ -271,7 +278,7 @@ def _build_openai_clients() -> tuple[OpenAIChatClient, OpenAIChatClient]:
     logger.info(
         "LLM provider: %s (primary, auth=%s), %s (summarizer)",
         "Azure OpenAI" if azure_endpoint else "OpenAI-compatible",
-        "key" if (os.getenv("AZURE_OPENAI_API_KEY") or "").strip() else "managed-identity",
+        "Entra" if azure_endpoint else "provider-default",
         "dedicated Azure" if secondary_endpoint else "same as primary",
     )
     return primary, summarizer
@@ -384,7 +391,7 @@ def _build_sub_agent_tools(
                 name=_sanitize_agent_name(name or final_tool_name),
                 instructions=instructions,
                 description=description or f"Delegate to the {name or final_tool_name} agent.",
-                default_options={"temperature": sub_temp} if sub_temp is not None else None,
+                default_options=_temperature_options(primary_client, sub_temp),
                 tools=sub_tools_extra or None,
                 context_providers=providers or None,
             )
@@ -441,7 +448,7 @@ def create_chat_runtime(
         instructions=runtime_instructions,
         description=profile.description,
         tools=all_tools,
-        default_options={"temperature": resolved_temperature},
+        default_options=_temperature_options(primary_client, resolved_temperature),
         context_providers=_build_context_providers(
             token_budget=token_budget,
             summarizer_client=summarizer_client,

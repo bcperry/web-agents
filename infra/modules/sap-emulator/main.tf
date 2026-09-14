@@ -7,6 +7,7 @@ resource "azurerm_mssql_server" "this" {
   minimum_tls_version                  = "1.2"
   public_network_access_enabled        = var.public_network_access_enabled
   outbound_network_restriction_enabled = false
+  express_vulnerability_assessment_enabled = true
 
   azuread_administrator {
     login_username              = var.azuread_admin_login

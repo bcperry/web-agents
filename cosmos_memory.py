@@ -40,13 +40,12 @@ def cosmos_config_summary() -> dict[str, str]:
     """Non-secret Cosmos settings for startup logging (never the account key)."""
     endpoint = (os.getenv("AZURE_COSMOS_ENDPOINT") or "").strip()
     host = urlsplit(endpoint).hostname or ""
-    has_key = bool((os.getenv("AZURE_COSMOS_KEY") or "").strip())
     return {
         "endpoint": endpoint,
         "database": (os.getenv("AZURE_COSMOS_DATABASE_NAME") or "agent-memory").strip(),
         "messages_container": (os.getenv("AZURE_COSMOS_CONTAINER_NAME") or "chat-history").strip(),
         "conversations_container": (os.getenv("AZURE_COSMOS_CONVERSATIONS_CONTAINER") or "conversations").strip(),
-        "auth": "key" if has_key or host in ("localhost", "127.0.0.1") else "managed-identity",
+        "auth": "key" if host in ("localhost", "127.0.0.1") else "managed-identity",
     }
 
 
@@ -562,10 +561,11 @@ def _build_cosmos_client() -> Any:
     from azure.cosmos.aio import CosmosClient
 
     endpoint = (os.getenv("AZURE_COSMOS_ENDPOINT") or "").strip()
-    key = (os.getenv("AZURE_COSMOS_KEY") or "").strip() or None
     host = urlsplit(endpoint).hostname or ""
+    key = None
     kwargs: dict[str, Any] = {}
     if host in ("localhost", "127.0.0.1"):
+        key = (os.getenv("AZURE_COSMOS_KEY") or "").strip() or None
         # Emulator: self-signed cert, rejects AAD tokens (use its well-known key),
         # and advertises its internal container IP — so pin the client to our
         # endpoint by disabling endpoint discovery.

@@ -21,9 +21,6 @@ infra:
     environment_name: ${AZURE_ENV_NAME}
     location: ${AZURE_LOCATION}
     existing_resource_group_name: ${EXISTING_RESOURCE_GROUP_NAME}
-    azure_openai_endpoint: ${AZURE_OPENAI_ENDPOINT}
-    azure_openai_model: ${AZURE_OPENAI_MODEL}
-    azure_openai_resource_id: ${AZURE_OPENAI_RESOURCE_ID}
     azure_openai_api_version: ${AZURE_OPENAI_API_VERSION}
     azure_sql_connectionstring: ${AZURE_SQL_CONNECTIONSTRING}
     sap_emulator_enabled: ${SAP_EMULATOR_ENABLED}
@@ -38,7 +35,7 @@ infra:
     sap_emulator_entitled_group_ids: ${SAP_EMULATOR_ENTITLED_GROUP_IDS}
     search_service_endpoint: ${SEARCH_SERVICE_ENDPOINT}
     search_index_name: ${SEARCH_INDEX_NAME}
-    search_api_key: ${SEARCH_API_KEY}
+    search_service_resource_id: ${SEARCH_SERVICE_RESOURCE_ID}
     autonomous_scheduler_enabled: ${AUTONOMOUS_SCHEDULER_ENABLED}
     entra_tenant_id: ${OAUTH_AZURE_GOV_AD_TENANT_ID}
     entra_client_id: ${OAUTH_AZURE_GOV_AD_CLIENT_ID}

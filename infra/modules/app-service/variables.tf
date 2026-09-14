@@ -110,12 +110,6 @@ variable "search_index_name" {
   type        = string
 }
 
-variable "search_api_key" {
-  description = "Azure AI Search API key"
-  type        = string
-  sensitive   = true
-}
-
 # Azure Cosmos DB (durable agent memory + per-user chat history)
 variable "azure_cosmos_endpoint" {
   description = "Cosmos DB account endpoint"

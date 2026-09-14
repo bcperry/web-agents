@@ -83,8 +83,8 @@ module "app_service" {
   resource_group_name = local.resource_group_name
 
   # Application environment variables
-  azure_openai_endpoint      = var.azure_openai_endpoint
-  azure_openai_model         = var.azure_openai_model
+  azure_openai_endpoint      = "https://${azurerm_cognitive_account.foundry.custom_subdomain_name}.openai.azure.us/"
+  azure_openai_model         = azurerm_cognitive_deployment.foundry_luna.name
   azure_openai_api_version   = var.azure_openai_api_version
   azure_sql_connectionstring = var.azure_sql_connectionstring
   sap_emulator_enabled       = local.sap_emulator_enabled
@@ -100,7 +100,6 @@ module "app_service" {
   sap_emulator_entitled_group_ids = var.sap_emulator_entitled_group_ids
   search_service_endpoint         = var.search_service_endpoint
   search_index_name               = var.search_index_name
-  search_api_key                  = var.search_api_key
 
   # Azure Cosmos DB (durable agent memory)
   azure_cosmos_endpoint                = module.cosmos.endpoint
@@ -129,8 +128,37 @@ module "app_service" {
 }
 
 resource "azurerm_role_assignment" "azure_openai_user" {
-  scope                = var.azure_openai_resource_id
+  scope                = azurerm_cognitive_account.foundry.id
   role_definition_name = "Cognitive Services OpenAI User"
+  principal_id         = module.app_service.system_assigned_principal_id
+  principal_type       = "ServicePrincipal"
+}
+
+resource "azurerm_role_assignment" "azure_openai_developer" {
+  count                = trimspace(var.principal_id) != "" ? 1 : 0
+  scope                = azurerm_cognitive_account.foundry.id
+  role_definition_name = "Cognitive Services OpenAI User"
+  principal_id         = var.principal_id
+}
+
+resource "azurerm_role_assignment" "foundry_developer" {
+  count                = trimspace(var.principal_id) != "" ? 1 : 0
+  scope                = azurerm_cognitive_account.foundry.id
+  role_definition_name = "Foundry User"
+  principal_id         = var.principal_id
+}
+
+resource "azurerm_role_assignment" "foundry_project_identity" {
+  scope                = azurerm_cognitive_account.foundry.id
+  role_definition_name = "Foundry User"
+  principal_id         = azurerm_cognitive_account_project.agents.identity[0].principal_id
+  principal_type       = "ServicePrincipal"
+}
+
+resource "azurerm_role_assignment" "search_index_reader" {
+  count                = trimspace(var.search_service_resource_id) != "" ? 1 : 0
+  scope                = var.search_service_resource_id
+  role_definition_name = "Search Index Data Reader"
   principal_id         = module.app_service.system_assigned_principal_id
   principal_type       = "ServicePrincipal"
 }

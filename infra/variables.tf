@@ -47,26 +47,6 @@ variable "existing_resource_group_name" {
   type        = string
 }
 
-variable "azure_openai_endpoint" {
-  description = "Azure OpenAI endpoint URL: 'https://{your-custom-endpoint}.openai.azure.com/'"
-  type        = string
-}
-
-variable "azure_openai_model" {
-  description = "Azure OpenAI model deployment name: 'your-deployment-name'"
-  type        = string
-}
-
-variable "azure_openai_resource_id" {
-  description = "Resource ID of the existing Azure OpenAI account used to grant the App Service system-assigned identity access"
-  type        = string
-
-  validation {
-    condition     = can(regex("(?i)^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\\.CognitiveServices/accounts/[^/]+$", var.azure_openai_resource_id))
-    error_message = "azure_openai_resource_id must be the full resource ID of a Microsoft.CognitiveServices/accounts resource."
-  }
-}
-
 variable "azure_openai_api_version" {
   description = "Azure OpenAI API version: '2024-02-15-preview'"
   type        = string
@@ -148,10 +128,10 @@ variable "search_index_name" {
   type        = string
 }
 
-variable "search_api_key" {
-  description = "Azure AI Search API key (leave empty to use managed identity)"
+variable "search_service_resource_id" {
+  description = "Resource ID of the existing Search service for the app's read-only data role"
   type        = string
-  sensitive   = true
+  default     = ""
 }
 
 # Local development access to the live Cosmos account

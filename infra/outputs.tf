@@ -52,17 +52,22 @@ output "MANAGED_IDENTITY_PRINCIPAL_ID" {
 # Persist commonly used application configuration inputs via outputs
 output "AZURE_OPENAI_ENDPOINT" {
   description = "Azure OpenAI endpoint URL"
-  value       = var.azure_openai_endpoint
+  value       = "https://${azurerm_cognitive_account.foundry.custom_subdomain_name}.openai.azure.us/"
 }
 
 output "AZURE_OPENAI_MODEL" {
   description = "Azure OpenAI model deployment name"
-  value       = var.azure_openai_model
+  value       = azurerm_cognitive_deployment.foundry_luna.name
 }
 
 output "AZURE_OPENAI_RESOURCE_ID" {
   description = "Azure OpenAI account resource ID"
-  value       = var.azure_openai_resource_id
+  value       = azurerm_cognitive_account.foundry.id
+}
+
+output "AZURE_AI_PROJECT_ENDPOINTS" {
+  description = "Endpoints exposed by the Foundry Web Agents project"
+  value       = azurerm_cognitive_account_project.agents.endpoints
 }
 
 output "AZURE_OPENAI_API_VERSION" {
@@ -104,8 +109,3 @@ output "SEARCH_INDEX_NAME" {
   value       = var.search_index_name
 }
 
-output "SEARCH_API_KEY" {
-  description = "Azure AI Search API key (empty indicates managed identity)"
-  value       = var.search_api_key
-  sensitive   = true
-}

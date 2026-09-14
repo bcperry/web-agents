@@ -61,6 +61,7 @@ class _FakeClient:
     """Stand-in for OpenAIChatClient that returns _FakeAgent instances."""
 
     def __init__(self) -> None:
+        self.model = "gpt-4o"
         self.as_agent_calls: list[dict[str, Any]] = []
 
     def as_agent(

@@ -132,7 +132,8 @@ def test_local_emulator_respects_explicit_key(monkeypatch, recording_cosmos_clie
     assert client.credential == "explicit-test-key"
 
 
-def test_remote_endpoint_uses_managed_identity_when_no_key(monkeypatch, recording_cosmos_client):
+@pytest.mark.parametrize("stale_key", ["", "stale-cloud-key"])
+def test_remote_endpoint_uses_managed_identity_when_no_key(monkeypatch, recording_cosmos_client, stale_key):
     """A real (non-local) endpoint with no key must use DefaultAzureCredential and
     must NOT disable TLS verification or fall back to the emulator key."""
     import azure.identity.aio as identity_aio
@@ -142,7 +143,7 @@ def test_remote_endpoint_uses_managed_identity_when_no_key(monkeypatch, recordin
 
     monkeypatch.setattr(identity_aio, "DefaultAzureCredential", _FakeCredential)
     monkeypatch.setenv("AZURE_COSMOS_ENDPOINT", "https://acct.documents.azure.us/")
-    monkeypatch.delenv("AZURE_COSMOS_KEY", raising=False)
+    monkeypatch.setenv("AZURE_COSMOS_KEY", stale_key)
     cosmos_memory._build_cosmos_client()
     client = recording_cosmos_client["client"]
     assert isinstance(client.credential, _FakeCredential)
