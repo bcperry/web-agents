@@ -2,10 +2,10 @@ import logging
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 from urllib.parse import urlsplit
 
-from agent_framework import CompactionProvider, SkillsProvider, SkillsSource
+from agent_framework import CompactionProvider, Message, SkillsProvider, SkillsSource
 from agent_framework import Agent as RuntimeAgent
 from agent_framework._compaction import (
     CharacterEstimatorTokenizer,
@@ -14,7 +14,7 @@ from agent_framework._compaction import (
     TokenBudgetComposedStrategy,
     ToolResultCompactionStrategy,
 )
-from agent_framework.openai import OpenAIChatClient
+from agent_framework.openai import OpenAIChatClient as _OpenAIChatClient
 
 from dotenv import load_dotenv
 
@@ -29,6 +29,52 @@ from prompt_config import (
 from mcp_servers import get_search_context_provider
 from sub_agent_tools import derive_sub_agent_tool_surface, disambiguate_tool_names
 from cosmos_memory import get_history_provider
+
+
+class OpenAIChatClient(_OpenAIChatClient):
+    """Use application-owned history and coalesce Responses reasoning fragments."""
+
+    STORES_BY_DEFAULT = False
+
+    async def _prepare_options(
+        self, messages: Sequence[Message], options: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        local_options = dict(options)
+        for key in ("conversation_id", "previous_response_id", "conversation"):
+            local_options.pop(key, None)
+        local_options["store"] = False
+        included = list(local_options.get("include") or [])
+        if "reasoning.encrypted_content" not in included:
+            included.append("reasoning.encrypted_content")
+        local_options["include"] = included
+        return await super()._prepare_options(messages, local_options)
+
+    def _get_conversation_id(self, response: Any, store: bool | None) -> None:
+        return None
+
+    def _prepare_messages_for_openai(self, chat_messages: Sequence[Message]) -> list[dict[str, Any]]:
+        prepared = super()._prepare_messages_for_openai(chat_messages)
+        reasoning_items: dict[str, dict[str, Any]] = {}
+        result: list[dict[str, Any]] = []
+        for item in prepared:
+            item_id = item.get("id")
+            if item.get("type") != "reasoning" or not item_id:
+                result.append(item)
+                continue
+            existing = reasoning_items.get(item_id)
+            if existing is None:
+                reasoning_items[item_id] = item
+                result.append(item)
+                continue
+            for key, value in item.items():
+                if key in ("summary", "content"):
+                    parts = existing.setdefault(key, [])
+                    for part in value:
+                        if part not in parts:
+                            parts.append(part)
+                elif value is not None:
+                    existing[key] = value
+        return result
 
 
 @dataclass(frozen=True)
