@@ -253,9 +253,7 @@ def create_mcp_tool(config: MCPServerConfig, *, auth_token: str | None = None) -
 
     if config.transport == "http":
         if auth_token:
-            import httpx
-            http_client = httpx.AsyncClient(headers={"Authorization": f"Bearer {auth_token}"})
-            common_kwargs["http_client"] = http_client
+            common_kwargs["static_headers"] = {"Authorization": f"Bearer {auth_token}"}
         return MCPStreamableHTTPTool(url=config.url, **common_kwargs)
     elif config.transport == "stdio":
         kwargs = {**common_kwargs, "command": config.command}

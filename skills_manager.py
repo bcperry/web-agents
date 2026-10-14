@@ -10,25 +10,27 @@ shape the frontend uses.
 
 from __future__ import annotations
 
-import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-import yaml
+from agent_framework import FileSkillsSource, SkillFrontmatter, SkillsSourceContext
 from fastapi import HTTPException
 
 import cosmos_memory
 import user_data
 
-_SKILL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
-
-
 def skill_validation_issues(name: str, description: str, content: str) -> list[dict[str, str]]:
 	issues: list[dict[str, str]] = []
-	if not name or not _SKILL_NAME_RE.fullmatch(name) or len(name) > 64:
-		issues.append({"field": "name", "reason": "Use a lowercase slug of at most 64 characters."})
-	if not description or len(description) > 256:
+	try:
+		SkillFrontmatter(name=name, description="Validation")
+	except ValueError as error:
+		issues.append({"field": "name", "reason": str(error)})
+	try:
+		SkillFrontmatter(name="validation", description=description)
+	except ValueError as error:
+		issues.append({"field": "description", "reason": str(error)})
+	if description and len(description) > 256:
 		issues.append({"field": "description", "reason": "Description must be non-empty and at most 256 characters."})
 	if not content or len(content) > 65536:
 		issues.append({"field": "content", "reason": "Content must be non-empty and at most 65,536 characters."})
@@ -53,34 +55,6 @@ def _skill_doc(
 	}
 
 
-def _parse_skill_md(skill_dir: Path) -> dict[str, str] | None:
-	"""Parse a filesystem ``<skill>/SKILL.md`` into ``{name, description, content}``.
-
-	Returns ``None`` when the directory has no ``SKILL.md`` (used only by seeding).
-	"""
-	skill_file = skill_dir / "SKILL.md"
-	if not skill_dir.is_dir() or not skill_file.is_file():
-		return None
-	raw = skill_file.read_text(encoding="utf-8")
-	name = skill_dir.name
-	description = ""
-	content = raw
-	parts = re.split(r"^---[ \t]*$", raw, maxsplit=2, flags=re.MULTILINE)
-	if len(parts) == 3 and not parts[0]:
-		try:
-			metadata = yaml.safe_load(parts[1])
-		except yaml.YAMLError:
-			return None
-		if not isinstance(metadata, dict):
-			return None
-		name = metadata.get("name", name)
-		description = metadata.get("description", "")
-		if not isinstance(name, str) or not isinstance(description, str):
-			return None
-		content = parts[2].lstrip("\n")
-	return {"name": name, "description": description, "content": content}
-
-
 class SkillManager:
 	"""Validation + Cosmos CRUD for global agent skills.
 
@@ -102,8 +76,10 @@ class SkillManager:
 		return self._user_repo if self._user_repo is not None else user_data.get_user_skills_repository()
 
 	def validate_name(self, name: str, status_on_error: int = 400) -> str:
-		if not name or not _SKILL_NAME_RE.match(name) or len(name) > 64:
-			raise HTTPException(status_code=status_on_error, detail="Invalid skill name")
+		try:
+			SkillFrontmatter(name=name, description="Validation")
+		except ValueError as error:
+			raise HTTPException(status_code=status_on_error, detail="Invalid skill name") from error
 		return name
 
 	async def list_summaries(self) -> list[dict[str, str]]:
@@ -197,7 +173,7 @@ async def seed_skills(skills_dir: Path) -> int:
 	remove it from ``skills/`` to retire it permanently. Mirrors
 	``autonomous.seed_autonomous_directives``.
 	"""
-	defaults = filesystem_skill_docs(skills_dir)
+	defaults = await filesystem_skill_docs(skills_dir)
 	if not defaults:
 		return 0
 	repo = cosmos_memory.get_skill_repository()
@@ -211,36 +187,28 @@ async def seed_skills(skills_dir: Path) -> int:
 	return seeded
 
 
-def filesystem_skill_docs(skills_dir: Path) -> list[dict[str, Any]]:
-	"""Return durable skill documents parsed from the filesystem default skills.
+async def filesystem_skill_docs(skills_dir: Path) -> list[dict[str, Any]]:
+	"""Return default documents using native skill discovery and content rendering.
 
 	Shared by ``seed_skills`` (production startup) and the test fixtures so the
 	in-memory double is seeded with the same built-in skills the real store gets.
-	Skips directories without a valid ``SKILL.md`` / name / content.
+	FileSkillsSource does not use invocation context. Bundled scripts and resources
+	are disabled because the durable store holds text, not filesystem references.
 	"""
 	if not skills_dir.is_dir():
 		return []
+	source = FileSkillsSource(
+		skill_paths=skills_dir, script_extensions=(), resource_extensions=(),
+	)
+	skills = await source.get_skills(cast(SkillsSourceContext, None))
 	now = _utcnow_iso()
-	docs: list[dict[str, Any]] = []
-	for child in sorted(skills_dir.iterdir()):
-		parsed = _parse_skill_md(child)
-		if (
-			parsed
-			and parsed.get("name")
-			and parsed.get("description")
-			and parsed.get("content")
-			and _SKILL_NAME_RE.match(parsed["name"])
-		):
-			docs.append(
-				_skill_doc(
-					parsed["name"],
-					parsed.get("description", ""),
-					parsed["content"],
-					created_at=now,
-					updated_at=now,
-				)
-			)
-	return docs
+	return [
+		_skill_doc(
+			skill.frontmatter.name, skill.frontmatter.description,
+			await skill.get_content(), created_at=now, updated_at=now,
+		)
+		for skill in sorted(skills, key=lambda skill: skill.frontmatter.name)
+	]
 
 
 __all__ = ["SkillManager", "filesystem_skill_docs", "seed_skills", "skill_validation_issues"]

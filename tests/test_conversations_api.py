@@ -130,7 +130,7 @@ def test_conversations_can_be_paged_without_repeating_records(client):
 
 def test_get_messages_returns_mapped_messages_for_owner(client, monkeypatch):
     from main import app
-    from agent_framework._types import Content, Message
+    from agent_framework import Content, Message
 
     monkeypatch.setattr(
         cosmos_memory,

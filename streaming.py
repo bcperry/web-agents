@@ -5,8 +5,7 @@ import re
 from typing import Any, AsyncGenerator, Optional
 
 from agent_framework import Agent as RuntimeAgent
-from agent_framework import AgentSession
-from agent_framework._types import Content, Message as ChatMessage, UsageDetails
+from agent_framework import AgentSession, Content, Message as ChatMessage, UsageDetails
 from fastapi.encoders import jsonable_encoder
 
 USAGE_INPUT_KEY = "input_token_count"
@@ -14,47 +13,8 @@ USAGE_OUTPUT_KEY = "output_token_count"
 USAGE_TOTAL_KEY = "total_token_count"
 
 
-def create_usage(
-	input_token_count: Optional[int] = None,
-	output_token_count: Optional[int] = None,
-	total_token_count: Optional[int] = None,
-) -> UsageDetails:
-	return UsageDetails(
-		input_token_count=input_token_count,
-		output_token_count=output_token_count,
-		total_token_count=total_token_count,
-	)
-
-
 def usage_value(usage: Optional[UsageDetails], key: str) -> int:
-	if not usage:
-		return 0
-	if isinstance(usage, dict):
-		return int(usage.get(key) or 0)
-	return int(getattr(usage, key, 0) or 0)
-
-
-def merge_usage(current: Optional[UsageDetails], incoming: Optional[UsageDetails]) -> Optional[UsageDetails]:
-	if not incoming:
-		return current
-	if not current:
-		return incoming
-	return create_usage(
-		input_token_count=usage_value(current, USAGE_INPUT_KEY) + usage_value(incoming, USAGE_INPUT_KEY),
-		output_token_count=usage_value(current, USAGE_OUTPUT_KEY) + usage_value(incoming, USAGE_OUTPUT_KEY),
-		total_token_count=usage_value(current, USAGE_TOTAL_KEY) + usage_value(incoming, USAGE_TOTAL_KEY),
-	)
-
-
-def extract_usage_from_payload(payload: dict) -> Optional[UsageDetails]:
-	usage_data = payload.get("usage") or {}
-	if not usage_data:
-		return None
-	return create_usage(
-		input_token_count=usage_data.get(USAGE_INPUT_KEY),
-		output_token_count=usage_data.get(USAGE_OUTPUT_KEY),
-		total_token_count=usage_data.get(USAGE_TOTAL_KEY),
-	)
+	return int((usage or {}).get(key) or 0)
 
 
 def is_retryable_error(error: Exception) -> bool:
@@ -124,6 +84,28 @@ def render_tool_result(result: object) -> str:
 	if result is None:
 		return ""
 	return result if isinstance(result, str) else json.dumps(jsonable_encoder(result), ensure_ascii=False)
+
+
+def tool_messages_to_events(messages: list[ChatMessage]) -> list[dict[str, Any]]:
+	"""Map native completed tool messages to the app's trace record format."""
+	events: dict[str, dict[str, Any]] = {}
+	for message in messages:
+		for item in message.contents:
+			content = item.to_dict()
+			call_id = content.get("call_id")
+			content_type = content.get("type")
+			if content_type in ("function_call", "mcp_server_tool_call") and call_id:
+				arguments = content.get("arguments", "")
+				events[call_id] = {
+					"call_id": call_id,
+					"name": content.get("name") or content.get("tool_name"),
+					"arguments": json.dumps(arguments, ensure_ascii=False) if isinstance(arguments, (dict, list)) else str(arguments),
+					"result": None,
+				}
+			elif content_type in ("function_result", "mcp_server_tool_result") and call_id in events:
+				result_key = "result" if content_type == "function_result" else "output"
+				events[call_id]["result"] = render_tool_result(content.get(result_key))
+	return list(events.values())
 
 
 AGENT_VIEW_TOOL_NAME = "render_agent_view"
@@ -202,8 +184,6 @@ async def stream_agent_events(
 	session: AgentSession,
 	*, result: dict[str, Any],
 ) -> AsyncGenerator[tuple[str, dict], None]:
-	request_usage: Optional[UsageDetails] = None
-	final_text_parts: list[str] = []
 	tool_event_by_call_id: dict[str, dict[str, Any]] = {}
 	active_call_id: Optional[str] = None
 
@@ -212,9 +192,6 @@ async def stream_agent_events(
 
 	async for msg in stream:
 		msg_dict = msg.to_dict()
-
-		update_usage = extract_usage_from_payload(msg_dict)
-		request_usage = merge_usage(request_usage, update_usage)
 
 		for content in msg_dict.get("contents", []) or []:
 			content_type = content.get("type")
@@ -227,7 +204,7 @@ async def stream_agent_events(
 
 				if name and call_id and call_id not in tool_event_by_call_id:
 					active_call_id = call_id
-					tool_event_by_call_id[call_id] = {"call_id": call_id, "name": name, "arguments": rendered_arguments, "result": None}
+					tool_event_by_call_id[call_id] = {"call_id": call_id, "name": name, "arguments": rendered_arguments}
 					yield ("function_call", {"call_id": call_id, "name": name, "arguments": rendered_arguments})
 				else:
 					if call_id in tool_event_by_call_id:
@@ -247,7 +224,7 @@ async def stream_agent_events(
 				arguments = content.get("arguments", "")
 				rendered_arguments = json.dumps(arguments, ensure_ascii=False) if isinstance(arguments, (dict, list)) else str(arguments)
 				if name and call_id and call_id not in tool_event_by_call_id:
-					tool_event_by_call_id[call_id] = {"call_id": call_id, "name": name, "arguments": rendered_arguments, "result": None}
+					tool_event_by_call_id[call_id] = {"call_id": call_id, "name": name, "arguments": rendered_arguments}
 					yield ("function_call", {"call_id": call_id, "name": name, "arguments": rendered_arguments})
 
 			elif content_type in ("function_result", "mcp_server_tool_result"):
@@ -257,8 +234,6 @@ async def stream_agent_events(
 				content_items = converted if any(item["type"] == "image" for item in converted) else None
 				rendered_result = render_tool_result(tool_result)
 				accumulated_args = tool_event_by_call_id.get(call_id, {}).get("arguments", "")
-				if call_id in tool_event_by_call_id:
-					tool_event_by_call_id[call_id]["result"] = rendered_result
 				active_call_id = None
 				yield ("function_result", {
 					key: value for key, value in {
@@ -275,31 +250,23 @@ async def stream_agent_events(
 				if view_payload:
 					yield ("agent_view", view_payload)
 
-			elif content_type == "usage":
-				usage = extract_usage_from_payload(content)
-				request_usage = merge_usage(request_usage, usage)
-
 		if getattr(msg, "text", None):
-			final_text_parts.append(msg.text)
 			yield ("text", {"content": msg.text})
 
-	try:
-		final_response = await stream.get_final_response()
-		if final_response and getattr(final_response, "usage_details", None):
-			request_usage = final_response.usage_details
-	except Exception:
-		pass
+	final_response = await stream.get_final_response()
+	request_usage = final_response.usage_details
 
 	if request_usage:
 		yield ("usage", {
+			**request_usage,
 			USAGE_INPUT_KEY: usage_value(request_usage, USAGE_INPUT_KEY),
 			USAGE_OUTPUT_KEY: usage_value(request_usage, USAGE_OUTPUT_KEY),
 			USAGE_TOTAL_KEY: usage_value(request_usage, USAGE_TOTAL_KEY),
 		})
 
 	result.update({
-		"text": "".join(final_text_parts).strip(),
-		"tool_events": list(tool_event_by_call_id.values()),
+		"text": final_response.text.strip(),
+		"tool_events": tool_messages_to_events(final_response.messages),
 		"usage": request_usage,
 	})
 	yield ("done", {})
@@ -321,11 +288,8 @@ __all__ = [
 	"USAGE_TOTAL_KEY",
 	"agent_view_payload",
 	"convert_content_items",
-	"create_usage",
-	"extract_usage_from_payload",
 	"is_context_length_error",
 	"is_retryable_error",
-	"merge_usage",
 	"render_tool_result",
 	"sse_event",
 	"stream_agent_response",

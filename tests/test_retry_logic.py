@@ -4,13 +4,11 @@ from unittest.mock import MagicMock
 from session_data import SessionData, _sessions
 from app_context import DEFAULT_MAX_USER_INPUT_CHARS
 from streaming import is_retryable_error
-from agent_framework._types import UsageDetails
+from agent_framework import UsageDetails, add_usage_details
 
 
 def _usage_value(usage: UsageDetails, key: str):
-    if isinstance(usage, dict):
-        return usage.get(key)
-    return getattr(usage, key)
+    return usage.get(key)
 
 
 def _make_session(session_id: str = "test-session"):
@@ -154,6 +152,7 @@ class TestTokenUsage:
 
         _sessions.clear()
         _sessions["usage-test"] = _make_session("usage-test")
+        _sessions["usage-test"].usage = UsageDetails(total_token_count=3)
 
         with caplog.at_level("INFO", logger="main"):
             response = client.delete("/api/sessions/usage-test")
@@ -162,13 +161,12 @@ class TestTokenUsage:
         assert any("Token usage" in record.message for record in caplog.records)
 
     def test_usage_accumulation_tracks_request_tokens(self) -> None:
-        """merge helper should accumulate request token usage."""
-        from streaming import merge_usage
+        """Native usage addition should accumulate request token usage."""
 
         base = UsageDetails(input_token_count=1, output_token_count=2, total_token_count=3)
         increment = UsageDetails(input_token_count=4, output_token_count=5, total_token_count=9)
 
-        merged = merge_usage(base, increment)
+        merged = add_usage_details(base, increment)
 
         assert _usage_value(merged, "input_token_count") == 5
         assert _usage_value(merged, "output_token_count") == 7

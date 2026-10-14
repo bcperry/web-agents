@@ -5,13 +5,11 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from agent_framework import Agent as RuntimeAgent
-from agent_framework import AgentSession
-from agent_framework._types import UsageDetails
+from agent_framework import AgentSession, UsageDetails
 from fastapi import HTTPException
 
 from eval_trace import EvalTraceLogger
 from mcp_servers import cleanup_mcp_servers
-from streaming import create_usage
 
 
 class SessionData:
@@ -44,7 +42,7 @@ class SessionData:
         self.agent = agent
         self.agent_session = agent_session
         self.tools = tools
-        self.usage: Optional[UsageDetails] = create_usage()
+        self.usage: UsageDetails = UsageDetails()
         self.eval_trace_logger = eval_trace_logger
         self.prompt_logical_profile = prompt_logical_profile
         self.created_at = datetime.now(timezone.utc)

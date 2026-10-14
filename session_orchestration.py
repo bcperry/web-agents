@@ -359,12 +359,6 @@ async def _database_tools(
         return {}
 
 
-def _bind_session_id(session: AgentSession, session_id: str) -> AgentSession:
-    """Bind the runtime session to the conversation id (Cosmos partition key)."""
-    session._session_id = session_id
-    return session
-
-
 async def _resolve_session_id(conversations: Any, user: Any, body: dict[str, Any]) -> tuple[str, bool]:
     """Return ``(session_id, is_resume)``.
 
@@ -613,6 +607,7 @@ async def _start_session(
             mcp_servers=dependencies.mcp_tools, extra_instructions=dependencies.profile_context or None,
             sub_agent_resources=dependencies.sub_agent_resources,
             user_id=user.user_id,
+            session_id=session_id,
         )
         response = {
             "session_id": session_id, "profile_id": definition.profile_id, "profile_name": profile.name,
@@ -630,7 +625,7 @@ async def _start_session(
             )
         session_data = _build_session_data(ctx, session_id=session_id, user=user, profile_id=definition.profile_id,
                        profile_name=profile.name, chat_runtime=runtime,
-                       agent_session=_bind_session_id(runtime.session, session_id),
+                       agent_session=runtime.session,
                        mcp_tools=dependencies.session_mcp_tools)
         registered = True
         await replace_session(session_data, sessions=ctx.sessions)

@@ -3,7 +3,7 @@
 import logging
 from typing import Literal
 
-from agent_framework._types import Content, Message as ChatMessage
+from agent_framework import Content, Message as ChatMessage
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 

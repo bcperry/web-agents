@@ -67,17 +67,20 @@ class TestProviderRouting:
         )
 
 
-def test_create_chat_runtime_binds_profile_tools_and_creates_session(monkeypatch) -> None:
+@pytest.mark.parametrize("session_id", [None, "existing-conversation"])
+def test_create_chat_runtime_binds_profile_tools_and_creates_session(monkeypatch, session_id) -> None:
     """Runtime creation should preserve profile tool filtering and agent session creation."""
     import agent_factory
+    from agent_framework import AgentSession
 
     calls: dict[str, object] = {}
 
     class FakeAgent:
         context_providers: list[object] = []
 
-        def create_session(self):
-            return {"session": "created"}
+        def create_session(self, *, session_id=None):
+            calls["session_id"] = session_id
+            return AgentSession(session_id=session_id)
 
     class FakeClient:
         model = "gpt-4o"
@@ -102,9 +105,14 @@ def test_create_chat_runtime_binds_profile_tools_and_creates_session(monkeypatch
     runtime = agent_factory.create_chat_runtime(
         profile=profile,
         function_tools=[allowed_tool, denied_tool],
+        session_id=session_id,
     )
 
-    assert runtime.session == {"session": "created"}
+    assert isinstance(runtime.session, AgentSession)
+    assert calls["session_id"] == session_id
+    assert runtime.session.session_id
+    if session_id:
+        assert runtime.session.session_id == session_id
     assert runtime.tools == [allowed_tool]
     assert runtime.prompt_logical_profile == "profile-key"
     agent_kwargs = calls["as_agent"]
@@ -112,4 +120,4 @@ def test_create_chat_runtime_binds_profile_tools_and_creates_session(monkeypatch
     assert agent_kwargs["instructions"] == "System prompt"
     assert agent_kwargs["description"] == "Profile description"
     assert agent_kwargs["tools"] == [allowed_tool]
-    assert agent_kwargs["default_options"] == {"temperature": 0.4}
+    assert agent_kwargs["default_options"] == {"store": False, "temperature": 0.4}

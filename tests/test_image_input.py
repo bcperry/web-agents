@@ -217,12 +217,12 @@ class TestContentCreation:
     """Test Content.from_data/from_text work correctly."""
 
     def test_single_image_produces_data_content(self) -> None:
-        from agent_framework._types import Content
+        from agent_framework import Content
         content = Content.from_data(data=_VALID_PNG_BYTES, media_type="image/png")
         assert content.type == "data"
 
     def test_text_only_content(self) -> None:
-        from agent_framework._types import Content
+        from agent_framework import Content
         text_content = Content.from_text("Hello, world!")
         contents = [text_content]
         assert len(contents) == 1

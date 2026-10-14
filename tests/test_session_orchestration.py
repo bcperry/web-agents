@@ -125,6 +125,24 @@ def test_mcp_connection_cancellation_propagates(monkeypatch):
         asyncio.run(mcp_servers.connect_mcp_servers([config]))
 
 
+@pytest.mark.parametrize("auth_token", [None, "test-token"])
+def test_http_mcp_uses_native_transport_auth(monkeypatch, auth_token):
+    from unittest.mock import Mock
+    import mcp_servers
+
+    constructor = Mock()
+    monkeypatch.setattr(mcp_servers, "MCPStreamableHTTPTool", constructor)
+    config = mcp_servers.MCPServerConfig(name="test", transport="http", url="https://example.test")
+    tool = mcp_servers.create_mcp_tool(config, auth_token=auth_token)
+    assert tool is constructor.return_value
+    kwargs = constructor.call_args.kwargs
+    assert "http_client" not in kwargs
+    if auth_token:
+        assert kwargs["static_headers"] == {"Authorization": "Bearer test-token"}
+    else:
+        assert "static_headers" not in kwargs
+
+
 @pytest.mark.parametrize("transport", ["http", "stdio"])
 @pytest.mark.parametrize("allowed_tools", [None, [], ["lookup"]])
 def test_mcp_allowlist_preserves_empty_collection(transport, allowed_tools):

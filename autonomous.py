@@ -29,7 +29,7 @@ from typing import Any
 
 import yaml
 
-from agent_framework._types import Content
+from agent_framework import Content, Message
 from fastapi import HTTPException
 
 from auth import AuthenticatedUser
@@ -48,7 +48,7 @@ from streaming import (
     USAGE_INPUT_KEY,
     USAGE_OUTPUT_KEY,
     USAGE_TOTAL_KEY,
-    stream_agent_events,
+    tool_messages_to_events,
     usage_value,
     with_user_time,
 )
@@ -399,6 +399,7 @@ def _usage_to_dict(usage: Any) -> dict[str, int]:
     if usage is None:
         return {}
     return {
+        **usage,
         USAGE_INPUT_KEY: usage_value(usage, USAGE_INPUT_KEY),
         USAGE_OUTPUT_KEY: usage_value(usage, USAGE_OUTPUT_KEY),
         USAGE_TOTAL_KEY: usage_value(usage, USAGE_TOTAL_KEY),
@@ -406,11 +407,13 @@ def _usage_to_dict(usage: Any) -> dict[str, int]:
 
 
 async def collect_agent_response(agent: Any, contents: list[Content], session: Any) -> dict[str, Any]:
-    """Collect the shared agent events into a request-local structured result."""
-    result: dict[str, Any] = {}
-    async for _event in stream_agent_events(agent, contents, session, result=result):
-        pass
-    return result
+    """Map a native non-streaming response to an autonomous run record."""
+    response = await agent.run(Message(role="user", contents=contents), session=session, stream=False)
+    return {
+        "text": response.text.strip(),
+        "tool_events": tool_messages_to_events(response.messages),
+        "usage": response.usage_details,
+    }
 
 
 async def _ensure_conversation(

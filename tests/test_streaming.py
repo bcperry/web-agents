@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 import pytest
-from agent_framework._types import UsageDetails
+from agent_framework import AgentResponse, Message, UsageDetails, add_usage_details
 
 from streaming import (
     USAGE_INPUT_KEY,
@@ -13,28 +13,28 @@ from streaming import (
     USAGE_TOTAL_KEY,
     agent_view_payload,
     convert_content_items,
-    create_usage,
-    extract_usage_from_payload,
     is_context_length_error,
     is_retryable_error,
-    merge_usage,
     render_tool_result,
     sse_event,
     usage_value,
 )
 
 
-def test_usage_helpers_create_extract_and_merge_counts():
-    first = create_usage(input_token_count=1, output_token_count=2, total_token_count=3)
-    second = extract_usage_from_payload({"usage": {USAGE_INPUT_KEY: 4, USAGE_OUTPUT_KEY: 5, USAGE_TOTAL_KEY: 9}})
+def test_native_usage_addition_preserves_all_counters():
+    first = UsageDetails(input_token_count=1, output_token_count=2, total_token_count=3,
+                         cache_read_input_token_count=2, reasoning_output_token_count=1, extra_count=4)
+    second = UsageDetails(input_token_count=4, output_token_count=5, total_token_count=9,
+                          cache_read_input_token_count=3, reasoning_output_token_count=2, extra_count=5)
 
-    merged = merge_usage(first, second)
+    merged = add_usage_details(first, second)
 
     assert usage_value(merged, USAGE_INPUT_KEY) == 5
     assert usage_value(merged, USAGE_OUTPUT_KEY) == 7
     assert usage_value(merged, USAGE_TOTAL_KEY) == 12
-    assert merge_usage(None, second) is second
-    assert extract_usage_from_payload({}) is None
+    assert merged["cache_read_input_token_count"] == 5
+    assert merged["reasoning_output_token_count"] == 3
+    assert merged["extra_count"] == 9
 
 
 def test_usage_value_handles_dicts_and_none():
@@ -148,7 +148,22 @@ def test_structured_stream_and_sse_publish_request_local_results(result_type, re
             return updates()
 
         async def get_final_response(self):
-            return SimpleNamespace(usage_details=create_usage(total_token_count=3))
+            return AgentResponse(
+                messages=[
+                    Message(role="assistant", contents=[
+                        Content.from_function_call("call-1", "lookup", arguments='{"id":1,"complete":true}'),
+                        Content.from_function_call("call-2", "other", arguments={}),
+                        Content.from_mcp_server_tool_call("call-3", "remote", arguments={}),
+                    ]),
+                    Message(role="tool", contents=[
+                        Content.from_function_result("call-1", result=tool_output)
+                        if result_type == "function_result"
+                        else Content.from_mcp_server_tool_result("call-1", output=tool_output),
+                    ]),
+                    Message(role="assistant", contents=[Content.from_text("hello final")]),
+                ],
+                usage_details=UsageDetails(total_token_count=3, reasoning_output_token_count=2),
+            )
 
     async def scenario():
         agent = SimpleNamespace(run=lambda *args, **kwargs: Stream())
@@ -156,14 +171,83 @@ def test_structured_stream_and_sse_publish_request_local_results(result_type, re
         events = [event async for event in stream_agent_events(agent, [], None, result=result)]
         assert events[0] == ("text", {"content": "hello"})
         assert events[-1] == ("done", {})
-        assert result["text"] == "hello"
+        assert result["text"] == "hello final"
+        assert result["usage"]["reasoning_output_token_count"] == 2
+        assert next(payload for kind, payload in events if kind == "usage")["reasoning_output_token_count"] == 2
         assert result["tool_events"][0]["result"] == render_tool_result(tool_output)
         assert [event["call_id"] for event in result["tool_events"]] == ["call-1", "call-2", "call-3"]
-        assert result["tool_events"][0]["arguments"] == '{"id":1}'
+        assert result["tool_events"][0]["arguments"] == '{"id":1,"complete":true}'
         assert [payload["arguments"] for kind, payload in events if kind == "function_result"] == ['{"id":1}']
         other_result = {}
         encoded = [event async for event in stream_agent_response(agent, [], None, result=other_result)]
         assert encoded[0].startswith("event: text\n")
         assert other_result == result
         assert not hasattr(stream_agent_response, "_last_result")
+    asyncio.run(scenario())
+
+
+def test_finalization_failure_propagates_without_done_or_partial_result():
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from agent_framework import AgentResponseUpdate, Content
+    from streaming import stream_agent_events
+
+    class Stream:
+        def __aiter__(self):
+            async def updates():
+                yield AgentResponseUpdate(contents=[Content.from_text("partial")])
+            return updates()
+
+        get_final_response = AsyncMock(side_effect=RuntimeError("finalization failed"))
+
+    async def scenario():
+        result = {}
+        events = []
+        agent = SimpleNamespace(run=lambda *args, **kwargs: Stream())
+        with pytest.raises(RuntimeError, match="finalization failed"):
+            async for event in stream_agent_events(agent, [], None, result=result):
+                events.append(event)
+        assert events == [("text", {"content": "partial"})]
+        assert result == {}
+
+    asyncio.run(scenario())
+
+
+def test_native_response_stream_aggregates_text_tool_calls_and_usage():
+    import asyncio
+    from types import SimpleNamespace
+    from agent_framework import AgentResponseUpdate, Content, ResponseStream
+    from streaming import stream_agent_events
+
+    async def updates():
+        yield AgentResponseUpdate(message_id="call", role="assistant", contents=[
+            Content.from_function_call("call-1", "lookup", arguments='{"id":'),
+        ])
+        yield AgentResponseUpdate(message_id="call", role="assistant", contents=[
+            Content.from_function_call("call-1", "lookup", arguments='1}'),
+        ])
+        yield AgentResponseUpdate(message_id="result", role="tool", contents=[
+            Content.from_function_result("call-1", result="found"),
+        ])
+        for text in ["Hello ", "world"]:
+            yield AgentResponseUpdate(message_id="answer", role="assistant", contents=[Content.from_text(text)])
+        yield AgentResponseUpdate(contents=[Content.from_usage(UsageDetails(
+            input_token_count=4, output_token_count=2, total_token_count=6,
+            cache_read_input_token_count=3, reasoning_output_token_count=1,
+        ))])
+
+    async def scenario():
+        native_stream = ResponseStream(updates(), finalizer=AgentResponse.from_updates)
+        agent = SimpleNamespace(run=lambda *args, **kwargs: native_stream)
+        result = {}
+        events = [event async for event in stream_agent_events(agent, [], None, result=result)]
+        assert result["text"] == "Hello world"
+        assert result["tool_events"] == [{
+            "call_id": "call-1", "name": "lookup", "arguments": '{"id":1}', "result": "found",
+        }]
+        assert result["usage"]["cache_read_input_token_count"] == 3
+        assert result["usage"]["reasoning_output_token_count"] == 1
+        assert events[-1] == ("done", {})
+
     asyncio.run(scenario())

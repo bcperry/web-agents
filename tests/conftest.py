@@ -53,10 +53,11 @@ def _cosmos_doubles(monkeypatch):
 	from pathlib import Path
 
 	import skills_manager
+	import asyncio
 
-	skill_seed_docs = skills_manager.filesystem_skill_docs(
+	skill_seed_docs = asyncio.run(skills_manager.filesystem_skill_docs(
 		Path(__file__).resolve().parent.parent / "skills"
-	)
+	))
 
 	monkeypatch.setattr(cosmos_memory, "_cosmos_client", None)
 	monkeypatch.setattr(cosmos_memory, "_async_credential", None)

@@ -1,7 +1,7 @@
 """Unit tests for the autonomous cycle, notification sinks, and config loader.
 
 These run fully offline: the agent runtime is replaced at the
-``create_chat_session`` / ``stream_agent_events`` seams, and the autouse
+``create_chat_session`` / ``collect_agent_response`` seams, and the autouse
 ``_cosmos_doubles`` fixture supplies in-memory run + conversation repositories.
 """
 
@@ -17,7 +17,7 @@ from autonomous import (
     load_autonomous_config,
     run_autonomous_cycle,
 )
-from streaming import create_usage
+from agent_framework import UsageDetails
 
 
 # ---------------------------------------------------------------------------
@@ -36,13 +36,37 @@ def _fake_session_builder(ctx, *, body, auth_header, user, logger):
     return _build()
 
 
-def _make_fake_stream(text, tool_events, usage):
-    async def fake_stream(agent, contents, session, *, result):
-        result.update({"text": text, "tool_events": tool_events, "usage": usage})
-        if False:  # pragma: no cover — make this an async generator that yields nothing
-            yield
+def _make_fake_response(text, tool_events, usage):
+    async def fake_response(agent, contents, session):
+        return {"text": text, "tool_events": tool_events, "usage": usage}
 
-    return fake_stream
+    return fake_response
+
+
+def test_collect_agent_response_uses_native_non_streaming_run():
+    from unittest.mock import AsyncMock
+    from agent_framework import AgentResponse, Content, Message
+
+    usage = UsageDetails(total_token_count=3, reasoning_output_token_count=1)
+    response = AgentResponse(messages=[
+        Message(role="assistant", contents=[Content.from_function_call("call-1", "lookup", arguments={})]),
+        Message(role="tool", contents=[Content.from_function_result("call-1", result="found")]),
+        Message(role="assistant", contents=[Content.from_text("Complete")]),
+    ], usage_details=usage)
+    agent = SimpleNamespace(run=AsyncMock(return_value=response))
+    session = object()
+
+    result = asyncio.run(autonomous.collect_agent_response(agent, [Content.from_text("Run")], session))
+
+    assert result == {
+        "text": "Complete",
+        "tool_events": [{"call_id": "call-1", "name": "lookup", "arguments": "{}", "result": "found"}],
+        "usage": usage,
+    }
+    agent.run.assert_awaited_once()
+    assert agent.run.call_args.args[0].role == "user"
+    assert agent.run.call_args.args[0].text == "Run"
+    assert agent.run.call_args.kwargs == {"session": session, "stream": False}
 
 
 # ---------------------------------------------------------------------------
@@ -54,11 +78,12 @@ def test_run_autonomous_cycle_success(monkeypatch):
     monkeypatch.setattr(autonomous, "create_chat_session", _fake_session_builder)
     monkeypatch.setattr(
         autonomous,
-        "stream_agent_events",
-        _make_fake_stream(
+        "collect_agent_response",
+        _make_fake_response(
             "Watch summary: all quiet.",
             [{"name": "noop", "arguments": "{}", "result": "ok"}],
-            create_usage(input_token_count=10, output_token_count=5, total_token_count=15),
+            UsageDetails(input_token_count=10, output_token_count=5, total_token_count=15,
+                         cache_read_input_token_count=4, reasoning_output_token_count=2),
         ),
     )
     directive = Directive(id="watch-1", profile_id="chief-of-staff", instruction="Run the watch.")
@@ -70,6 +95,8 @@ def test_run_autonomous_cycle_success(monkeypatch):
     assert record.response_text == "Watch summary: all quiet."
     assert record.tool_events[0]["name"] == "noop"
     assert record.usage["total_token_count"] == 15
+    assert record.usage["cache_read_input_token_count"] == 4
+    assert record.usage["reasoning_output_token_count"] == 2
     assert record.session_id == "autonomous-watch-1"
     assert record.trigger == "manual"
     assert record.notify_status == "logged"
@@ -84,7 +111,7 @@ def test_run_autonomous_cycle_persists_one_record(monkeypatch):
     ctx = SimpleNamespace(sessions={})
     monkeypatch.setattr(autonomous, "create_chat_session", _fake_session_builder)
     monkeypatch.setattr(
-        autonomous, "stream_agent_events", _make_fake_stream("done", [], None)
+        autonomous, "collect_agent_response", _make_fake_response("done", [], None)
     )
     directive = Directive(id="watch-2", profile_id="chief-of-staff", instruction="Go.")
     config = AutonomousConfig(enabled=True, system_user_id="sys", directives=[directive])
@@ -209,12 +236,10 @@ def test_run_autonomous_cycle_agent_error_is_recorded(monkeypatch):
     ctx = SimpleNamespace(sessions={})
     monkeypatch.setattr(autonomous, "create_chat_session", _fake_session_builder)
 
-    async def boom(agent, contents, session, *, result):
+    async def boom(agent, contents, session):
         raise RuntimeError("model exploded")
-        if False:  # pragma: no cover
-            yield
 
-    monkeypatch.setattr(autonomous, "stream_agent_events", boom)
+    monkeypatch.setattr(autonomous, "collect_agent_response", boom)
     directive = Directive(id="watch-3", profile_id="chief-of-staff", instruction="Go.")
     config = AutonomousConfig(enabled=True, system_user_id="sys", directives=[directive])
 

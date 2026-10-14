@@ -23,7 +23,7 @@ from prompt_config import (
 
 @dataclass
 class _FakeSession:
-    pass
+    session_id: str | None = None
 
 
 class _FakeTool:
@@ -53,8 +53,8 @@ class _FakeAgent:
             raise RuntimeError("simulated as_tool failure")
         return _FakeTool(name=name, description=description, arg_name=arg_name, arg_description=arg_description)
 
-    def create_session(self) -> _FakeSession:
-        return _FakeSession()
+    def create_session(self, *, session_id: str | None = None) -> _FakeSession:
+        return _FakeSession(session_id=session_id)
 
 
 class _FakeClient:
@@ -154,7 +154,7 @@ def test_resolved_profile_is_the_only_runtime_configuration(fake_clients, monkey
     reload_profile.assert_not_called()
     assert runtime.prompt_logical_profile == "resolved"
     assert fake_clients.as_agent_calls[0]["instructions"] == "Use this snapshot. Extra context."
-    assert fake_clients.as_agent_calls[0]["default_options"] == {"temperature": expected}
+    assert fake_clients.as_agent_calls[0]["default_options"] == {"store": False, "temperature": expected}
     assert context_providers.call_args.kwargs["skill_names"] == ["selected"]
     assert context_providers.call_args.kwargs["enable_search_context"] is False
     assert context_providers.call_args.kwargs["user_id"] == "owner"
@@ -250,7 +250,7 @@ def test_custom_sub_agent_ref_uses_inlined_definition(fake_clients: _FakeClient,
     assert runtime.sub_agent_tool_names == ["blaine_bot"]
     assert len(fake_clients.as_agent_calls) == 2
     sub_call = next(c for c in fake_clients.as_agent_calls if c["instructions"] == "You are Blaine.")
-    assert sub_call["default_options"] == options
+    assert sub_call["default_options"] == {"store": False, **options}
 
 
 def test_custom_sub_agent_receives_owner_bound_selected_skills(
@@ -310,7 +310,7 @@ def test_builtin_delegate_receives_only_resolved_resources(fake_clients, monkeyp
     )
 
     child = fake_clients.as_agent_calls[0]
-    assert child["default_options"] == {"temperature": 0}
+    assert child["default_options"] == {"store": False, "temperature": 0}
     assert child["tools"] == ([function_tool, mcp_tool] if with_resources else [])
     assert child["context_providers"] == ([search, skills] if with_resources else [])
     assert skill_requests == [(["selected"] if with_resources else None, "owner")]

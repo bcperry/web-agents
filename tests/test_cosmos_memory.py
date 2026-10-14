@@ -317,7 +317,7 @@ def test_conversation_record_wire_shape():
 # ---------------------------------------------------------------------------
 
 def test_messages_to_wire_maps_user_and_assistant():
-    from agent_framework._types import Content, Message
+    from agent_framework import Content, Message
     from streaming import messages_to_wire
 
     msgs = [
@@ -331,7 +331,7 @@ def test_messages_to_wire_maps_user_and_assistant():
 
 
 def test_messages_to_wire_strips_user_time_marker():
-    from agent_framework._types import Content, Message
+    from agent_framework import Content, Message
     from streaming import messages_to_wire, with_user_time
 
     msgs = [
@@ -358,7 +358,7 @@ def test_emulator_memory_round_trip(cosmos_emulator):
     closed". The production app uses one long-lived loop, matching this shape.
     """
     import uuid as _uuid
-    from agent_framework._types import Content, Message
+    from agent_framework import Content, Message
     from agent_framework.azure import CosmosHistoryProvider
     from azure.core.exceptions import AzureError
 

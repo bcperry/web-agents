@@ -4,7 +4,7 @@ import logging
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 
-from agent_framework._types import Content
+from agent_framework import Content, add_usage_details
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
@@ -20,7 +20,6 @@ from streaming import (
     USAGE_TOTAL_KEY,
     is_context_length_error,
     is_retryable_error,
-    merge_usage,
     messages_to_wire,
     sse_event,
     stream_agent_response,
@@ -155,7 +154,7 @@ async def send_message(
         if result:
             request_usage = result.get("usage")
             if request_usage:
-                session_data.usage = merge_usage(session_data.usage, request_usage)
+                session_data.usage = add_usage_details(session_data.usage, request_usage)
                 logger.info(
                     "Request token usage - Input: %s, Output: %s, Total: %s",
                     usage_value(request_usage, USAGE_INPUT_KEY),
@@ -174,6 +173,7 @@ async def send_message(
                     "tool_events": result.get("tool_events", []),
                     "tool_names_available": [getattr(tool, "name", str(tool)) for tool in session_data.tools],
                     "usage": {
+                        **request_usage,
                         USAGE_INPUT_KEY: usage_value(request_usage, USAGE_INPUT_KEY),
                         USAGE_OUTPUT_KEY: usage_value(request_usage, USAGE_OUTPUT_KEY),
                         USAGE_TOTAL_KEY: usage_value(request_usage, USAGE_TOTAL_KEY),

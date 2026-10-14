@@ -109,7 +109,10 @@ class TestCosmosSkillsSource:
 
         from agent_factory import CosmosSkillsSource
 
-        skills = asyncio.run(CosmosSkillsSource().get_skills())
+        from agent_framework import SkillsSourceContext
+        from unittest.mock import Mock
+
+        skills = asyncio.run(CosmosSkillsSource().get_skills(SkillsSourceContext(agent=Mock())))
         names = {skill.frontmatter.name for skill in skills}
         # The filesystem defaults are seeded into the (in-memory) Cosmos double.
         assert "table-usage" in names
@@ -121,7 +124,10 @@ class TestCosmosSkillsSource:
 
         from agent_factory import CosmosSkillsSource
 
-        skills = asyncio.run(CosmosSkillsSource().get_skills())
+        from agent_framework import SkillsSourceContext
+        from unittest.mock import Mock
+
+        skills = asyncio.run(CosmosSkillsSource().get_skills(SkillsSourceContext(agent=Mock())))
         skill = next(
             skill
             for skill in skills
@@ -148,7 +154,10 @@ class TestCosmosSkillsSource:
 
         from agent_factory import CosmosSkillsSource
 
-        skills = asyncio.run(CosmosSkillsSource().get_skills())
+        from agent_framework import SkillsSourceContext
+        from unittest.mock import Mock
+
+        skills = asyncio.run(CosmosSkillsSource().get_skills(SkillsSourceContext(agent=Mock())))
         skill = next(
             skill
             for skill in skills
@@ -168,14 +177,11 @@ class TestCosmosSkillsSource:
     def test_filtering_source_omits_unknown_names(self):
         import asyncio
 
-        from agent_framework import FilteringSkillsSource
-        from agent_factory import CosmosSkillsSource
+        from agent_framework import SkillsSourceContext
+        from unittest.mock import Mock
+        from agent_factory import _build_skills_provider
 
-        selected = {"table-usage"}
-        source = FilteringSkillsSource(
-            CosmosSkillsSource(),
-            predicate=lambda skill: skill.frontmatter.name in selected,
-        )
-        skills = asyncio.run(source.get_skills())
+        provider = _build_skills_provider(["table-usage", "nonexistent-skill"])
+        skills = asyncio.run(provider._source.get_skills(SkillsSourceContext(agent=Mock())))
         names = {skill.frontmatter.name for skill in skills}
         assert names == {"table-usage"}

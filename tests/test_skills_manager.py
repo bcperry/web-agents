@@ -11,24 +11,27 @@ from tests._doubles import InMemoryByIdRepository, InMemoryUserScopedRepository
 
 @pytest.mark.parametrize("metadata, expected", [
     ('name: "quoted-skill"\ndescription: >-\n  First line\n  second line', ("quoted-skill", "First line second line")),
-    ('description: "A: description" # comment', ("fallback", "A: description")),
+    ('name: fallback\ndescription: "A: description" # comment', ("fallback", "A: description")),
     ('description: [broken', None),
     ('- not a mapping', None),
     ('name: 123\ndescription: valid', None),
     ('description: false', None),
+    ('description: Missing name', None),
+    ('name: mismatched\ndescription: Wrong directory', None),
+    ('name: fallback\nname: fallback\ndescription: Duplicate name', None),
 ])
 def test_filesystem_skill_metadata_uses_yaml(tmp_path, metadata, expected):
-    skill_dir = tmp_path / "fallback"
+    skill_dir = tmp_path / (expected[0] if expected else "fallback")
     skill_dir.mkdir()
     (skill_dir / "SKILL.md").write_text(f"---\n{metadata}\n---\n# Body\n", encoding="utf-8")
 
-    docs = filesystem_skill_docs(tmp_path)
+    docs = asyncio.run(filesystem_skill_docs(tmp_path))
     if expected is None:
         assert docs == []
     else:
-        assert [(doc["id"], doc["description"], doc["content"]) for doc in docs] == [
-            (*expected, "# Body\n")
-        ]
+        assert [(doc["id"], doc["description"]) for doc in docs] == [expected]
+        assert "# Body\n" in docs[0]["content"]
+        assert "<available_scripts />" in docs[0]["content"]
 
 
 def test_list_and_get_skills(make_skill):
@@ -113,6 +116,20 @@ def test_validation_rejects_empty_and_oversized_fields():
     with pytest.raises(HTTPException) as empty_content:
         asyncio.run(manager.create("ok-name", "desc", ""))
     assert empty_content.value.status_code == 422
+
+
+@pytest.mark.parametrize("name", ["bad--skill", "bad-skill-", "-bad-skill", "bad_skill"])
+def test_skill_validation_matches_native_name_rules(name):
+    repo = InMemoryByIdRepository()
+    manager = SkillManager(repo)
+
+    with pytest.raises(HTTPException) as invalid:
+        asyncio.run(manager.create(name, "Description", "Instructions"))
+    assert invalid.value.status_code == 422
+    assert asyncio.run(repo.list_all()) == []
+    with pytest.raises(HTTPException) as lookup:
+        manager.validate_name(name)
+    assert lookup.value.status_code == 400
 
 
 def test_owner_catalog_combines_globals_and_only_current_users_skills():
