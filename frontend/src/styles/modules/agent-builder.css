@@ -455,6 +455,45 @@
   color: var(--alert-red);
 }
 
+.agent-builder-mcp-server {
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.agent-builder-mcp-server .agent-builder-starter-label {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.mcp-server-options {
+  flex-basis: 100%;
+  min-width: 0;
+  color: var(--text-primary);
+}
+
+.mcp-server-options summary {
+  cursor: pointer;
+}
+
+.mcp-server-options label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 0.85rem;
+}
+
+.mcp-server-options label.mcp-server-toggle {
+  flex-direction: row;
+  align-items: center;
+}
+
+.mcp-server-options .agent-builder-input {
+  flex: initial;
+  width: 100%;
+}
+
 .agent-builder-starter-add {
   display: flex;
   flex-wrap: wrap;

@@ -54,13 +54,16 @@ def test_list_returns_only_owner_conversations(client):
 
 
 def test_live_session_endpoints_reject_other_users_without_cleanup(client):
+    from contextlib import AsyncExitStack
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
     from main import app
     from session_data import _sessions
 
     tool = SimpleNamespace(close=AsyncMock())
-    session = SimpleNamespace(user_id="owner", mcp_tools=[tool])
+    resources = AsyncExitStack()
+    resources.push_async_callback(tool.close)
+    session = SimpleNamespace(user_id="owner", resources=resources)
     _sessions["private-session"] = session
     app.dependency_overrides[get_current_user] = _as_user("other")
     try:
@@ -73,12 +76,15 @@ def test_live_session_endpoints_reject_other_users_without_cleanup(client):
 
 
 def test_session_cleanup_is_idempotent():
+    from contextlib import AsyncExitStack
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
     from session_data import close_session
 
     tool = SimpleNamespace(close=AsyncMock())
-    sessions = {"test": SimpleNamespace(mcp_tools=[tool])}
+    resources = AsyncExitStack()
+    resources.push_async_callback(tool.close)
+    sessions = {"test": SimpleNamespace(resources=resources)}
     async def scenario():
         await close_session("test", sessions=sessions)
         await close_session("test", sessions=sessions)
@@ -192,12 +198,13 @@ def test_list_excludes_other_users(client):
 # ---------------------------------------------------------------------------
 
 def test_failed_history_delete_keeps_conversation_retryable(client, monkeypatch):
+    from contextlib import AsyncExitStack
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
     from session_data import _sessions
 
     _seed("dev-user", "retry-delete")
-    session = SimpleNamespace(user_id="dev-user", mcp_tools=[])
+    session = SimpleNamespace(user_id="dev-user", resources=AsyncExitStack())
     _sessions["retry-delete"] = session
     history = _FakeHistory([])
     history.clear = AsyncMock(side_effect=RuntimeError("Store unavailable"))

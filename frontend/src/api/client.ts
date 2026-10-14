@@ -30,6 +30,8 @@ import type {
   SSEUsageEvent,
   SSEErrorEvent,
   SSEAgentViewEvent,
+  ToolApprovalRequest,
+  ToolApprovalResponse,
 } from '../types/api';
 import { createParser } from 'eventsource-parser';
 import {
@@ -353,6 +355,7 @@ export interface SSECallback {
   onText?: (data: SSETextEvent) => void;
   onFunctionCall?: (data: SSEFunctionCallEvent) => void;
   onFunctionResult?: (data: SSEFunctionResultEvent) => void;
+  onToolApproval?: (data: ToolApprovalRequest) => void;
   onUsage?: (data: SSEUsageEvent) => void;
   onError?: (data: SSEErrorEvent) => void;
   onAgentView?: (data: SSEAgentViewEvent) => void;
@@ -365,6 +368,7 @@ export async function sendMessage(
   images: File[] | null,
   callbacks: SSECallback,
   signal?: AbortSignal,
+  approvals?: ToolApprovalResponse[],
 ): Promise<void> {
   let body: BodyInit;
   // Send the user's local date/time so the backend can give the model temporal
@@ -381,7 +385,7 @@ export async function sendMessage(
     body = formData;
     // Let browser set Content-Type with boundary for multipart
   } else {
-    body = JSON.stringify({ content, client_time: clientTime });
+    body = JSON.stringify({ content, client_time: clientTime, ...(approvals ? { approvals } : {}) });
   }
 
   const resp = await request(
@@ -437,6 +441,9 @@ function dispatchSSEEvent(
       break;
     case 'function_result':
       callbacks.onFunctionResult?.(data as SSEFunctionResultEvent);
+      break;
+    case 'tool_approval_request':
+      callbacks.onToolApproval?.(data as ToolApprovalRequest);
       break;
     case 'usage':
       callbacks.onUsage?.(data as SSEUsageEvent);

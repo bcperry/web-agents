@@ -1,7 +1,9 @@
 """Tests for FastAPI API endpoints."""
 
 import asyncio
+import json
 import os
+from contextlib import AsyncExitStack
 from types import SimpleNamespace
 import pytest
 
@@ -18,7 +20,7 @@ from prompt_config import load_agents_yaml
 def test_mcp_test_defaults_transport_and_extracts_bearer_token(client, monkeypatch, scheme):
     from mcp_servers import MCPConnectionResult
 
-    async def connect(configs, *, user_token):
+    async def connect(configs, *, user_token, exit_stack):
         assert len(configs) == 1
         assert configs[0].transport == "http"
         assert user_token == "test-token"
@@ -30,6 +32,144 @@ def test_mcp_test_defaults_transport_and_extracts_bearer_token(client, monkeypat
     }, headers={"Authorization": f"{scheme} test-token"})
     assert response.status_code == 200
     assert response.json()["results"][0]["name"] == "lookup"
+
+
+@pytest.mark.parametrize("scoped", [False, True])
+def test_mcp_session_rotates_request_credentials_and_releases_native_resources(monkeypatch, scoped):
+    import time
+    from functools import partial
+    from unittest.mock import Mock
+
+    import httpx
+    from agent_framework import ChatResponse, ChatResponseUpdate, Content, MCPStreamableHTTPTool, ResponseStream
+    from agent_framework.openai import OpenAIChatClient
+    from azure.core.credentials import AccessToken
+    from mcp.server.fastmcp import FastMCP
+    from starlette.middleware.base import BaseHTTPMiddleware
+
+    import agent_factory
+    import mcp_servers
+    from main import app
+
+    async def scenario():
+        server = FastMCP("workflow", stateless_http=True, json_response=True)
+        seen_headers = []
+        credentials = []
+        invocations = []
+
+        @server.tool()
+        def lookup() -> str:
+            invocations.append("lookup")
+            return "MCP tool response"
+
+        @server.tool()
+        def details() -> str:
+            return "Loaded on demand"
+
+        async def record_headers(request, call_next):
+            seen_headers.append(request.headers.get("authorization"))
+            return await call_next(request)
+
+        def credential(**kwargs):
+            created = Mock(spec=["get_token", "close"])
+            created.get_token.return_value = AccessToken(f"obo-{kwargs['user_assertion']}", int(time.time()) + 3600)
+            credentials.append(created)
+            return created
+
+        monkeypatch.setenv("AZURE_AD_CLIENT_ID", "test-client")
+        monkeypatch.setenv("AZURE_AD_CLIENT_SECRET", "test-secret")
+        monkeypatch.setenv("AZURE_AD_AUTHORITY", "https://login.microsoftonline.us/test-tenant")
+        monkeypatch.setattr(mcp_servers, "OnBehalfOfCredential", credential)
+        model = OpenAIChatClient(model="offline", api_key="offline", base_url="https://example.invalid/v1")
+        call_count = 0
+
+        def model_response(*, messages, options, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            names = {tool.name for tool in options["tools"]}
+            assert "workflow_lookup" in names
+            assert "workflow_details" not in names
+            content = (Content.from_text("Done") if messages[-1].role == "tool" else
+                       Content.from_function_call(f"call-{call_count}", "workflow_lookup", arguments={}))
+
+            async def updates():
+                yield ChatResponseUpdate(contents=[content])
+
+            return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+        monkeypatch.setattr(model, "_inner_get_response", model_response)
+        monkeypatch.setattr(agent_factory, "_build_openai_clients", lambda: (model, model))
+        mcp_app = server.streamable_http_app()
+        mcp_app.add_middleware(BaseHTTPMiddleware, dispatch=record_headers)
+        async with server.session_manager.run(), httpx.AsyncClient(transport=httpx.ASGITransport(app=mcp_app)) as transport:
+            monkeypatch.setattr(mcp_servers, "MCPStreamableHTTPTool", partial(MCPStreamableHTTPTool, http_client=transport))
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://app") as api:
+                entry = {"name": "workflow", "transport": "http", "url": "http://localhost:8123/mcp", "authenticated": True}
+                entry.update(tool_name_prefix="workflow", use_progressive_disclosure=True, always_load=["lookup"],
+                             approval_mode="always_require")
+                if scoped:
+                    entry["authScope"] = "api://workflow/.default"
+                payload = {"profile_id": "custom", "custom_name": "MCP workflow", "custom_prompt": "Use lookup",
+                           "custom_tools": [], "mcp_servers": [entry]}
+                created = await api.post("/api/sessions", json=payload, headers={"Authorization": "Bearer initial"})
+                assert created.status_code == 201, created.text
+                assert created.json()["mcp_results"][0]["status"] == "connected", created.text
+                session_id = created.json()["session_id"]
+                session = _sessions[session_id]
+                tool = session.tools[0]
+                for token in ("initial", "refreshed"):
+                    start = len(seen_headers)
+                    response = await api.post(f"/api/sessions/{session_id}/messages", json={"content": "Run lookup"},
+                                              headers={"Authorization": f"Bearer {token}"})
+                    assert "event: tool_approval_request" in response.text, response.text
+                    assert len(invocations) == (0 if token == "initial" else 1)
+                    approval = next(json.loads(line[6:]) for line in response.text.splitlines()
+                                    if line.startswith("data: ") and "function_approval_request" in line)
+                    answer = {"type": "function_approval_response", "id": approval["function_call"].get("id") or approval["id"], "approved": True,
+                              "function_call": approval["function_call"]}
+                    changed = {**answer, "function_call": {**answer["function_call"], "arguments": {"unexpected": True}}}
+                    response = await api.post(f"/api/sessions/{session_id}/messages", json={"approvals": [changed]},
+                                              headers={"Authorization": f"Bearer {token}"})
+                    assert "event: function_result" in response.text, response.text
+                    assert "MCP tool response" in response.text
+                    assert len(invocations) == (1 if token == "initial" else 2)
+                    replay = await api.post(f"/api/sessions/{session_id}/messages", json={"approvals": [answer]},
+                                            headers={"Authorization": f"Bearer {token}"})
+                    assert "event: function_result" not in replay.text
+                    assert len(invocations) == (1 if token == "initial" else 2)
+                    expected = f"Bearer {'obo-' if scoped else ''}{token}"
+                    assert seen_headers[start:] and set(seen_headers[start:]) == {expected}
+                    assert token not in response.text
+                response = await api.post(f"/api/sessions/{session_id}/messages", json={"content": "Run lookup"},
+                                          headers={"Authorization": "Bearer refreshed"})
+                approval = next(json.loads(line[6:]) for line in response.text.splitlines()
+                                if line.startswith("data: ") and "function_approval_request" in line)
+                denied = {"type": "function_approval_response", "id": approval["id"], "approved": False,
+                          "function_call": approval["function_call"]}
+                response = await api.post(f"/api/sessions/{session_id}/messages", json={"approvals": [denied]},
+                                          headers={"Authorization": "Bearer refreshed"})
+                assert "event: error" not in response.text, response.text
+                assert len(invocations) == 2
+                start = len(seen_headers)
+                refused = await api.post(f"/api/sessions/{session_id}/messages", json={"content": "Run lookup"})
+                assert "event: error" in refused.text
+                assert len(seen_headers) == start
+                assert (await api.delete(f"/api/sessions/{session_id}")).status_code == 204
+                assert session_id not in _sessions
+                assert not tool.is_connected
+                if scoped:
+                    assert len(credentials) == 2
+                    for issued in credentials:
+                        issued.get_token.assert_called_once()
+                        issued.close.assert_called_once()
+                    monkeypatch.delenv("AZURE_AD_CLIENT_SECRET")
+                    start = len(seen_headers)
+                    refused = await api.post("/api/sessions", json=payload, headers={"Authorization": "Bearer initial"})
+                    assert refused.json()["mcp_results"][0]["status"] == "failed"
+                    assert len(seen_headers) == start
+                    await api.delete(f"/api/sessions/{refused.json()['session_id']}")
+
+    asyncio.run(scenario())
 
 
 def faa_profile_name() -> str:
@@ -50,7 +190,7 @@ def test_mcp_test_rejects_invalid_json_body(client, monkeypatch, body):
 
 @pytest.mark.parametrize("body", ['[]', 'null', '42', '{"content": null}', '{"content": 7}', '{"content": []}', 'not-json'])
 def test_messages_reject_malformed_content_before_runtime_access(client, body):
-    _sessions["invalid-message"] = SimpleNamespace(user_id="dev-user", mcp_tools=[])
+    _sessions["invalid-message"] = SimpleNamespace(user_id="dev-user", resources=AsyncExitStack())
     response = client.post("/api/sessions/invalid-message/messages", content=body, headers={"Content-Type": "application/json"})
     assert response.status_code == 400
     assert "Body must be" in response.json()["detail"]
@@ -181,7 +321,7 @@ def test_standard_profile_session_preserves_runtime_request_and_response(client,
             prompt_logical_profile="search",
         )
 
-    async def fake_connect_mcp_servers(configs, *, user_token=None):
+    async def fake_connect_mcp_servers(configs, *, user_token=None, exit_stack):
         calls["mcp_configs"] = configs
         calls["user_token"] = user_token
         return [], []
@@ -253,7 +393,7 @@ def test_sap_sessions_report_authorized_database_tools(client, monkeypatch):
             prompt_logical_profile=requested_profile_id,
         )
 
-    async def fake_connect_mcp_servers(configs, *, user_token=None):
+    async def fake_connect_mcp_servers(configs, *, user_token=None, exit_stack):
         return [], []
 
     monkeypatch.setattr(session_orchestration, "_database_tools", fake_database_tools)
@@ -294,7 +434,7 @@ def test_sap_session_omits_database_tools_when_unentitled(client, monkeypatch):
             prompt_logical_profile="sap_force_equipment",
         )
 
-    async def fake_connect_mcp_servers(configs, *, user_token=None):
+    async def fake_connect_mcp_servers(configs, *, user_token=None, exit_stack):
         return [], []
 
     monkeypatch.setattr(session_orchestration, "_database_tools", fake_database_tools)
@@ -330,7 +470,7 @@ def test_custom_session_preserves_runtime_request_and_response(client, monkeypat
             prompt_logical_profile="custom",
         )
 
-    async def fake_connect_mcp_servers(configs, *, user_token=None):
+    async def fake_connect_mcp_servers(configs, *, user_token=None, exit_stack):
         return [], []
 
     monkeypatch.setattr(session_orchestration, "create_chat_runtime", fake_create_chat_runtime)
@@ -392,7 +532,7 @@ def test_builtin_profile_override_session_preserves_canonical_name(client, monke
             prompt_logical_profile="custom",
         )
 
-    async def fake_connect_mcp_servers(configs, *, user_token=None):
+    async def fake_connect_mcp_servers(configs, *, user_token=None, exit_stack):
         return [], []
 
     monkeypatch.setattr(session_orchestration, "create_chat_runtime", fake_create_chat_runtime)
@@ -464,7 +604,7 @@ def test_custom_session_drops_unknown_skills(client, monkeypatch, caplog):
             prompt_logical_profile="custom",
         )
 
-    async def fake_connect_mcp_servers(configs, *, user_token=None):
+    async def fake_connect_mcp_servers(configs, *, user_token=None, exit_stack):
         return [], []
 
     monkeypatch.setattr(session_orchestration, "create_chat_runtime", fake_create_chat_runtime)
@@ -513,7 +653,7 @@ def test_builtin_profile_override_drops_unknown_skills(client, monkeypatch, capl
             prompt_logical_profile="custom",
         )
 
-    async def fake_connect_mcp_servers(configs, *, user_token=None):
+    async def fake_connect_mcp_servers(configs, *, user_token=None, exit_stack):
         return [], []
 
     monkeypatch.setattr(session_orchestration, "create_chat_runtime", fake_create_chat_runtime)
@@ -650,7 +790,7 @@ def test_custom_session_creation_tool_grants_are_exact(client, monkeypatch):
             prompt_logical_profile="custom",
         )
 
-    async def fake_connect_mcp_servers(configs, *, user_token=None):
+    async def fake_connect_mcp_servers(configs, *, user_token=None, exit_stack):
         return [], []
 
     monkeypatch.setattr(session_orchestration, "create_chat_runtime", fake_create_chat_runtime)
@@ -723,7 +863,7 @@ def _stub_runtime(monkeypatch):
             prompt_logical_profile="custom",
         )
 
-    async def fake_connect_mcp_servers(configs, *, user_token=None):
+    async def fake_connect_mcp_servers(configs, *, user_token=None, exit_stack):
         return [], []
 
     monkeypatch.setattr(session_orchestration, "create_chat_runtime", fake_create_chat_runtime)

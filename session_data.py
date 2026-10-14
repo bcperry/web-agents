@@ -1,6 +1,7 @@
 """Runtime state for currently active chat sessions."""
 
 import asyncio
+from contextlib import AsyncExitStack
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -9,7 +10,6 @@ from agent_framework import AgentSession, UsageDetails
 from fastapi import HTTPException
 
 from eval_trace import EvalTraceLogger
-from mcp_servers import cleanup_mcp_servers
 
 
 class SessionData:
@@ -19,7 +19,7 @@ class SessionData:
         "session_id", "user_id", "profile_id", "profile_name",
         "agent", "agent_session", "tools", "usage",
         "eval_trace_logger", "prompt_logical_profile",
-        "created_at", "context_usage", "mcp_tools",
+        "created_at", "context_usage", "resources",
     )
 
     def __init__(
@@ -52,7 +52,7 @@ class SessionData:
             "max_context_chars": 0,
             "last_context_chars": 0,
         }
-        self.mcp_tools: list[Any] = []
+        self.resources = AsyncExitStack()
 
 
 _sessions: dict[str, SessionData] = {}
@@ -90,8 +90,7 @@ async def _dispose_session(session_id: str, session: SessionData) -> None:
     from agent_views import clear_view_data_budget
 
     clear_view_data_budget(session_id)
-    tools, session.mcp_tools = session.mcp_tools, []
-    cleanup = asyncio.create_task(cleanup_mcp_servers(tools))
+    cleanup = asyncio.create_task(session.resources.aclose())
     try:
         await asyncio.shield(cleanup)
     except asyncio.CancelledError:

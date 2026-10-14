@@ -4,6 +4,7 @@ import logging
 import os
 import uuid
 from collections.abc import Callable, Iterable
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,7 +18,7 @@ from cosmos_memory import get_conversation_repository
 from database import DATABASE_TOOL_NAMES
 from eval_trace import EvalTraceLogger
 from mcp_servers import HttpMcpServerRequest as McpServerEntryRequest
-from mcp_servers import MCPServerConfig, cleanup_mcp_servers, connect_mcp_servers, parse_mcp_server_configs, sanitize_mcp_result_error
+from mcp_servers import MCPServerConfig, connect_mcp_servers, parse_mcp_server_configs, sanitize_mcp_result_error
 from session_data import SessionData, replace_session
 from user_data import get_custom_agents_repository, get_user_profile_repository
 from prompt_config import (
@@ -74,12 +75,12 @@ class SessionContext:
 
 @dataclass(frozen=True)
 class RuntimeDependencies:
-    """Runtime inputs plus cleanup-only MCP tools for one chat session."""
+    """Runtime inputs and the native resource contexts owned by one session."""
 
     function_tools: list[Any]
     tool_names: list[str]
     mcp_tools: list[Any]
-    session_mcp_tools: list[Any]
+    resources: AsyncExitStack
     mcp_results: list[Any]
     profile_context: str
     sub_agent_resources: dict[str, SubAgentResources]
@@ -211,7 +212,7 @@ async def _resolve_builtin_sub_agent_resources(
     user_id: str,
     session_id: str,
     logger: logging.Logger,
-    owned_mcp_tools: list[Any],
+    resources: AsyncExitStack,
 ) -> dict[str, SubAgentResources]:
     """Resolve builtin resources, registering connected tools for caller cleanup."""
     profiles_doc = load_agents_yaml().get("profiles") or {}
@@ -235,14 +236,15 @@ async def _resolve_builtin_sub_agent_resources(
         )
         try:
             mcp_configs = parse_mcp_server_configs(entry, interpolate_env=True)
-            mcp_tools, mcp_results = await connect_mcp_servers(mcp_configs, user_token=user_bearer_token)
+            mcp_tools, mcp_results = await connect_mcp_servers(
+                mcp_configs, exit_stack=resources, user_token=user_bearer_token,
+            )
         except Exception as exc:  # noqa: BLE001 — orphan/connection errors must not crash parent
             logger.warning("Sub-agent '%s' MCP connect failed: %s", profile_id, exc)
             mcp_tools, mcp_results = [], []
         for r in mcp_results:
             if r.status == "failed":
                 logger.warning("Sub-agent '%s' MCP server '%s' failed: %s", profile_id, r.name, r.error)
-        owned_mcp_tools.extend(mcp_tools)
         skills = entry.get("skills") or []
         skill_names = [str(s) for s in skills if isinstance(s, str)]
         resources_by_profile[profile_id] = SubAgentResources(
@@ -285,24 +287,26 @@ async def _resolve_runtime_dependencies(
         if "get_user_profile" in tool_name_set
         else ""
     )
-    mcp_tools, mcp_results = await connect_mcp_servers(mcp_configs, user_token=user_bearer_token)
-    owned_mcp_tools = list(mcp_tools)
+    resources = AsyncExitStack()
     resolved = False
     try:
+        mcp_tools, mcp_results = await connect_mcp_servers(
+            mcp_configs, exit_stack=resources, user_token=user_bearer_token,
+        )
         sub_agent_resources = await _resolve_builtin_sub_agent_resources(
             sub_agent_refs, ctx=ctx, user_bearer_token=user_bearer_token,
             user_id=user.user_id, session_id=session_id, logger=logger,
-            owned_mcp_tools=owned_mcp_tools,
+            resources=resources,
         )
         resolved = True
     finally:
         if not resolved:
-            await cleanup_mcp_servers(owned_mcp_tools)
+            await resources.aclose()
     return RuntimeDependencies(
         function_tools=function_tools,
         tool_names=loaded_tool_names,
         mcp_tools=mcp_tools,
-        session_mcp_tools=owned_mcp_tools,
+        resources=resources,
         mcp_results=mcp_results,
         profile_context=profile_context,
         sub_agent_resources=sub_agent_resources,
@@ -407,7 +411,7 @@ def _build_session_data(
     profile_name: str,
     chat_runtime: ChatRuntime,
     agent_session: AgentSession,
-    mcp_tools: list[Any],
+    resources: AsyncExitStack,
 ) -> SessionData:
     session_data = ctx.session_data_cls(
         session_id=session_id,
@@ -420,7 +424,7 @@ def _build_session_data(
         eval_trace_logger=EvalTraceLogger.from_env(),
         prompt_logical_profile=chat_runtime.prompt_logical_profile,
     )
-    session_data.mcp_tools = mcp_tools
+    session_data.resources = resources
     return session_data
 
 
@@ -596,7 +600,7 @@ async def _start_session(
         session_data = _build_session_data(ctx, session_id=session_id, user=user, profile_id=definition.profile_id,
                        profile_name=profile.name, chat_runtime=runtime,
                        agent_session=runtime.session,
-                       mcp_tools=dependencies.session_mcp_tools)
+                       resources=dependencies.resources)
         registered = True
         await replace_session(session_data, sessions=ctx.sessions)
         return response
@@ -607,7 +611,7 @@ async def _start_session(
         raise HTTPException(status_code=500, detail="Session creation failed. Please try again.") from exc
     finally:
         if dependencies is not None and not registered:
-            await cleanup_mcp_servers(dependencies.session_mcp_tools)
+            await dependencies.resources.aclose()
 
 
 __all__ = [

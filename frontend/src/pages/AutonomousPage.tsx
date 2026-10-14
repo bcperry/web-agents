@@ -21,6 +21,7 @@ import { useAuth } from '../hooks/useAuth';
 import { emitToast } from '../hooks/useToast';
 import { ChatMessage } from '../components/ChatMessage';
 import { ChatInput } from '../components/ChatInput';
+import { ToolApprovals } from '../components/ToolApprovals';
 import { AgentViewPane } from '../components/AgentViewPane';
 import { SettingsMenu } from '../components/SettingsMenu';
 import { getRuntimeConfigSnapshot } from '../config/runtimeConfig';
@@ -77,7 +78,7 @@ export function AutonomousPage({ onBack, onOpenAdmin }: AutonomousPageProps) {
   const startedRef = useRef(false);
 
   const agentViews = useAgentViews();
-  const { messages, isStreaming, session, startSession, endSession, send } = useChat(
+  const { messages, isStreaming, session, startSession, endSession, send, pendingApprovals, respondToApprovals } = useChat(
     undefined,
     agentViews.handleAgentViewEvent,
   );
@@ -473,7 +474,10 @@ export function AutonomousPage({ onBack, onOpenAdmin }: AutonomousPageProps) {
               )}
             </div>
             {canChat && (
-              <ChatInput onSend={(content) => send(content)} disabled={isStreaming || !session} />
+              <>
+                <ToolApprovals requests={pendingApprovals} disabled={isStreaming} onRespond={respondToApprovals} />
+                <ChatInput onSend={(content) => send(content)} disabled={isStreaming || !session || pendingApprovals.length > 0} />
+              </>
             )}
           </section>
         </div>

@@ -7,6 +7,8 @@ import type {
   SessionCreateResponse,
   SSEAgentViewEvent,
   ToolInvocation,
+  ToolApprovalRequest,
+  ToolApprovalResponse,
   UsageDetails,
 } from '../types/api';
 import {
@@ -27,6 +29,7 @@ export function useChat(
   const [sessionUsage, setSessionUsage] = useState<UsageDetails>(emptyUsage);
   const [error, setError] = useState<string | null>(null);
   const [saveCounter, setSaveCounter] = useState(0);
+  const [pendingApprovals, setPendingApprovals] = useState<ToolApprovalRequest[]>([]);
 
   const generationRef = useRef(0);
   const lifecycleRef = useRef<Promise<unknown>>(Promise.resolve());
@@ -56,6 +59,7 @@ export function useChat(
     sessionRef.current = null;
     setSession(null);
     setMessages([]);
+    setPendingApprovals([]);
     setIsStreaming(false);
     const operation = lifecycleRef.current.then(async () => {
       try {
@@ -100,12 +104,13 @@ export function useChat(
     setSession(null);
     setIsStreaming(false);
     setMessages([]);
+    setPendingApprovals([]);
     setSessionUsage(emptyUsage());
     lifecycleRef.current = lifecycleRef.current.then(() => cleanupSession(previous));
     await lifecycleRef.current;
   }, [invalidateRequest]);
 
-  const send = useCallback(async (content: string, images?: File[]) => {
+  const send = useCallback(async (content: string, images?: File[], approvals?: ToolApprovalResponse[]) => {
     if (!session || requestRef.current) {
       setError('No active session. Please select a profile first.');
       return;
@@ -115,8 +120,14 @@ export function useChat(
     const generation = generationRef.current;
     const isCurrent = () => generation === generationRef.current && !controller.signal.aborted;
     let text = '';
-    let tools: ToolInvocation[] = [];
-    const assistantIndex = messages.length + 1;
+    let tools: ToolInvocation[] = (approvals ?? []).map(({ function_call: call }) => ({
+      call_id: call.call_id,
+      name: call.name,
+      arguments: typeof call.arguments === 'string' ? call.arguments : JSON.stringify(call.arguments ?? {}),
+      result: '',
+    }));
+    let hadError = false;
+    const assistantIndex = messages.length + (approvals ? 0 : 1);
     const updateAssistant = (patch: Partial<ChatMessage>) => {
       setMessages(previous => previous.map((message, index) =>
         index === assistantIndex ? { ...message, ...patch } : message));
@@ -137,8 +148,8 @@ export function useChat(
 
     setMessages((prev) => [
       ...prev,
-      userMessage,
-      { role: 'assistant', content: '', tool_invocations: [], usage: null },
+      ...(approvals ? [] : [userMessage]),
+      { role: 'assistant', content: '', tool_invocations: tools, usage: null },
     ]);
 
     try {
@@ -189,6 +200,10 @@ export function useChat(
             );
             updateAssistant({ tool_invocations: tools });
           },
+          onToolApproval: (data) => {
+            if (!isCurrent()) return;
+            setPendingApprovals(previous => previous.some(item => item.id === data.id) ? previous : [...previous, data]);
+          },
           onUsage: (data) => {
             if (!isCurrent()) return;
             setSessionUsage((prev) => ({
@@ -200,6 +215,7 @@ export function useChat(
           },
           onError: (data) => {
             if (!isCurrent()) return;
+            hadError = true;
             const isRetryable = data.retry_after != null;
             emitToast({
               message: data.message,
@@ -212,6 +228,10 @@ export function useChat(
           },
           onDone: () => {
             if (!isCurrent()) return;
+            if (approvals && !hadError) {
+              const answered = new Set(approvals.map(item => item.id));
+              setPendingApprovals(previous => previous.filter(item => !answered.has(item.function_call.id ?? item.id)));
+            }
             setIsStreaming(false);
             if (tools.some((tool) =>
               tool.name === 'create_agent' || tool.name === 'edit_agent'
@@ -225,6 +245,7 @@ export function useChat(
           },
         },
         controller.signal,
+        approvals,
       );
     } catch (err) {
       if (!isCurrent()) return;
@@ -256,5 +277,12 @@ export function useChat(
     startSession,
     endSession,
     send,
+    pendingApprovals,
+    respondToApprovals: (approved: boolean) => send('', undefined, pendingApprovals.map(item => ({
+      type: 'function_approval_response',
+      id: item.function_call.id ?? item.id,
+      approved,
+      function_call: item.function_call,
+    }))),
   };
 }

@@ -1,4 +1,4 @@
-"""Focused browser coverage for optional creation-tool grants in Agent Builder."""
+"""Browser workflows for agent editing, streaming, and native MCP approvals."""
 
 from __future__ import annotations
 
@@ -159,6 +159,16 @@ def test_agent_builder_renders_and_preserves_independent_creation_tools(viewport
             ).is_checked()
             page.get_by_role("textbox", name="Starter 1 button label").fill("Updated label")
             page.get_by_role("textbox", name="Starter 1 message").fill("Updated message")
+            mcp_section = page.locator('.agent-builder-section').filter(has=page.get_by_role("heading", name="MCP SERVERS", exact=True))
+            mcp_section.get_by_placeholder("Server name").fill("workflow")
+            mcp_section.get_by_placeholder("Server URL", exact=False).fill("https://example.test/mcp")
+            mcp_section.get_by_role("button", name="+ ADD", exact=True).click()
+            mcp_section.locator("summary").click()
+            mcp_section.get_by_label("Tool name prefix").fill("workflow")
+            mcp_section.get_by_label("Require approval").check()
+            mcp_section.get_by_label("Progressive loading", exact=False).check()
+            mcp_section.get_by_label("Always-loaded tools").fill("lookup")
+            mcp_section.get_by_label("Always-loaded tools").press("Tab")
             page.get_by_role("button", name="UPDATE AGENT").click()
             edited_write = next(
                 payload for path, payload in writes
@@ -167,6 +177,10 @@ def test_agent_builder_renders_and_preserves_independent_creation_tools(viewport
             assert edited_write["starters"] == [{
                 "label": "Updated label", "message": "Updated message",
             }]
+            assert edited_write["mcpServers"][0]["approval_mode"] == "always_require"
+            assert edited_write["mcpServers"][0]["tool_name_prefix"] == "workflow"
+            assert edited_write["mcpServers"][0]["use_progressive_disclosure"] is True
+            assert edited_write["mcpServers"][0]["always_load"] == ["lookup"]
             stored_agents = client.get("/api/custom-agents").json()["agents"]
             assert stored_agents[0]["starters"] == edited_write["starters"]
 
@@ -275,6 +289,41 @@ def test_agent_builder_renders_and_preserves_independent_creation_tools(viewport
                 page.get_by_role("button", name=re.compile(rf"\[TOOL\] {name}")).click()
                 playwright.expect(page.get_by_text(result, exact=True)).to_be_visible()
             playwright.expect(page.locator(".tool-step-code").filter(has_text='"id": 1')).to_have_count(1)
+            approvals = page.get_by_role("region", name="Tool approvals")
+            for decision in (False, True):
+                composer.fill("Approval workflow")
+                page.get_by_role("button", name="TRANSMIT").click()
+                approval = {"type": "function_approval_request", "id": "request-1", "function_call": {
+                    "type": "function_call", "id": "occurrence-1", "call_id": "approval-call", "name": "workflow_lookup",
+                    "arguments": {"record": "A-123"},
+                }}
+                pending_messages[-1].fulfill(content_type="text/event-stream", body=
+                    f"event: tool_approval_request\ndata: {json.dumps(approval)}\n\nevent: done\ndata: {{}}\n\n")
+                playwright.expect(approvals).to_be_visible()
+                playwright.expect(composer).to_be_disabled()
+                assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+                page.screenshot(path=f"test-results/mcp-approval-{viewport['width']}.png", full_page=True)
+                approvals.get_by_role("button", name="Approve", exact=True).click()
+                playwright.expect(approvals.get_by_role("button", name="Deny", exact=True)).to_be_disabled()
+                answer = pending_messages[-1].request.post_data_json
+                assert answer["approvals"][0]["id"] == "occurrence-1"
+                assert answer["approvals"][0]["approved"] is True
+                if not decision:
+                    pending_messages[-1].fulfill(content_type="text/event-stream", body=
+                        'event: error\ndata: {"message":"Approval retry required"}\n\nevent: done\ndata: {}\n\n')
+                    playwright.expect(approvals.get_by_role("button", name="Deny", exact=True)).to_be_enabled()
+                    playwright.expect(composer).to_be_disabled()
+                    approvals.get_by_role("button", name="Deny", exact=True).click()
+                    assert pending_messages[-1].request.post_data_json["approvals"][0]["approved"] is False
+                pending_messages[-1].fulfill(content_type="text/event-stream", body=
+                    'event: function_result\ndata: {"call_id":"approval-call","result":"Resolved"}\n\nevent: done\ndata: {}\n\n')
+                playwright.expect(approvals).to_have_count(0)
+                playwright.expect(composer).to_be_enabled()
+            composer.fill("Leave approval pending")
+            page.get_by_role("button", name="TRANSMIT").click()
+            pending_messages[-1].fulfill(content_type="text/event-stream", body=
+                f"event: tool_approval_request\ndata: {json.dumps(approval)}\n\nevent: done\ndata: {{}}\n\n")
+            playwright.expect(approvals).to_be_visible()
             page.route("**/api/conversations?*", lambda route: route.fulfill(json={
                 "conversations": [{"id": "shared", "profileId": "builtin", "profileName": "Built In",
                     "description": "Resume race", "lastActivityAt": "2026-09-10T00:00:00Z"}],
@@ -283,6 +332,7 @@ def test_agent_builder_renders_and_preserves_independent_creation_tools(viewport
             if viewport["width"] <= 768:
                 page.locator('.header-sidebar-toggle').click()
             page.get_by_role("button", name="+ NEW CHAT").click()
+            playwright.expect(approvals).to_have_count(0)
             if viewport["width"] <= 768:
                 page.locator('.header-sidebar-toggle').click()
             with page.expect_request(lambda request: request.method == "POST" and request.url.endswith("/api/sessions")):

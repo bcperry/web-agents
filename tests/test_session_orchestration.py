@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from contextlib import AsyncExitStack
 
 import pytest
 from fastapi import HTTPException
@@ -49,11 +50,12 @@ def test_overlapping_session_replacements_dispose_displaced_runtime(monkeypatch)
                 await release.wait()
             closed.extend(tools)
 
-        monkeypatch.setattr(session_data, "cleanup_mcp_servers", cleanup)
-        old, first, second = [
-            SimpleNamespace(session_id="same", mcp_tools=[name])
-            for name in ("old", "first", "second")
-        ]
+        runtimes = []
+        for name in ("old", "first", "second"):
+            resources = AsyncExitStack()
+            resources.push_async_callback(cleanup, [name])
+            runtimes.append(SimpleNamespace(session_id="same", resources=resources))
+        old, first, second = runtimes
         sessions = {"same": old}
         replacing = asyncio.create_task(session_data.replace_session(first, sessions=sessions))
         await closing.wait()
@@ -84,11 +86,12 @@ def test_cancelled_replacement_cleans_only_owned_resources(monkeypatch, replace_
                 await release.wait()
             closed.extend(tools)
 
-        monkeypatch.setattr(session_data, "cleanup_mcp_servers", cleanup)
-        old, first, second = [
-            SimpleNamespace(session_id="same", mcp_tools=[name])
-            for name in ("old", "first", "second")
-        ]
+        runtimes = []
+        for name in ("old", "first", "second"):
+            resources = AsyncExitStack()
+            resources.push_async_callback(cleanup, [name])
+            runtimes.append(SimpleNamespace(session_id="same", resources=resources))
+        old, first, second = runtimes
         sessions = {"same": old}
         replacing = asyncio.create_task(session_data.replace_session(first, sessions=sessions))
         await closing.wait()
@@ -113,34 +116,59 @@ def test_mcp_environment_expansion_requires_trusted_configuration(monkeypatch):
     assert parse_mcp_server_configs(payload, interpolate_env=True)[0].url.endswith("dummy-value")
 
 
+def test_mcp_connection_owner_preserves_healthy_servers_and_closes_them(monkeypatch):
+    from contextlib import AsyncExitStack
+    from unittest.mock import AsyncMock
+    from agent_framework import MCPStreamableHTTPTool
+    from mcp import ClientSession, types
+    import mcp_servers
+
+    async def scenario():
+        tools = []
+
+        def create(config, **kwargs):
+            session = AsyncMock(spec=ClientSession)
+            session._request_id = 1
+            session._server_capabilities = types.ServerCapabilities(tools=types.ToolsCapability())
+            session.list_tools.return_value = types.ListToolsResult(tools=[
+                types.Tool(name="lookup", inputSchema={"type": "object", "properties": {}}),
+            ])
+            if config.name == "unavailable":
+                session.list_tools.side_effect = RuntimeError("Discovery unavailable")
+            tool = MCPStreamableHTTPTool(name=config.name, url=config.url, session=session, load_prompts=False)
+            tools.append(tool)
+            return tool
+
+        monkeypatch.setattr(mcp_servers, "create_mcp_tool", create)
+        configs = [mcp_servers.MCPServerConfig(name=name, transport="http", url="https://example.invalid/mcp")
+                   for name in ("healthy", "unavailable")]
+        async with AsyncExitStack() as owner:
+            connected, results = await mcp_servers.connect_mcp_servers(configs, exit_stack=owner)
+            assert [tool.name for tool in connected] == ["healthy"]
+            assert [(result.name, result.status) for result in results] == [
+                ("healthy", "connected"), ("unavailable", "failed"),
+            ]
+            assert connected[0].is_connected
+        assert not any(tool.is_connected for tool in tools)
+
+    asyncio.run(scenario())
+
+
 def test_mcp_connection_cancellation_propagates(monkeypatch):
-    from types import SimpleNamespace
     from unittest.mock import AsyncMock
     import mcp_servers
 
-    tool = SimpleNamespace(connect=AsyncMock(side_effect=asyncio.CancelledError()))
+    tool = AsyncMock()
+    tool.__aenter__.side_effect = asyncio.CancelledError()
     monkeypatch.setattr(mcp_servers, "create_mcp_tool", lambda *args, **kwargs: tool)
     config = mcp_servers.MCPServerConfig(name="test", transport="http", url="https://example.test")
+
+    async def scenario():
+        async with AsyncExitStack() as resources:
+            await mcp_servers.connect_mcp_servers([config], exit_stack=resources)
+
     with pytest.raises(asyncio.CancelledError):
-        asyncio.run(mcp_servers.connect_mcp_servers([config]))
-
-
-@pytest.mark.parametrize("auth_token", [None, "test-token"])
-def test_http_mcp_uses_native_transport_auth(monkeypatch, auth_token):
-    from unittest.mock import Mock
-    import mcp_servers
-
-    constructor = Mock()
-    monkeypatch.setattr(mcp_servers, "MCPStreamableHTTPTool", constructor)
-    config = mcp_servers.MCPServerConfig(name="test", transport="http", url="https://example.test")
-    tool = mcp_servers.create_mcp_tool(config, auth_token=auth_token)
-    assert tool is constructor.return_value
-    kwargs = constructor.call_args.kwargs
-    assert "http_client" not in kwargs
-    if auth_token:
-        assert kwargs["static_headers"] == {"Authorization": "Bearer test-token"}
-    else:
-        assert "static_headers" not in kwargs
+        asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("transport", ["http", "stdio"])
@@ -254,19 +282,23 @@ def test_unknown_sub_agent_profile_does_not_fall_back():
     assert error.value.status_code == 400
 
 
-@pytest.mark.parametrize("allowed_tools", ["lookup", 42, {}, [None], ["lookup", 1]])
-def test_invalid_mcp_allowlist_is_rejected_before_connect(client, monkeypatch, allowed_tools):
+def test_invalid_mcp_options_are_rejected_before_connect(client, monkeypatch):
     from unittest.mock import AsyncMock
     from mcp_servers import parse_mcp_server_configs
 
-    payload = {"mcp_servers": [{"name": "test", "transport": "http",
-        "url": "https://example.test", "allowed_tools": allowed_tools}]}
-    with pytest.raises(ValueError, match="allowed_tools must be"):
-        parse_mcp_server_configs(payload)
     connect = AsyncMock()
     monkeypatch.setattr("api_routes.profiles.connect_mcp_servers", connect)
-    response = client.post("/api/mcp/test", json=payload)
-    assert response.status_code == 400
+    monkeypatch.setattr(session_orchestration, "connect_mcp_servers", connect)
+    invalid = [{"allowed_tools": value} for value in ("lookup", 42, {}, [None], ["lookup", 1])]
+    invalid.extend([{"tool_name_prefix": ""}, {"approval_mode": "unknown"},
+                    {"use_progressive_disclosure": "not-bool"}, {"always_load": 42}])
+    for options in invalid:
+        payload = {"mcp_servers": [{"name": "test", "transport": "http", "url": "https://example.test", **options}]}
+        with pytest.raises(ValueError):
+            parse_mcp_server_configs(payload)
+        assert client.post("/api/mcp/test", json=payload).status_code == 400
+        assert client.post("/api/sessions", json={**payload, "profile_id": "custom", "custom_name": "Test",
+                                                 "custom_prompt": "Help"}).status_code == 400
     connect.assert_not_called()
 
 
@@ -277,13 +309,14 @@ def test_session_setup_rolls_back_connected_resources(monkeypatch, failure_stage
     from session_data import SessionData
 
     close = AsyncMock()
+    resources = AsyncExitStack()
+    resources.push_async_callback(close)
     dependencies = session_orchestration.RuntimeDependencies(
-        function_tools=[], tool_names=[], mcp_tools=[], session_mcp_tools=[object()],
+        function_tools=[], tool_names=[], mcp_tools=[], resources=resources,
         mcp_results=[], profile_context="", sub_agent_resources={},
     )
     runtime = SimpleNamespace(agent=object(), tools=[], prompt_logical_profile="custom", sub_agent_tool_names=[])
     monkeypatch.setattr(session_orchestration, "_resolve_runtime_dependencies", AsyncMock(return_value=dependencies))
-    monkeypatch.setattr(session_orchestration, "cleanup_mcp_servers", close)
     monkeypatch.setattr(session_orchestration, "create_chat_runtime", Mock(
         return_value=runtime, side_effect=RuntimeError("test failure") if failure_stage == "runtime" else None,
     ))
@@ -300,7 +333,7 @@ def test_session_setup_rolls_back_connected_resources(monkeypatch, failure_stage
         ))
     assert error.value.status_code == (500 if failure_stage == "runtime" else 503)
     assert ctx.sessions == {}
-    close.assert_awaited_once_with(dependencies.session_mcp_tools)
+    close.assert_awaited_once_with()
 
 
 # ---------------------------------------------------------------------------

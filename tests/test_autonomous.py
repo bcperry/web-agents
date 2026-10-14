@@ -6,6 +6,7 @@ These run fully offline: the agent runtime is replaced at the
 """
 
 import asyncio
+from contextlib import AsyncExitStack
 from types import SimpleNamespace
 
 import pytest
@@ -29,7 +30,7 @@ def _fake_session_builder(ctx, *, body, auth_header, user, logger):
     async def _build():
         session_id = body["conversation_id"]
         ctx.sessions[session_id] = SimpleNamespace(
-            agent=object(), agent_session=object(), mcp_tools=[]
+            agent=object(), agent_session=object(), resources=AsyncExitStack()
         )
         return {"session_id": session_id, "profile_id": body["profile_id"]}
 
@@ -43,7 +44,8 @@ def _make_fake_response(text, tool_events, usage):
     return fake_response
 
 
-def test_collect_agent_response_uses_native_non_streaming_run():
+@pytest.mark.parametrize("requires_approval", [False, True])
+def test_collect_agent_response_uses_native_non_streaming_run(requires_approval):
     from unittest.mock import AsyncMock
     from agent_framework import AgentResponse, Content, Message
 
@@ -55,6 +57,14 @@ def test_collect_agent_response_uses_native_non_streaming_run():
     ], usage_details=usage)
     agent = SimpleNamespace(run=AsyncMock(return_value=response))
     session = object()
+
+    if requires_approval:
+        response.messages[-1].contents = [Content.from_function_approval_request(
+            "approval-1", Content.from_function_call("call-2", "protected", arguments={}),
+        )]
+        with pytest.raises(RuntimeError, match="requires interactive tool approval"):
+            asyncio.run(autonomous.collect_agent_response(agent, [Content.from_text("Run")], session))
+        return
 
     result = asyncio.run(autonomous.collect_agent_response(agent, [Content.from_text("Run")], session))
 

@@ -10,6 +10,62 @@ import user_data
 from agent_factory import CosmosSkillsSource
 
 
+def test_failed_tool_turn_remains_available_on_retry(monkeypatch):
+    from agent_framework import ChatResponse, ChatResponseUpdate, Content, ResponseStream
+    from agent_framework.openai import OpenAIChatClient
+    from prompt_config import AgentProfile
+
+    async def scenario():
+        model = OpenAIChatClient(model="offline", api_key="offline", base_url="https://example.invalid/v1")
+        calls = 0
+        retry_messages = []
+
+        def model_response(*, messages, **kwargs):
+            nonlocal calls
+            calls += 1
+            current = calls
+            if current == 3:
+                retry_messages.extend(messages)
+
+            async def updates():
+                if current == 1:
+                    yield ChatResponseUpdate(contents=[Content.from_function_call("search-1", "lookup", arguments={})])
+                elif current == 2:
+                    raise RuntimeError("Model stream failed after successful search")
+                else:
+                    yield ChatResponseUpdate(contents=[Content.from_text("Recovered answer")])
+
+            return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+        def lookup() -> str:
+            return "Search succeeded"
+
+        monkeypatch.setattr(model, "_inner_get_response", model_response)
+        monkeypatch.setattr(agent_factory, "_build_openai_clients", lambda: (model, model))
+        runtime = agent_factory.create_chat_runtime(
+            profile=AgentProfile(name="Recovery", logical_profile="custom", system_prompt="Use lookup",
+                                 description="Recovery workflow", tool_names=["lookup"]),
+            function_tools=[lookup],
+        )
+        try:
+            with pytest.raises(RuntimeError, match="failed after successful search"):
+                async for _update in runtime.agent.run("Original question about a picture", session=runtime.session, stream=True):
+                    pass
+            stream = runtime.agent.run("try again", session=runtime.session, stream=True)
+            async for _update in stream:
+                pass
+            assert (await stream.get_final_response()).text == "Recovered answer"
+            assert sum(message.text == "Original question about a picture" for message in retry_messages) == 1
+            assert retry_messages[-1].text == "try again"
+            calls_in_history = [content for message in retry_messages for content in message.contents
+                                if content.type == "function_call"]
+            assert [content.call_id for content in calls_in_history] == ["search-1"]
+        finally:
+            await runtime.agent.close()
+
+    asyncio.run(scenario())
+
+
 def test_framework_client_supports_application_owned_history():
     from agent_framework import Content, Message
     from agent_framework.openai import OpenAIChatClient

@@ -79,6 +79,7 @@ export function AgentBuilder({
     setNewMcpName,
     setNewMcpUrl,
     testConnections,
+    updateMcpServer,
   } = useAgentMcpEditor(setForm);
   const [candidate, setCandidate] = useState<StandardAgentCandidate | null>(null);
   const [builtInsCollapsed, setBuiltInsCollapsed] = useState(false);
@@ -529,7 +530,7 @@ export function AgentBuilder({
                   {form.mcpServers.map((server, i) => {
                     const result = mcpTestResults[server.name];
                     return (
-                      <div key={i} className="agent-builder-starter-item">
+                      <div key={i} className="agent-builder-starter-item agent-builder-mcp-server">
                         {result && (
                           <span
                             className={`mcp-test-status ${result.status === 'connected' ? 'mcp-connected' : 'mcp-failed'}`}
@@ -549,6 +550,32 @@ export function AgentBuilder({
                         >
                           ✕
                         </button>
+                        <details className="mcp-server-options">
+                          <summary>Options</summary>
+                          <label>
+                            Tool name prefix
+                            <input className="agent-builder-input" value={server.tool_name_prefix ?? ''} maxLength={100}
+                              onChange={event => updateMcpServer(i, { tool_name_prefix: event.target.value || undefined })} />
+                          </label>
+                          <label className="mcp-server-toggle">
+                            <input type="checkbox" checked={server.approval_mode === 'always_require'}
+                              onChange={event => updateMcpServer(i, { approval_mode: event.target.checked ? 'always_require' : 'never_require' })} />
+                            Require approval
+                          </label>
+                          <label className="mcp-server-toggle">
+                            <input type="checkbox" checked={server.use_progressive_disclosure ?? false}
+                              onChange={event => updateMcpServer(i, { use_progressive_disclosure: event.target.checked,
+                                ...(!event.target.checked ? { always_load: undefined } : {}) })} />
+                            Progressive loading (experimental)
+                          </label>
+                          {server.use_progressive_disclosure && (
+                            <label>
+                              Always-loaded tools
+                              <input className="agent-builder-input" defaultValue={(server.always_load ?? []).join(', ')}
+                                onBlur={event => updateMcpServer(i, { always_load: event.target.value.split(',').map(name => name.trim()).filter(Boolean) })} />
+                            </label>
+                          )}
+                        </details>
                       </div>
                     );
                   })}

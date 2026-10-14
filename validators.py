@@ -7,6 +7,9 @@ from typing import Any, Callable, Optional
 from urllib.parse import urlsplit
 
 from fastapi import HTTPException, UploadFile
+from pydantic import ValidationError
+
+from mcp_servers import MCPToolOptions
 
 ALLOWED_IMAGE_MIMES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 MAX_IMAGE_SIZE_BYTES = 400 * 1024 * 1024
@@ -164,6 +167,10 @@ def validate_http_mcp_servers(raw_servers: object, *, override: bool, default_tr
 			valid_url = False
 		if not valid_url:
 			raise HTTPException(status_code=400, detail="MCP URLs must be HTTP(S) URLs without embedded credentials")
+		try:
+			MCPToolOptions.model_validate(entry)
+		except ValidationError as exc:
+			raise HTTPException(status_code=400, detail="Invalid MCP tool options") from exc
 
 	return [{**entry, "transport": "http"} for entry in raw_servers]
 

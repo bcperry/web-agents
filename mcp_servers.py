@@ -2,12 +2,14 @@ import asyncio
 import logging
 import os
 import re
+from collections.abc import Callable
+from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any, Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from azure.identity import AzureAuthorityHosts, DefaultAzureCredential
+from azure.identity import AzureAuthorityHosts, DefaultAzureCredential, OnBehalfOfCredential, get_bearer_token_provider
 from agent_framework import MCPStdioTool
 from agent_framework import MCPStreamableHTTPTool
 from agent_framework.azure import AzureAISearchContextProvider
@@ -56,7 +58,14 @@ def sanitize_mcp_result_error(error: str | None) -> str | None:
 _ENV_VAR_PATTERN = re.compile(r"\$\{(\w+)\}")
 
 
-class HttpMcpServerRequest(BaseModel):
+class MCPToolOptions(BaseModel):
+    tool_name_prefix: str | None = Field(default=None, min_length=1)
+    approval_mode: Literal["always_require", "never_require"] | None = None
+    use_progressive_disclosure: bool | None = None
+    always_load: list[str] | None = None
+
+
+class HttpMcpServerRequest(MCPToolOptions):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=100)
@@ -83,6 +92,7 @@ class MCPServerConfig:
     description: str | None = None
     auth: bool = False
     auth_scope: str | None = None
+    tool_options: MCPToolOptions = field(default_factory=MCPToolOptions)
 
 
 @dataclass
@@ -190,73 +200,52 @@ def parse_mcp_server_configs(profile_entry: dict[str, Any], *, interpolate_env: 
             description=entry.get("description"),
             auth=auth,
             auth_scope=auth_scope,
+            tool_options=MCPToolOptions.model_validate(entry),
         ))
 
     return configs
 
 
-def resolve_mcp_auth_token(config: MCPServerConfig, user_token: str | None) -> str | None:
-    """Resolve the auth token for an MCP server based on its config.
+def _mcp_header_provider(
+    config: MCPServerConfig, user_token: str | None, exit_stack: AsyncExitStack | None,
+) -> Callable[[dict[str, Any]], dict[str, str]]:
+    current_assertion: str | None = None
+    token_provider: Callable[[], str] | None = None
 
-    - auth_scope set: OBO exchange via MSAL ConfidentialClientApplication
-    - auth=True: passthrough the user's token as-is
-    - Neither: return None (no auth)
-    """
-    if not config.auth and not config.auth_scope:
-        return None
-
-    if not user_token:
-        logger.warning("MCP server '%s' requires auth but no user token available", config.name)
-        return None
-
-    if config.auth_scope:
-        # OBO token exchange
-        client_id = os.environ.get("AZURE_AD_CLIENT_ID")
-        client_secret = os.environ.get("AZURE_AD_CLIENT_SECRET")
-        authority = os.environ.get("AZURE_AD_AUTHORITY")
-
-        if not client_secret:
-            logger.warning(
-                "MCP server '%s' requires OBO (auth_scope=%s) but AZURE_AD_CLIENT_SECRET is not set%s",
-                config.name,
-                config.auth_scope,
-                "; falling back to passthrough" if config.auth else "",
+    def headers(kwargs: dict[str, Any]) -> dict[str, str]:
+        nonlocal current_assertion, token_provider
+        assertion = kwargs.get("mcp_user_token", user_token)
+        if not assertion:
+            raise ValueError(f"MCP server '{config.name}' requires user authentication")
+        if not config.auth_scope:
+            return {"Authorization": f"Bearer {assertion}"}
+        if token_provider is None or assertion != current_assertion:
+            client_id = os.getenv("AZURE_AD_CLIENT_ID")
+            client_secret = os.getenv("AZURE_AD_CLIENT_SECRET")
+            authority = urlsplit(os.getenv("AZURE_AD_AUTHORITY") or "")
+            tenant_id = authority.path.strip("/").split("/")[0]
+            if not client_id or not client_secret or not authority.hostname or not tenant_id or exit_stack is None:
+                raise ValueError(f"MCP server '{config.name}' requires a configured OBO credential and resource owner")
+            credential = OnBehalfOfCredential(
+                tenant_id=tenant_id, client_id=client_id, client_secret=client_secret,
+                user_assertion=assertion, authority=authority.netloc,
             )
-            return user_token if config.auth else None
+            exit_stack.callback(credential.close)
+            token_provider = get_bearer_token_provider(credential, config.auth_scope)
+            current_assertion = assertion
+        return {"Authorization": f"Bearer {token_provider()}"}
 
-        if not client_id or not authority:
-            logger.warning("MCP server '%s': AZURE_AD_CLIENT_ID or AZURE_AD_AUTHORITY not set, cannot perform OBO", config.name)
-            return user_token if config.auth else None
-
-        try:
-            import msal
-            cca = msal.ConfidentialClientApplication(
-                client_id,
-                authority=authority,
-                client_credential=client_secret,
-            )
-            result = cca.acquire_token_on_behalf_of(
-                user_assertion=user_token,
-                scopes=[config.auth_scope],
-            )
-            if "access_token" in result:
-                return result["access_token"]
-            error_desc = result.get("error_description", result.get("error", "Unknown OBO error"))
-            logger.warning("OBO token exchange failed for MCP server '%s': %s", config.name, error_desc)
-            return None
-        except Exception as e:
-            logger.warning("OBO token exchange error for MCP server '%s': %s", config.name, e)
-            return None
-
-    # Passthrough mode
-    return user_token
+    return headers
 
 
-def create_mcp_tool(config: MCPServerConfig, *, auth_token: str | None = None) -> MCPStdioTool | MCPStreamableHTTPTool:
+def create_mcp_tool(
+    config: MCPServerConfig, *, user_token: str | None = None, exit_stack: AsyncExitStack | None = None,
+) -> MCPStdioTool | MCPStreamableHTTPTool:
     """Instantiate the correct MCPTool subclass based on transport type."""
     common_kwargs: dict[str, Any] = {
         "name": config.name,
         "load_prompts": False,
+        **config.tool_options.model_dump(exclude_none=True, exclude_defaults=True),
     }
     if config.description:
         common_kwargs["description"] = config.description
@@ -266,8 +255,8 @@ def create_mcp_tool(config: MCPServerConfig, *, auth_token: str | None = None) -
         common_kwargs["request_timeout"] = config.request_timeout
 
     if config.transport == "http":
-        if auth_token:
-            common_kwargs["static_headers"] = {"Authorization": f"Bearer {auth_token}"}
+        if config.auth or config.auth_scope:
+            common_kwargs["header_provider"] = _mcp_header_provider(config, user_token, exit_stack)
         return MCPStreamableHTTPTool(url=config.url, **common_kwargs)
     elif config.transport == "stdio":
         kwargs = {**common_kwargs, "command": config.command}
@@ -283,6 +272,7 @@ def create_mcp_tool(config: MCPServerConfig, *, auth_token: str | None = None) -
 async def connect_mcp_servers(
     configs: list[MCPServerConfig],
     *,
+    exit_stack: AsyncExitStack,
     user_token: str | None = None,
 ) -> tuple[list[Any], list[MCPConnectionResult]]:
     """Connect to MCP servers from configs.
@@ -293,11 +283,9 @@ async def connect_mcp_servers(
     connected: list[Any] = []
     results: list[MCPConnectionResult] = []
     for config in configs:
-        tool = None
         try:
-            resolved_token = resolve_mcp_auth_token(config, user_token)
-            tool = create_mcp_tool(config, auth_token=resolved_token)
-            await tool.connect()
+            tool = create_mcp_tool(config, user_token=user_token, exit_stack=exit_stack)
+            await exit_stack.enter_async_context(tool)
             tool_count = len(tool.functions) if hasattr(tool, "functions") else 0
             logger.info("Connected MCP server '%s' (%s) — loaded %d tools", config.name, config.transport, tool_count)
             connected.append(tool)
@@ -308,11 +296,8 @@ async def connect_mcp_servers(
                 tool_count=tool_count,
             ))
         except asyncio.CancelledError:
-            await cleanup_mcp_servers([*connected, *([tool] if tool is not None else [])])
             raise
         except Exception as e:
-            if tool is not None:
-                await cleanup_mcp_servers([tool])
             logger.warning("MCP server '%s' (%s) failed to connect: %s", config.name, config.transport, e)
             results.append(MCPConnectionResult(
                 name=config.name,
@@ -321,17 +306,6 @@ async def connect_mcp_servers(
                 error=str(e),
             ))
     return connected, results
-
-
-async def cleanup_mcp_servers(tools: list[Any]) -> None:
-    """Close all MCP server connections. Errors are logged but not raised."""
-    for tool in tools:
-        name = getattr(tool, "name", "unknown")
-        try:
-            await tool.close()
-            logger.info("Closed MCP server '%s'", name)
-        except Exception as e:
-            logger.warning("Failed to close MCP server '%s': %s", name, e)
 
 
 # ── Context Providers ────────────────────────────────────────────────────────
@@ -419,7 +393,6 @@ __all__ = [
     "create_mcp_tool",
     "parse_mcp_server_configs",
     "connect_mcp_servers",
-    "cleanup_mcp_servers",
     "SearchServiceConfig",
     "get_search_credential",
     "get_search_context_provider",

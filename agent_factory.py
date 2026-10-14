@@ -397,6 +397,7 @@ def _build_sub_agent_tools(
                 default_options={"store": False, **_temperature_options(primary_client, sub_temp)},
                 tools=sub_tools_extra or None,
                 context_providers=providers or None,
+                require_per_service_call_history_persistence=True,
             )
             sub_tool = sub_agent.as_tool(
                 name=final_tool_name,
@@ -453,6 +454,7 @@ def create_chat_runtime(
         description=profile.description,
         tools=all_tools,
         default_options={"store": False, **_temperature_options(primary_client, resolved_temperature)},
+        require_per_service_call_history_persistence=True,
         context_providers=_build_context_providers(
             token_budget=token_budget,
             summarizer_client=summarizer_client,

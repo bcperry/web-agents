@@ -183,13 +183,17 @@ async def stream_agent_events(
 	contents: list[Content],
 	session: AgentSession,
 	*, result: dict[str, Any],
+	user_token: str | None = None,
 ) -> AsyncGenerator[tuple[str, dict], None]:
 	tool_event_by_call_id: dict[str, dict[str, Any]] = {}
 	function_calls: dict[str, Content] = {}
 	active_call_id: Optional[str] = None
 
 	user_message = ChatMessage(role="user", contents=contents)
-	stream = agent.run(user_message, session=session, stream=True)
+	stream = agent.run(
+		user_message, session=session, stream=True,
+		function_invocation_kwargs={"mcp_user_token": user_token},
+	)
 
 	async for msg in stream:
 		msg_dict = msg.to_dict()
@@ -222,6 +226,9 @@ async def stream_agent_events(
 				if name and call_id and call_id not in tool_event_by_call_id:
 					tool_event_by_call_id[call_id] = {"call_id": call_id, "name": name, "arguments": rendered_arguments}
 					yield ("function_call", {"call_id": call_id, "name": name, "arguments": rendered_arguments})
+
+			elif content_type == "function_approval_request":
+				yield ("tool_approval_request", content)
 
 			elif content_type in ("function_result", "mcp_server_tool_result"):
 				call_id = content.get("call_id")
@@ -273,8 +280,11 @@ async def stream_agent_response(
 	contents: list[Content],
 	session: AgentSession,
 	*, result: dict[str, Any] | None = None,
+	user_token: str | None = None,
 ) -> AsyncGenerator[str, None]:
-	async for event, data in stream_agent_events(agent, contents, session, result=result if result is not None else {}):
+	async for event, data in stream_agent_events(
+		agent, contents, session, result=result if result is not None else {}, user_token=user_token,
+	):
 		yield sse_event(event, data)
 
 

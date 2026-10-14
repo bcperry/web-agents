@@ -29,6 +29,10 @@ export interface McpServerEntry {
   description?: string;
   allowed_tools?: string[];
   request_timeout?: number;
+  tool_name_prefix?: string;
+  approval_mode?: 'always_require' | 'never_require';
+  use_progressive_disclosure?: boolean;
+  always_load?: string[];
 }
 
 export interface McpConnectionResult {
@@ -207,7 +211,27 @@ export interface ChatMessage {
   usage?: UsageDetails | null;
 }
 
-export type SSEEventType = 'text' | 'function_call' | 'function_result' | 'usage' | 'error' | 'done' | 'agent_view';
+export type SSEEventType = 'text' | 'function_call' | 'function_result' | 'tool_approval_request' | 'usage' | 'error' | 'done' | 'agent_view';
+
+export interface ToolApprovalRequest {
+  type: 'function_approval_request';
+  id: string;
+  function_call: {
+    type: 'function_call';
+    id?: string;
+    call_id: string;
+    name: string;
+    arguments?: string | Record<string, unknown>;
+    [key: string]: unknown;
+  };
+}
+
+export interface ToolApprovalResponse {
+  type: 'function_approval_response';
+  id: string;
+  approved: boolean;
+  function_call: ToolApprovalRequest['function_call'];
+}
 
 export interface SSETextEvent {
   content: string;

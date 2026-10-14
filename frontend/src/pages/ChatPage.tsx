@@ -9,6 +9,7 @@ import { useTheme } from '../hooks/useTheme';
 import { useConversationStore } from '../hooks/useConversationStore';
 import { ChatMessage } from '../components/ChatMessage';
 import { ChatInput } from '../components/ChatInput';
+import { ToolApprovals } from '../components/ToolApprovals';
 import { ProfileSelector } from '../components/ProfileSelector';
 import { StarterQuestions } from '../components/StarterQuestions';
 import { TokenUsage } from '../components/TokenUsage';
@@ -77,6 +78,8 @@ export function ChatPage({ onOpenAdmin, onOpenAutonomous, onCustomAgentsChanged,
     startSession,
     endSession,
     send,
+    pendingApprovals,
+    respondToApprovals,
   } = useChat(onCustomAgentsChanged, agentViews.handleAgentViewEvent);
 
   useEffect(() => {
@@ -402,7 +405,8 @@ export function ChatPage({ onOpenAdmin, onOpenAutonomous, onCustomAgentsChanged,
           </div>
         )}
 
-        <ChatInput onSend={handleSend} disabled={isStreaming} />
+        <ToolApprovals requests={pendingApprovals} disabled={isStreaming} onRespond={respondToApprovals} />
+        <ChatInput onSend={handleSend} disabled={isStreaming || pendingApprovals.length > 0} />
         <footer className="classification-footer">
           {classificationBanner}
         </footer>

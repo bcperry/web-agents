@@ -62,6 +62,10 @@ def safe_mcp_server_definitions(raw_servers: Any) -> list[dict[str, Any]]:
             ("authScope", "authScope"),
             ("allowed_tools", "allowed_tools"),
             ("request_timeout", "request_timeout"),
+            ("tool_name_prefix", "tool_name_prefix"),
+            ("approval_mode", "approval_mode"),
+            ("use_progressive_disclosure", "use_progressive_disclosure"),
+            ("always_load", "always_load"),
         ):
             value = entry.get(source_key)
             if value is not None:

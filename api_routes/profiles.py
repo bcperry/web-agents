@@ -1,5 +1,7 @@
 """Profile, tool inventory, and MCP test endpoints."""
 
+from contextlib import AsyncExitStack
+
 import logging
 import os
 from typing import Any
@@ -10,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from app_context import build_tool_instances, function_tool_registry
 from auth import AuthenticatedUser, get_current_user
-from mcp_servers import cleanup_mcp_servers, connect_mcp_servers, get_search_service_config, parse_mcp_server_configs, sanitize_mcp_result_error
+from mcp_servers import connect_mcp_servers, get_search_service_config, parse_mcp_server_configs, sanitize_mcp_result_error
 from validators import validate_http_mcp_servers
 from profile_definitions import (
     BuiltInProfileDefinitionResponse,
@@ -149,8 +151,8 @@ async def test_mcp_connections(
     user_token = token.strip() if scheme.lower() == "bearer" else None
 
     configs = parse_mcp_server_configs({"mcp_servers": raw_servers})
-    tools, results = await connect_mcp_servers(configs, user_token=user_token)
-    await cleanup_mcp_servers(tools)
+    async with AsyncExitStack() as resources:
+        _, results = await connect_mcp_servers(configs, exit_stack=resources, user_token=user_token)
 
     return {
         "results": [

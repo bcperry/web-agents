@@ -397,6 +397,8 @@ def _usage_to_dict(usage: Any) -> dict[str, int]:
 async def collect_agent_response(agent: Any, contents: list[Content], session: Any) -> dict[str, Any]:
     """Map a native non-streaming response to an autonomous run record."""
     response = await agent.run(Message(role="user", contents=contents), session=session, stream=False)
+    if any(content.type == "function_approval_request" for message in response.messages for content in message.contents):
+        raise RuntimeError("Autonomous run requires interactive tool approval")
     return {
         "text": response.text.strip(),
         "tool_events": tool_messages_to_events(response.messages),

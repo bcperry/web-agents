@@ -269,6 +269,45 @@ A stream-level `error` event can arrive after an HTTP `200`. Treat it as a faile
 
 Browser `EventSource` cannot POST a request body. Use `fetch()` and parse `response.body`, or use an SSE client that supports POST requests.
 
+### MCP Tool Approvals
+
+MCP definitions accept `tool_name_prefix`, `approval_mode` (`always_require` or `never_require`),
+`use_progressive_disclosure`, and `always_load`. Progressive disclosure is experimental.
+Unspecified options retain Agent Framework defaults. An empty `allowed_tools` list still exposes no tools.
+
+A protected tool pauses execution and emits native approval content:
+
+```text
+event: tool_approval_request
+data: {"type":"function_approval_request","id":"request-1","function_call":{"type":"function_call","id":"occurrence-1","call_id":"call-1","name":"lookup","arguments":"{}"}}
+
+event: done
+data: {}
+```
+
+After the user decides, POST to the same session's messages endpoint:
+
+```json
+{
+  "approvals": [{
+    "type": "function_approval_response",
+    "id": "occurrence-1",
+    "approved": true,
+    "function_call": {"type":"function_call","id":"occurrence-1","call_id":"call-1","name":"lookup","arguments":"{}"}
+  }]
+}
+```
+
+Copy the complete `function_call` from the request. Use its `id` as the response `id`,
+falling back to the request's `id` if absent. Set `approved` to `false` to deny.
+Return all pending decisions together; `content` is optional for approval-only requests.
+Agent Framework binds approvals to stored calls in the active session and prevents replayed execution.
+Do not end or replace that session while awaiting a decision. Unattended runs fail if interactive approval is required.
+
+Send the current bearer token on every message and approval POST. MCP HTTP headers are resolved
+through the native `header_provider`; scoped OBO tokens use Azure Identity caching and refresh.
+Missing user credentials or OBO configuration fail closed, without anonymous or wrong-audience fallback.
+
 ## 6. End the Session
 
 When finished, release the active session:

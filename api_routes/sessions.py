@@ -3,10 +3,13 @@
 import logging
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
+from typing import Any, Literal
 
 from agent_framework import Content, add_usage_details
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
+from fastapi.security.utils import get_authorization_scheme_param
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, TypeAdapter, ValidationError
 
 from agent_views import clear_view_data_budget, delete_views_for_conversation
 from app_context import DEFAULT_MAX_USER_INPUT_CHARS, session_context
@@ -31,6 +34,18 @@ from validators import validate_uploaded_images
 logger = logging.getLogger(__name__)
 session_cleanup_logger = logging.getLogger("main")
 router = APIRouter()
+
+
+class ToolApprovalResponseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["function_approval_response"]
+    id: str = Field(min_length=1)
+    approved: StrictBool
+    function_call: dict[str, Any]
+
+
+_APPROVAL_RESPONSES = TypeAdapter(list[ToolApprovalResponseRequest])
 
 
 @router.post("/api/sessions", status_code=201)
@@ -60,12 +75,15 @@ async def send_message(
     user: AuthenticatedUser = Depends(get_current_user),
 ):
     session_data = get_session(session_id, user.user_id)
+    scheme, token = get_authorization_scheme_param(request.headers.get("authorization"))
+    user_token = token.strip() if scheme.lower() == "bearer" else None
 
     content_type = request.headers.get("content-type", "")
     text_content = ""
     client_time = ""
     image_files: list[UploadFile] = []
     image_data_list: list[bytes] = []
+    approvals: list[Content] = []
 
     if "multipart/form-data" in content_type:
         form = await request.form()
@@ -85,6 +103,11 @@ async def send_message(
             raise HTTPException(status_code=400, detail="Body must be an object with string content")
         text_content = body.get("content", "")
         client_time = str(body.get("client_time", "") or "")
+        try:
+            approvals = [Content.from_dict(response.model_dump())
+                         for response in _APPROVAL_RESPONSES.validate_python(body.get("approvals", []))]
+        except (ValidationError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="Invalid tool approval response") from exc
 
     if len(text_content) > DEFAULT_MAX_USER_INPUT_CHARS:
         raise HTTPException(
@@ -99,7 +122,8 @@ async def send_message(
 
     when = client_time.strip() or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     model_text = with_user_time(text_content, when) if text_content.strip() else text_content
-    contents: list[Content] = [Content.from_text(model_text)]
+    contents: list[Content] = [Content.from_text(model_text)] if model_text or not approvals else []
+    contents.extend(approvals)
     for file, data in zip(image_files, image_data_list):
         mime = file.content_type or "image/jpeg"
         contents.append(Content.from_data(data=data, media_type=mime))
@@ -121,7 +145,9 @@ async def send_message(
 
         result = {}
         try:
-            async for event in stream_agent_response(session_data.agent, contents, session_data.agent_session, result=result):
+            async for event in stream_agent_response(
+                session_data.agent, contents, session_data.agent_session, result=result, user_token=user_token,
+            ):
                 yield event
         except Exception as exc:  # noqa: BLE001 - route translates stream errors to SSE
             if is_retryable_error(exc):

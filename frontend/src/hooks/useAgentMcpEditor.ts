@@ -50,6 +50,13 @@ export function useAgentMcpEditor(setForm: Dispatch<SetStateAction<AgentBuilderF
     });
   };
 
+  const updateMcpServer = (index: number, patch: Partial<McpServerEntry>) => {
+    setForm(previous => ({
+      ...previous,
+      mcpServers: previous.mcpServers.map((server, position) => position === index ? { ...server, ...patch } : server),
+    }));
+  };
+
   const testConnections = async (servers: McpServerEntry[]) => {
     if (servers.length === 0) return;
     setMcpTesting(true);
@@ -83,5 +90,6 @@ export function useAgentMcpEditor(setForm: Dispatch<SetStateAction<AgentBuilderF
     setNewMcpName,
     setNewMcpUrl,
     testConnections,
+    updateMcpServer,
   } as const;
 }
