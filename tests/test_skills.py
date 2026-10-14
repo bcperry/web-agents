@@ -1,187 +1,54 @@
-"""Tests for Agent Skills integration."""
+"""Skill publishing and selection workflows; no assertions about instructional prose."""
 
-from pathlib import Path
+import asyncio
+from unittest.mock import AsyncMock, Mock
 
+from agent_framework import ChatResponse, Content, Message, SkillsSourceContext
+from agent_framework.openai import OpenAIChatClient
 
-class TestAgentProfileSkills:
-    """Test AgentProfile.skills field parsing from agents.yaml."""
-
-    def test_sql_profile_has_table_usage_skill(self):
-        from prompt_config import load_agent_profile, get_profile_display_name
-
-        display = get_profile_display_name("sql")
-        profile = load_agent_profile(display)
-        assert profile.skills == ["table-usage"]
-
-    def test_search_profile_empty_skills(self):
-        from prompt_config import load_agent_profile, get_profile_display_name
-
-        display = get_profile_display_name("search")
-        profile = load_agent_profile(display)
-        assert profile.skills == []
-
-    def test_hybrid_profile_has_table_usage_skill(self):
-        from prompt_config import load_agent_profile, get_profile_display_name
-
-        display = get_profile_display_name("hybrid")
-        profile = load_agent_profile(display)
-        assert profile.skills == ["table-usage"]
-
-    def test_sap_force_equipment_profile_has_domain_skill(self):
-        from prompt_config import get_profile_display_name, load_agent_profile, load_agents_yaml
-
-        display = get_profile_display_name("sap_force_equipment")
-        profile = load_agent_profile(display)
-        profile_entry = load_agents_yaml()["profiles"]["sap_force_equipment"]
-
-        assert profile.skills == ["sap-force-equipment-analysis"]
-        assert {"database_schema", "database_query", "render_agent_view"}.issubset(
-            profile.tool_names
-        )
-        assert profile_entry["group"] == "SAP"
-        assert [starter["label"] for starter in profile_entry["starters"]] == [
-            "Equipment by unit",
-            "Readiness summary",
-            "Maintenance priorities",
-            "Readiness forecast",
-        ]
-        forecast_prompt = profile_entry["starters"][-1]["message"].lower()
-        assert not {"render", "dashboard", "visualization", "chart"}.intersection(
-            forecast_prompt.split()
-        )
-
-    def test_sap_financial_execution_profile_has_domain_skill(self):
-        from prompt_config import get_profile_display_name, load_agent_profile, load_agents_yaml
-
-        display = get_profile_display_name("sap_financial_execution")
-        profile = load_agent_profile(display)
-        profile_entry = load_agents_yaml()["profiles"]["sap_financial_execution"]
-
-        assert profile.skills == ["sap-financial-execution-analysis"]
-        assert {"database_schema", "database_query", "render_agent_view"}.issubset(
-            profile.tool_names
-        )
-        assert profile_entry["group"] == "SAP"
-        assert [starter["label"] for starter in profile_entry["starters"]] == [
-            "Budget posture",
-            "Appropriation execution",
-            "Lines requiring review",
-            "Year-end execution forecast",
-        ]
-        forecast_prompt = profile_entry["starters"][-1]["message"].lower()
-        assert not {"render", "dashboard", "visualization", "chart"}.intersection(
-            forecast_prompt.split()
-        )
+from agent_factory import CosmosSkillsSource, _build_skills_provider
+from prompt_config import load_agent_profile, load_agents_yaml
 
 
-class TestBuildSkillsProvider:
-    """Test _build_skills_provider() function."""
-
-    def test_returns_none_when_no_skills_requested(self):
-        from agent_factory import _build_skills_provider
-
-        assert _build_skills_provider(None) is None
-        assert _build_skills_provider([]) is None
-
-    def test_returns_provider_when_skills_requested(self):
-        from agent_framework import SkillsProvider
-        from agent_factory import _build_skills_provider
-
-        # The built-in FilteringSkillsSource advertises nothing for unknown names,
-        # but a provider is still returned whenever skills are requested.
-        provider = _build_skills_provider(["nonexistent-skill"])
-        assert isinstance(provider, SkillsProvider)
-
-    def test_returns_provider_with_table_usage_skill(self):
-        from agent_framework import SkillsProvider
-        from agent_factory import _build_skills_provider
-
-        provider = _build_skills_provider(["table-usage"])
-        assert provider is not None
-        assert isinstance(provider, SkillsProvider)
+def test_configured_skills_are_available_to_the_agent(client):
+    skills = asyncio.run(CosmosSkillsSource().get_skills(SkillsSourceContext(agent=Mock())))
+    runtime_skills = {skill.frontmatter.name: skill for skill in skills}
+    assert runtime_skills
+    for profile_id in load_agents_yaml()["profiles"]:
+        profile = load_agent_profile(profile_id)
+        for name in profile.skills:
+            response = client.get(f"/api/skills/{name}")
+            assert response.status_code == 200, (profile_id, name)
+            content = response.json()["content"]
+            assert content.strip(), (profile_id, name)
+            assert runtime_skills[name].instructions == content
 
 
-class TestCosmosSkillsSource:
-    """Test the Cosmos-backed skills source that loads agent skills at run time."""
+def test_published_skill_edits_and_deletion_reach_selected_agents(client, monkeypatch):
+    payload = {"name": "workflow-skill", "description": "Workflow guidance", "content": "Original instructions"}
+    assert client.post("/api/skills", json=payload).status_code == 201
+    assert client.post("/api/skills", json={**payload, "name": "unselected-skill"}).status_code == 201
+    model = OpenAIChatClient(model="offline", api_key="offline", base_url="https://example.invalid/v1")
+    reply = AsyncMock(return_value=ChatResponse(messages=[
+        Message(role="assistant", contents=[Content.from_text("Done")]),
+    ]))
+    monkeypatch.setattr(model, "get_response", reply)
 
-    def test_get_skills_returns_seeded_skills(self):
-        import asyncio
+    for instructions in ("Original instructions", "Revised instructions"):
+        assert client.put("/api/skills/workflow-skill", json={
+            "description": payload["description"], "content": instructions,
+        }).status_code == 200
+        agent = model.as_agent(context_providers=[_build_skills_provider(["workflow-skill", "missing-skill"])])
+        asyncio.run(agent.run("Use the selected skill", stream=False))
+        options = reply.call_args.kwargs["options"]
+        assert "workflow-skill" in options["instructions"]
+        assert "unselected-skill" not in options["instructions"]
+        assert "missing-skill" not in options["instructions"]
+        load_skill = next(tool for tool in options["tools"] if tool.name == "load_skill")
+        loaded = asyncio.run(load_skill.invoke(arguments={"skill_name": "workflow-skill"}))
+        assert instructions in Message(role="tool", contents=loaded).text
 
-        from agent_factory import CosmosSkillsSource
-
-        from agent_framework import SkillsSourceContext
-        from unittest.mock import Mock
-
-        skills = asyncio.run(CosmosSkillsSource().get_skills(SkillsSourceContext(agent=Mock())))
-        names = {skill.frontmatter.name for skill in skills}
-        # The filesystem defaults are seeded into the (in-memory) Cosmos double.
-        assert "table-usage" in names
-        assert "sap-force-equipment-analysis" in names
-        assert "sap-financial-execution-analysis" in names
-
-    def test_sap_force_equipment_skill_contains_reporting_contract(self):
-        import asyncio
-
-        from agent_factory import CosmosSkillsSource
-
-        from agent_framework import SkillsSourceContext
-        from unittest.mock import Mock
-
-        skills = asyncio.run(CosmosSkillsSource().get_skills(SkillsSourceContext(agent=Mock())))
-        skill = next(
-            skill
-            for skill in skills
-            if skill.frontmatter.name == "sap-force-equipment-analysis"
-        )
-
-        assert "[reporting].[FORCE_EQUIPMENT]" in skill.instructions
-        assert "FORCE_ID" in skill.instructions
-        assert "Non-Mission Capable Maint" in skill.instructions
-        assert "truncated" in skill.instructions
-        assert "Aggregate first" in skill.instructions
-        assert "Do not attempt to enumerate an entire fleet" in skill.instructions
-        assert "TOP (20)" in skill.instructions
-        assert "Predictive Analytics" in skill.instructions
-        assert "render_agent_view" in skill.instructions
-        assert "only when the user explicitly asks" in skill.instructions
-        assert "No-Fail Query Recovery" in skill.instructions
-        assert "make up to three materially different repair attempts" in skill.instructions
-        assert "does not mean the data is unavailable" in skill.instructions
-        assert "synthetic" not in skill.instructions.lower()
-
-    def test_sap_financial_execution_skill_contains_reporting_contract(self):
-        import asyncio
-
-        from agent_factory import CosmosSkillsSource
-
-        from agent_framework import SkillsSourceContext
-        from unittest.mock import Mock
-
-        skills = asyncio.run(CosmosSkillsSource().get_skills(SkillsSourceContext(agent=Mock())))
-        skill = next(
-            skill
-            for skill in skills
-            if skill.frontmatter.name == "sap-financial-execution-analysis"
-        )
-
-        assert "[reporting].[FINANCIAL_EXECUTION]" in skill.instructions
-        assert "AVAILABLE_AMOUNT" in skill.instructions
-        assert "Weighted portfolio execution" in skill.instructions
-        assert "legal funds-control determination" in skill.instructions
-        assert "TOP (20)" in skill.instructions
-        assert "Predictive Analytics" in skill.instructions
-        assert "render_agent_view" in skill.instructions
-        assert "only when the user explicitly asks" in skill.instructions
-        assert "synthetic" not in skill.instructions.lower()
-
-    def test_filtering_source_omits_unknown_names(self):
-        import asyncio
-
-        from agent_framework import SkillsSourceContext
-        from unittest.mock import Mock
-        from agent_factory import _build_skills_provider
-
-        provider = _build_skills_provider(["table-usage", "nonexistent-skill"])
-        skills = asyncio.run(provider._source.get_skills(SkillsSourceContext(agent=Mock())))
-        names = {skill.frontmatter.name for skill in skills}
-        assert names == {"table-usage"}
+    assert client.delete("/api/skills/workflow-skill").status_code == 204
+    agent = model.as_agent(context_providers=[_build_skills_provider(["workflow-skill"])])
+    asyncio.run(agent.run("Use the selected skill", stream=False))
+    assert "workflow-skill" not in (reply.call_args.kwargs["options"].get("instructions") or "")

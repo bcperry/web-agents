@@ -27,6 +27,8 @@ export interface McpServerEntry {
   authenticated?: boolean;
   authScope?: string;
   description?: string;
+  allowed_tools?: string[];
+  request_timeout?: number;
 }
 
 export interface McpConnectionResult {

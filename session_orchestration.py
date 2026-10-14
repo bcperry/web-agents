@@ -16,6 +16,7 @@ from agent_factory import ChatRuntime, SubAgentResources, create_chat_runtime
 from cosmos_memory import get_conversation_repository
 from database import DATABASE_TOOL_NAMES
 from eval_trace import EvalTraceLogger
+from mcp_servers import HttpMcpServerRequest as McpServerEntryRequest
 from mcp_servers import MCPServerConfig, cleanup_mcp_servers, connect_mcp_servers, parse_mcp_server_configs, sanitize_mcp_result_error
 from session_data import SessionData, replace_session
 from user_data import get_custom_agents_repository, get_user_profile_repository
@@ -23,6 +24,7 @@ from prompt_config import (
     AgentRef,
     AgentProfile,
     BuiltinAgentRef,
+    SUB_AGENT_TOOL_REFS,
     SubAgentToolRef,
     _parse_sub_agent_tool_refs,
     load_agent_profile,
@@ -43,17 +45,6 @@ from validators import (
 logger = logging.getLogger(__name__)
 
 MAX_USER_INPUT_CHARS = int(os.getenv("MAX_USER_INPUT_CHARS", "8000"))
-
-class McpServerEntryRequest(BaseModel):
-    name: str
-    transport: str = "http"
-    url: str | None = None
-    authenticated: bool | None = None
-    auth: bool | None = None
-    authScope: str | None = None
-    auth_scope: str | None = None
-    description: str | None = None
-
 
 class ProfileOverrideRequest(BaseModel):
     description: str | None = None
@@ -126,33 +117,12 @@ def _serialize_mcp_results(results: list[Any]) -> list[dict[str, Any]]:
     ]
 
 
-def _normalize_agent_ref_keys(raw: dict[str, Any]) -> dict[str, Any]:
-    """Accept camelCase wire format and emit snake_case keys for the parser."""
-    out: dict[str, Any] = {}
-    for key, value in raw.items():
-        if key == "profileId":
-            out.setdefault("profile_id", value)
-        elif key == "customAgentId":
-            out.setdefault("custom_agent_id", value)
-        else:
-            out[key] = value
-    return out
-
-
 def _normalize_sub_agent_tool_payload(raw_list: object) -> list[dict[str, Any]]:
-    if raw_list in (None, ""):
-        return []
-    if not isinstance(raw_list, list):
-        raise HTTPException(status_code=400, detail="agents_as_tools must be a list")
-    normalized: list[dict[str, Any]] = []
-    for entry in raw_list:
-        if not isinstance(entry, dict):
-            raise HTTPException(status_code=400, detail="Each agents_as_tools entry must be an object")
-        agent_ref_raw = entry.get("agent_ref") or entry.get("agentRef") or {}
-        if not isinstance(agent_ref_raw, dict):
-            raise HTTPException(status_code=400, detail="agents_as_tools[].agent_ref must be an object")
-        normalized.append({"agent_ref": _normalize_agent_ref_keys(agent_ref_raw)})
-    return normalized
+    try:
+        references = SUB_AGENT_TOOL_REFS.validate_python([] if raw_list in (None, "") else raw_list)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid agents_as_tools: {exc}") from exc
+    return SUB_AGENT_TOOL_REFS.dump_python(references, by_alias=True, exclude_none=True)
 
 
 def _resolve_for_validation(agent_ref: AgentRef) -> AgentProfile | dict[str, Any] | None:

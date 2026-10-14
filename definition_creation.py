@@ -6,7 +6,7 @@ import logging
 import os
 import re
 from datetime import datetime, timezone
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
 from azure.cosmos.exceptions import CosmosResourceExistsError
 from fastapi import HTTPException
@@ -14,7 +14,14 @@ from pydantic import BaseModel, ConfigDict, Field
 
 import cosmos_memory
 import user_data
-from prompt_config import load_agents_yaml
+from mcp_servers import HttpMcpServerRequest
+from prompt_config import (
+    AgentRefRequest,
+    AgentToolRefRequest,
+    BuiltinAgentRefRequest,
+    CustomAgentRefRequest,
+    load_agents_yaml,
+)
 from skills_manager import SkillManager
 from validators import validate_http_mcp_servers, validate_sub_agent_tool_refs
 
@@ -71,44 +78,6 @@ class StarterQuestionRequest(BaseModel):
 
     label: str = Field(min_length=1, max_length=100, description="Short button label shown to the user.")
     message: str = Field(min_length=1, max_length=2000, description="Complete user message sent when selected.")
-
-
-class HttpMcpServerRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str = Field(min_length=1, max_length=100)
-    transport: Literal["http"] = "http"
-    url: str = Field(min_length=1, max_length=500)
-    description: str | None = None
-    authenticated: bool | None = None
-    authScope: str | None = None
-
-
-class BuiltinAgentRefRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    kind: Literal["builtin"]
-    profileId: str = Field(min_length=1)
-
-
-class CustomAgentRefRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    kind: Literal["custom"]
-    customAgentId: str = Field(min_length=1)
-    definition: dict[str, Any] | None = None
-
-
-AgentRefRequest = Annotated[
-    BuiltinAgentRefRequest | CustomAgentRefRequest,
-    Field(discriminator="kind"),
-]
-
-
-class AgentToolRefRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    agentRef: AgentRefRequest
 
 
 class AgentCreationRequest(BaseModel):

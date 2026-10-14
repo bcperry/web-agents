@@ -3,9 +3,9 @@
 from typing import Any
 
 from fastapi import HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
-from prompt_config import load_agents_yaml
+from prompt_config import AgentToolRefRequest, load_agents_yaml
 
 
 DEFAULT_PROFILE_ICON = "/favicon.png"
@@ -60,6 +60,8 @@ def safe_mcp_server_definitions(raw_servers: Any) -> list[dict[str, Any]]:
             ("authenticated", "authenticated"),
             ("auth_scope", "authScope"),
             ("authScope", "authScope"),
+            ("allowed_tools", "allowed_tools"),
+            ("request_timeout", "request_timeout"),
         ):
             value = entry.get(source_key)
             if value is not None:
@@ -77,26 +79,11 @@ def serialize_agents_as_tools(raw: Any) -> list[dict[str, Any]]:
 
     serialized: list[dict[str, Any]] = []
     for entry in raw:
-        if not isinstance(entry, dict):
+        try:
+            reference = AgentToolRefRequest.model_validate(entry)
+        except ValidationError:
             continue
-        ref = entry.get("agent_ref") or entry.get("agentRef")
-        if not isinstance(ref, dict):
-            continue
-        kind = ref.get("kind")
-        if kind == "builtin":
-            profile_id = ref.get("profile_id") or ref.get("profileId")
-            if not profile_id:
-                continue
-            serialized.append({"agentRef": {"kind": "builtin", "profileId": str(profile_id)}})
-        elif kind == "custom":
-            custom_id = ref.get("custom_agent_id") or ref.get("customAgentId")
-            definition = ref.get("definition")
-            if not custom_id:
-                continue
-            wire_ref: dict[str, Any] = {"kind": "custom", "customAgentId": str(custom_id)}
-            if isinstance(definition, dict):
-                wire_ref["definition"] = definition
-            serialized.append({"agentRef": wire_ref})
+        serialized.append(reference.model_dump(exclude_none=True))
 
     return serialized
 

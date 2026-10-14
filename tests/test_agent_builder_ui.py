@@ -50,6 +50,10 @@ def test_agent_builder_renders_and_preserves_independent_creation_tools(viewport
     def route_api(route):
         request = route.request
         path = request.url.split("/api/", 1)[-1].split("?", 1)[0]
+        if path == "tools/agent-preview":
+            response = client.post("/api/tools/agent-preview", json=request.post_data_json)
+            route.fulfill(status=response.status_code, content_type="application/json", body=response.text)
+            return
         if path == "sessions" and request.method == "POST":
             if request.post_data_json.get("conversation_id") == "shared":
                 resume_operations.append("create")
@@ -143,6 +147,12 @@ def test_agent_builder_renders_and_preserves_independent_creation_tools(viewport
             page.get_by_role("button", name="AGENTS").click()
 
             page.get_by_title("Edit custom agent").click()
+            page.get_by_role("button", name=re.compile("AGENTS AS TOOLS", re.I)).click()
+            delegate = page.get_by_role("checkbox", name=re.compile("Built In", re.I))
+            delegate.check()
+            playwright.expect(page.locator(".agent-builder-tool-preview")).to_have_text("built_in")
+            page.screenshot(path=f"test-results/agent-tool-preview-{viewport['width']}.png", full_page=True)
+            delegate.uncheck()
             page.get_by_role("button", name=re.compile("SKILLS.*1 selected", re.I)).click()
             assert page.get_by_role(
                 "checkbox", name=re.compile("tool created skill", re.I)

@@ -50,6 +50,19 @@ Example response:
 
 Use a value from `profiles[].id` as `profile_id` when creating the session.
 
+### Optional Tool Name Preview
+
+Agent builders can call authenticated `POST /api/tools/agent-preview` to preview delegate names using the runtime's naming rules:
+
+```json
+{
+  "agents": [{ "id": "child", "name": "Lookup" }],
+  "reserved_names": ["lookup"]
+}
+```
+
+The response is `{"names":["lookup_2"]}`, in the same order as `agents`. Include selected function-tool and MCP-server names in `reserved_names`. This display-only request does not connect to servers, grant access, or replace validation and authorization during session creation.
+
 ## 2. Create a Session
 
 Call `POST /api/sessions` with JSON:

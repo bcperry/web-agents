@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Protocol
 from urllib.parse import urlsplit
@@ -79,17 +79,7 @@ class ConversationRecord:
 
     def to_doc(self) -> dict[str, Any]:
         return {
-            "id": self.id,
-            "user_id": self.user_id,
-            "profile_id": self.profile_id,
-            "profile_name": self.profile_name,
-            "title": self.title,
-            "created_at": self.created_at,
-            "last_activity_at": self.last_activity_at,
-            "custom_agent_id": self.custom_agent_id,
-            "used_builtin_override": self.used_builtin_override,
-            "base_profile_id": self.base_profile_id,
-            "override_updated_at": self.override_updated_at,
+            **asdict(self),
             "doc_type": "conversation",
             "schema_version": 1,
         }
@@ -326,20 +316,8 @@ class AutonomousRunRecord:
 
     def to_doc(self) -> dict[str, Any]:
         return {
-            "id": self.id,
-            "directive_id": self.directive_id,
-            "profile_id": self.profile_id,
-            "session_id": self.session_id,
-            "status": self.status,
-            "started_at": self.started_at,
-            "finished_at": self.finished_at,
+            **asdict(self),
             "response_text": self.response_text[:MAX_RUN_RESPONSE_CHARS],
-            "tool_events": self.tool_events,
-            "usage": self.usage,
-            "error": self.error,
-            "notify_status": self.notify_status,
-            "notify_error": self.notify_error,
-            "trigger": self.trigger,
             "doc_type": "autonomous_run",
             "schema_version": 1,
         }

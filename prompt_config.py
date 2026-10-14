@@ -1,8 +1,9 @@
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Optional, Union
+from typing import Annotated, Any, Literal, Optional, Union
 
 import yaml
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, StringConstraints, TypeAdapter
 
 
 @dataclass(frozen=True)
@@ -16,10 +17,8 @@ class BuiltinAgentRef:
 class CustomAgentRef:
     """Reference to a custom agent.
 
-    The full ``definition`` payload is inlined by the frontend at request
-    time so the backend can build the sub-agent without needing a custom-
-    agent persistence layer. ``definition["id"]`` MUST equal
-    ``custom_agent_id`` (V5 in contracts/validation-rules.md).
+    ``definition`` is hydrated from owner-scoped storage before runtime
+    construction. Its id must match ``custom_agent_id``.
     """
     custom_agent_id: str
     definition: dict[str, Any]
@@ -40,6 +39,40 @@ class SubAgentToolRef:
     agent_ref: AgentRef
 
 
+class BuiltinAgentRefRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["builtin"]
+    profileId: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] = Field(
+        validation_alias=AliasChoices("profileId", "profile_id"), serialization_alias="profile_id",
+    )
+
+
+class CustomAgentRefRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["custom"]
+    customAgentId: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] = Field(
+        validation_alias=AliasChoices("customAgentId", "custom_agent_id"), serialization_alias="custom_agent_id",
+    )
+    definition: dict[str, Any] | None = None
+
+
+AgentRefRequest = Annotated[BuiltinAgentRefRequest | CustomAgentRefRequest, Field(discriminator="kind")]
+
+
+class AgentToolRefRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    agentRef: AgentRefRequest = Field(
+        validation_alias=AliasChoices("agentRef", "agent_ref"), serialization_alias="agent_ref",
+    )
+
+
+_AGENT_REF_ADAPTER = TypeAdapter(AgentRefRequest)
+SUB_AGENT_TOOL_REFS = TypeAdapter(list[AgentToolRefRequest])
+
+
 @dataclass(frozen=True)
 class AgentProfile:
     """Resolved agent profile from agents.yaml."""
@@ -55,28 +88,13 @@ class AgentProfile:
 
 
 def _parse_agent_ref(raw: Any) -> AgentRef:
-    """Parse a raw ``agent_ref`` mapping into a tagged ``AgentRef``.
-
-    Built-in YAML normally uses ``kind: builtin``; custom references are only
-    valid when a full inline definition is supplied by the agent-builder flow.
-    """
-    if not isinstance(raw, dict):
-        raise ValueError("agent_ref must be a mapping")
-    kind = raw.get("kind")
-    if kind == "builtin":
-        profile_id = raw.get("profile_id")
-        if not isinstance(profile_id, str) or not profile_id.strip():
-            raise ValueError("agent_ref.profile_id is required for kind=builtin")
-        return BuiltinAgentRef(profile_id=profile_id.strip())
-    if kind == "custom":
-        custom_agent_id = raw.get("custom_agent_id")
-        definition = raw.get("definition")
-        if not isinstance(custom_agent_id, str) or not custom_agent_id.strip():
-            raise ValueError("agent_ref.custom_agent_id is required for kind=custom")
-        if not isinstance(definition, dict):
-            raise ValueError("agent_ref.definition must be a mapping for kind=custom")
-        return CustomAgentRef(custom_agent_id=custom_agent_id.strip(), definition=definition)
-    raise ValueError(f"agent_ref.kind must be 'builtin' or 'custom', got {kind!r}")
+    """Adapt a validated reference to the hydrated runtime dataclasses."""
+    reference = _AGENT_REF_ADAPTER.validate_python(raw)
+    if isinstance(reference, BuiltinAgentRefRequest):
+        return BuiltinAgentRef(profile_id=reference.profileId)
+    if reference.definition is None:
+        raise ValueError("agent_ref.definition must be a mapping for kind=custom")
+    return CustomAgentRef(custom_agent_id=reference.customAgentId, definition=reference.definition)
 
 
 def _parse_sub_agent_tool_refs(raw: Any) -> list[SubAgentToolRef]:
@@ -86,19 +104,10 @@ def _parse_sub_agent_tool_refs(raw: Any) -> list[SubAgentToolRef]:
     ``ValueError`` on malformed input so loading fails loudly rather than
     silently dropping configuration.
     """
-    if not raw:
-        return []
-    if not isinstance(raw, list):
-        raise ValueError("agents_as_tools must be a list")
-    refs: list[SubAgentToolRef] = []
-    for entry in raw:
-        if not isinstance(entry, dict):
-            raise ValueError("Each agents_as_tools entry must be a mapping")
-        agent_ref_raw = entry.get("agent_ref")
-        if agent_ref_raw is None:
-            raise ValueError("Each agents_as_tools entry requires 'agent_ref'")
-        refs.append(SubAgentToolRef(agent_ref=_parse_agent_ref(agent_ref_raw)))
-    return refs
+    return [
+        SubAgentToolRef(agent_ref=_parse_agent_ref(entry.agentRef))
+        for entry in SUB_AGENT_TOOL_REFS.validate_python([] if raw is None else raw)
+    ]
 
 
 def _normalize_profile_name(name: Optional[str]) -> str:

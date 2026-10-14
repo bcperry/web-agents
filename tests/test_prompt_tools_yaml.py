@@ -133,6 +133,7 @@ profiles:
 def test_invalid_agent_ref_kind_raises(tmp_path) -> None:
     """Unknown agent_ref.kind must surface as an error rather than silently dropping."""
     import pytest
+    from pydantic import ValidationError
 
     from prompt_config import load_agent_profile
 
@@ -155,5 +156,7 @@ profiles:
     config_dir.mkdir()
     (config_dir / "agents.yaml").write_text(yaml_text, encoding="utf-8")
 
-    with pytest.raises(ValueError, match="agent_ref.kind"):
+    with pytest.raises(ValidationError) as error:
         load_agent_profile("parent", workspace_root=tmp_path)
+    assert error.value.errors()[0]["type"] == "union_tag_invalid"
+    assert error.value.errors()[0]["loc"] == (0, "agent_ref")

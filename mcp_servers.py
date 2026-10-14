@@ -4,7 +4,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from functools import lru_cache
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from azure.identity import AzureAuthorityHosts, DefaultAzureCredential
@@ -12,6 +12,7 @@ from agent_framework import MCPStdioTool
 from agent_framework import MCPStreamableHTTPTool
 from agent_framework.azure import AzureAISearchContextProvider
 from dotenv import load_dotenv
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 load_dotenv()
@@ -53,6 +54,19 @@ def sanitize_mcp_result_error(error: str | None) -> str | None:
 
 
 _ENV_VAR_PATTERN = re.compile(r"\$\{(\w+)\}")
+
+
+class HttpMcpServerRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=100)
+    transport: Literal["http"] = "http"
+    url: str = Field(min_length=1, max_length=500)
+    description: str | None = None
+    authenticated: bool | None = Field(default=None, validation_alias=AliasChoices("authenticated", "auth"))
+    authScope: str | None = Field(default=None, validation_alias=AliasChoices("authScope", "auth_scope"))
+    allowed_tools: list[str] | None = None
+    request_timeout: int | None = Field(default=None, gt=0)
 
 
 @dataclass

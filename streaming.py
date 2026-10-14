@@ -185,6 +185,7 @@ async def stream_agent_events(
 	*, result: dict[str, Any],
 ) -> AsyncGenerator[tuple[str, dict], None]:
 	tool_event_by_call_id: dict[str, dict[str, Any]] = {}
+	function_calls: dict[str, Content] = {}
 	active_call_id: Optional[str] = None
 
 	user_message = ChatMessage(role="user", contents=contents)
@@ -197,26 +198,21 @@ async def stream_agent_events(
 			content_type = content.get("type")
 
 			if content_type == "function_call":
-				call_id = content.get("call_id") or None
-				name = content.get("name") or None
-				arguments = content.get("arguments", "")
+				call_id = content.get("call_id") or active_call_id
+				if not call_id:
+					continue
+				fragment = Content.from_dict(content)
+				merged = function_calls[call_id] + fragment if call_id in function_calls else fragment
+				function_calls[call_id] = merged
+				name = getattr(merged, "name", None)
+				if not name:
+					continue
+				active_call_id = call_id
+				arguments = merged.to_dict().get("arguments", "")
 				rendered_arguments = json.dumps(arguments, ensure_ascii=False) if isinstance(arguments, (dict, list)) else str(arguments)
-
-				if name and call_id and call_id not in tool_event_by_call_id:
-					active_call_id = call_id
-					tool_event_by_call_id[call_id] = {"call_id": call_id, "name": name, "arguments": rendered_arguments}
-					yield ("function_call", {"call_id": call_id, "name": name, "arguments": rendered_arguments})
-				else:
-					if call_id in tool_event_by_call_id:
-						active_call_id = call_id
-					if active_call_id and rendered_arguments:
-						event_payload = tool_event_by_call_id[active_call_id]
-						event_payload["arguments"] += rendered_arguments
-						yield ("function_call", {
-							"call_id": active_call_id,
-							"name": event_payload["name"],
-							"arguments": event_payload["arguments"],
-						})
+				payload = {"call_id": call_id, "name": name, "arguments": rendered_arguments}
+				tool_event_by_call_id[call_id] = payload
+				yield ("function_call", payload)
 
 			elif content_type == "mcp_server_tool_call":
 				call_id = content.get("call_id") or None

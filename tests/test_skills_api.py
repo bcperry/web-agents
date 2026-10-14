@@ -1,186 +1,70 @@
-def test_private_skill_can_be_edited_and_deleted_only_by_its_owner(client):
-    import asyncio
-    import user_data
-    from auth import AuthenticatedUser, get_current_user
-    from main import app
+"""Observable skill catalog workflows and authorization boundaries."""
 
-    asyncio.run(user_data.get_user_skills_repository().create("dev-user", "private-edit", {
-        "id": "private-edit", "description": "Private", "content": "Original",
-    }))
-    assert client.get("/api/skills/private-edit").json()["scope"] == "user"
-    assert client.put("/api/skills/private-edit", json={"description": "Changed", "content": "Changed"}).status_code == 200
-    app.dependency_overrides[get_current_user] = lambda: AuthenticatedUser("other", "other")
-    try:
-        assert client.delete("/api/skills/private-edit").status_code == 404
-    finally:
-        app.dependency_overrides.pop(get_current_user, None)
-    assert client.delete("/api/skills/private-edit").status_code == 204
+import asyncio
+from unittest.mock import Mock
 
-"""Tests for Skills CRUD API endpoints (Cosmos-backed, durable store)."""
+from agent_framework import SkillsSourceContext
 
-import os
-
-os.environ.setdefault("AUTH_DISABLED", "true")
-os.environ.setdefault("AZURE_SQL_CONNECTIONSTRING", "")
+from agent_factory import CosmosSkillsSource
+from app_context import build_tool_instances
+from auth import AuthenticatedUser, get_current_user
+from main import app
 
 
-# ---------------------------------------------------------------------------
-# GET /api/skills — list
-# ---------------------------------------------------------------------------
-
-def test_get_skills_list_empty(skills_client):
-    client, _repo = skills_client
-    resp = client.get("/api/skills")
-    assert resp.status_code == 200
-    assert resp.json() == {"skills": []}
-
-
-def test_get_skills_list_populated(skills_client, make_skill):
-    client, repo = skills_client
-    make_skill(repo, "alpha", "Alpha skill")
-    make_skill(repo, "beta", "Beta skill")
-    resp = client.get("/api/skills")
-    assert resp.status_code == 200
-    names = {s["name"] for s in resp.json()["skills"]}
-    assert "alpha" in names
-    assert "beta" in names
-
-
-# ---------------------------------------------------------------------------
-# GET /api/skills/{name} — single skill
-# ---------------------------------------------------------------------------
-
-def test_get_skill_success(skills_client, make_skill):
-    client, repo = skills_client
-    make_skill(repo, "my-skill", "My description", "# Docs\nSome content.")
-    resp = client.get("/api/skills/my-skill")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["name"] == "my-skill"
-    assert data["description"] == "My description"
-    assert "Some content." in data["content"]
-
-
-def test_get_skill_not_found(skills_client):
+def test_catalog_lifecycle_preserves_changes_and_rejects_duplicate_creation(skills_client):
     client, _ = skills_client
-    resp = client.get("/api/skills/nonexistent")
-    assert resp.status_code == 404
+    assert client.get("/api/skills").json()["skills"] == []
+    original = {"name": "workflow-skill", "description": "Guidance", "content": "Original instructions"}
+    assert client.post("/api/skills", json=original).status_code == 201
+    assert client.get("/api/skills/workflow-skill").json()["content"] == original["content"]
+    assert {skill["name"] for skill in client.get("/api/skills").json()["skills"]} == {original["name"]}
+
+    revised = {"description": "Revised guidance", "content": "Revised instructions"}
+    assert client.post("/api/skills", json={**original, **revised}).status_code == 409
+    assert client.get("/api/skills/workflow-skill").json()["content"] == original["content"]
+    assert client.put("/api/skills/workflow-skill", json=revised).status_code == 200
+    saved = client.get("/api/skills/workflow-skill").json()
+    assert {key: saved[key] for key in revised} == revised
+
+    assert client.delete("/api/skills/workflow-skill").status_code == 204
+    assert client.get("/api/skills").json()["skills"] == []
+    assert client.get("/api/skills/workflow-skill").status_code == 404
+    assert client.put("/api/skills/workflow-skill", json=revised).status_code == 404
+    assert client.delete("/api/skills/workflow-skill").status_code == 404
 
 
-# ---------------------------------------------------------------------------
-# POST /api/skills — create
-# ---------------------------------------------------------------------------
+def test_private_skills_remain_owner_scoped_from_creation_through_agent_loading(client, monkeypatch):
+    create_skill = next(tool for tool in build_tool_instances(
+        {"create_skill"}, session_id="skill-workflow", user_id="dev-user",
+    ) if tool.__name__ == "create_skill")
+    assert asyncio.run(create_skill("private-skill", "Private guidance", "Private instructions"))["status"] == "created"
+    assert client.get("/api/skills/private-skill").json()["scope"] == "user"
+    revised = {"description": "Updated guidance", "content": "Updated private instructions"}
+    assert client.put("/api/skills/private-skill", json=revised).status_code == 200
 
-def test_create_skill_success_is_durable(skills_client):
-    client, _repo = skills_client
-    payload = {"name": "new-skill", "description": "A new skill", "content": "# Hello\nWorld."}
-    resp = client.post("/api/skills", json=payload)
-    assert resp.status_code == 201
-    data = resp.json()
-    assert data["name"] == "new-skill"
-    assert data["description"] == "A new skill"
-    # Durability: a subsequent read is served from the (Cosmos) store, not request state.
-    read_back = client.get("/api/skills/new-skill")
-    assert read_back.status_code == 200
-    assert read_back.json()["content"] == "# Hello\nWorld."
-    listed = {s["name"] for s in client.get("/api/skills").json()["skills"]}
-    assert "new-skill" in listed
+    owner_skills = asyncio.run(CosmosSkillsSource("dev-user").get_skills(SkillsSourceContext(agent=Mock())))
+    assert next(skill for skill in owner_skills if skill.frontmatter.name == "private-skill").instructions == revised["content"]
+    with monkeypatch.context() as context:
+        context.setitem(app.dependency_overrides, get_current_user, lambda: AuthenticatedUser("other", "other"))
+        assert "private-skill" not in {skill["name"] for skill in client.get("/api/skills").json()["skills"]}
+        assert client.get("/api/skills/private-skill").status_code == 404
+        assert client.put("/api/skills/private-skill", json=revised).status_code == 404
+        assert client.delete("/api/skills/private-skill").status_code == 404
+        other_skills = asyncio.run(CosmosSkillsSource("other").get_skills(SkillsSourceContext(agent=Mock())))
+        assert "private-skill" not in {skill.frontmatter.name for skill in other_skills}
 
-
-def test_create_skill_duplicate_returns_409(skills_client, make_skill):
-    client, repo = skills_client
-    make_skill(repo, "existing")
-    payload = {"name": "existing", "description": "Another", "content": "# Content"}
-    resp = client.post("/api/skills", json=payload)
-    assert resp.status_code == 409
+    assert client.get("/api/skills/private-skill").json()["content"] == revised["content"]
+    assert client.delete("/api/skills/private-skill").status_code == 204
 
 
-def test_create_skill_invalid_name_returns_422(skills_client):
+def test_rejected_writes_neither_publish_invalid_skills_nor_destroy_existing_content(skills_client):
     client, _ = skills_client
-    payload = {"name": "Bad-Name", "description": "desc", "content": "body"}
-    resp = client.post("/api/skills", json=payload)
-    assert resp.status_code == 422
-
-
-def test_create_skill_name_with_uppercase_invalid(skills_client):
-    client, _ = skills_client
-    payload = {"name": "INVALID", "description": "desc", "content": "body"}
-    resp = client.post("/api/skills", json=payload)
-    assert resp.status_code == 422
-
-
-def test_create_skill_name_starting_with_dash_invalid(skills_client):
-    client, _ = skills_client
-    payload = {"name": "-bad", "description": "desc", "content": "body"}
-    resp = client.post("/api/skills", json=payload)
-    assert resp.status_code == 422
-
-
-def test_create_skill_name_too_long_returns_422(skills_client):
-    client, _ = skills_client
-    long_name = "a" * 65
-    payload = {"name": long_name, "description": "desc", "content": "body"}
-    resp = client.post("/api/skills", json=payload)
-    assert resp.status_code == 422
-
-
-# ---------------------------------------------------------------------------
-# PUT /api/skills/{name} — update
-# ---------------------------------------------------------------------------
-
-def test_update_skill_success(skills_client, make_skill):
-    client, repo = skills_client
-    make_skill(repo, "editable", "Old description", "Old content.")
-    payload = {"description": "New description", "content": "New content."}
-    resp = client.put("/api/skills/editable", json=payload)
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["description"] == "New description"
-    assert data["content"] == "New content."
-    # Durability: the change is reflected on a fresh read.
-    assert client.get("/api/skills/editable").json()["description"] == "New description"
-
-
-def test_update_skill_not_found_returns_404(skills_client):
-    client, _ = skills_client
-    payload = {"description": "desc", "content": "body"}
-    resp = client.put("/api/skills/nonexistent", json=payload)
-    assert resp.status_code == 404
-
-
-# ---------------------------------------------------------------------------
-# DELETE /api/skills/{name} — delete
-# ---------------------------------------------------------------------------
-
-def test_delete_skill_success(skills_client, make_skill):
-    client, repo = skills_client
-    make_skill(repo, "to-delete")
-    resp = client.delete("/api/skills/to-delete")
-    assert resp.status_code == 204
-    # Durability: a subsequent fetch returns not-found from the store.
-    assert client.get("/api/skills/to-delete").status_code == 404
-
-
-def test_delete_skill_not_found_returns_404(skills_client):
-    client, _ = skills_client
-    resp = client.delete("/api/skills/nonexistent")
-    assert resp.status_code == 404
-
-
-# ---------------------------------------------------------------------------
-# Name validation prevents path-traversal-style ids
-# ---------------------------------------------------------------------------
-
-def test_create_skill_path_traversal_rejected(skills_client):
-    client, _ = skills_client
-    # Dots are not in the allowed character set so the name regex rejects this.
-    payload = {"name": "../etc", "description": "desc", "content": "body"}
-    resp = client.post("/api/skills", json=payload)
-    assert resp.status_code == 422
-
-
-def test_get_skill_path_traversal_rejected(skills_client):
-    client, _ = skills_client
-    resp = client.get("/api/skills/../etc/passwd")
-    # FastAPI URL routing normalises ../ in paths, so it 404s rather than serve a file.
-    assert resp.status_code in (404, 400, 422)
+    valid = {"name": "valid-skill", "description": "Guidance", "content": "Keep these instructions"}
+    assert client.post("/api/skills", json=valid).status_code == 201
+    for invalid_name in ("../escape", "Bad-Name", "a" * 65):
+        assert client.post("/api/skills", json={**valid, "name": invalid_name}).status_code == 422
+    for invalid_fields in ({"description": ""}, {"description": "d" * 257}, {"content": ""}, {"content": "c" * 65537}):
+        assert client.post("/api/skills", json={**valid, "name": "invalid-skill", **invalid_fields}).status_code == 422
+        assert client.put("/api/skills/valid-skill", json={**valid, **invalid_fields}).status_code == 422
+    assert {skill["name"] for skill in client.get("/api/skills").json()["skills"]} == {"valid-skill"}
+    assert client.get("/api/skills/valid-skill").json()["content"] == valid["content"]

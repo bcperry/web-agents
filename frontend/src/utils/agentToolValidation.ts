@@ -1,7 +1,4 @@
-// Client-side validation + tool-name derivation for sub-agent tool refs.
-// Mirrors backend rules in validators.py + sub_agent_tools.py so the UI can
-// preview the same derived tool name the backend will compute and block
-// obvious errors before the round-trip.
+// Client-side checks for immediate feedback; the backend validates all refs.
 //
 // V5 (definition_id_mismatch) is intentionally backend-only.
 
@@ -102,60 +99,4 @@ export function validateSubAgentTools(
   });
 
   return errors;
-}
-
-// Derivation helpers --------------------------------------------------------
-// Mirror sub_agent_tools.py exactly so the preview matches what the backend
-// will actually wire as the tool name.
-
-const TOOL_NAME_MAX = 64;
-const TOOL_DESC_MAX = 500;
-
-export function slugifyToolName(raw: string, fallbackId = ''): string {
-  const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-  let slug = normalize(raw) || normalize(fallbackId) || 'sub_agent';
-  if (/^\d/.test(slug)) slug = `a_${slug}`;
-  if (slug.length > TOOL_NAME_MAX) slug = slug.slice(0, TOOL_NAME_MAX);
-  return slug;
-}
-
-export function disambiguateToolNames(names: string[]): string[] {
-  const used = new Set<string>();
-  return names.map((name) => {
-    if (!used.has(name)) {
-      used.add(name);
-      return name;
-    }
-    let suffix = 2;
-    let out: string;
-    do {
-      const ending = `_${suffix++}`;
-      out = `${name.slice(0, TOOL_NAME_MAX - ending.length)}${ending}`;
-    } while (used.has(out));
-    used.add(out);
-    return out;
-  });
-}
-
-export interface DerivedToolSurface {
-  toolName: string;
-  toolDescription: string;
-  argDescription: string;
-}
-
-export function deriveSubAgentToolSurface(
-  targetName: string,
-  targetDescription: string,
-  fallbackId: string,
-): DerivedToolSurface {
-  const toolName = slugifyToolName(targetName, fallbackId);
-  let toolDescription = (targetDescription || '').trim();
-  toolDescription = toolDescription
-    ? toolDescription.slice(0, TOOL_DESC_MAX)
-    : `Delegate to the ${targetName.trim() || fallbackId || toolName} agent.`;
-  return {
-    toolName,
-    toolDescription,
-    argDescription: `Request for the ${toolName} agent.`,
-  };
 }

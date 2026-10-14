@@ -85,7 +85,7 @@ export function SkillBuilder() {
     e.preventDefault();
     clearFeedback();
     if (!SKILL_NAME_RE.test(formName) || formName.length > 64) {
-      setErrorMsg('Name must match ^[a-z0-9][a-z0-9-]*$ and be at most 64 characters.');
+      setErrorMsg('Name must use lowercase letters, numbers, and single hyphens between words (max 64 characters).');
       return;
     }
     if (!formDescription.trim() || formDescription.length > 256) {

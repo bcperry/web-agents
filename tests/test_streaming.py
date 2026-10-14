@@ -214,7 +214,12 @@ def test_finalization_failure_propagates_without_done_or_partial_result():
     asyncio.run(scenario())
 
 
-def test_native_response_stream_aggregates_text_tool_calls_and_usage():
+@pytest.mark.parametrize("fragments, expected_arguments", [
+    (['{"id":', '1}'], '{"id":1}'),
+    ([{"first": 1}, {"second": 2}], '{"first": 1, "second": 2}'),
+    ([{}, {}], '{}'),
+])
+def test_native_response_stream_aggregates_text_tool_calls_and_usage(fragments, expected_arguments):
     import asyncio
     from types import SimpleNamespace
     from agent_framework import AgentResponseUpdate, Content, ResponseStream
@@ -222,10 +227,10 @@ def test_native_response_stream_aggregates_text_tool_calls_and_usage():
 
     async def updates():
         yield AgentResponseUpdate(message_id="call", role="assistant", contents=[
-            Content.from_function_call("call-1", "lookup", arguments='{"id":'),
+            Content.from_function_call("call-1", "lookup", arguments=fragments[0]),
         ])
         yield AgentResponseUpdate(message_id="call", role="assistant", contents=[
-            Content.from_function_call("call-1", "lookup", arguments='1}'),
+            Content.from_function_call("call-1", "lookup", arguments=fragments[1]),
         ])
         yield AgentResponseUpdate(message_id="result", role="tool", contents=[
             Content.from_function_result("call-1", result="found"),
@@ -244,8 +249,10 @@ def test_native_response_stream_aggregates_text_tool_calls_and_usage():
         events = [event async for event in stream_agent_events(agent, [], None, result=result)]
         assert result["text"] == "Hello world"
         assert result["tool_events"] == [{
-            "call_id": "call-1", "name": "lookup", "arguments": '{"id":1}', "result": "found",
+            "call_id": "call-1", "name": "lookup", "arguments": expected_arguments, "result": "found",
         }]
+        assert [payload["arguments"] for kind, payload in events if kind == "function_call"][-1] == expected_arguments
+        assert next(payload for kind, payload in events if kind == "function_result")["arguments"] == expected_arguments
         assert result["usage"]["cache_read_input_token_count"] == 3
         assert result["usage"]["reasoning_output_token_count"] == 1
         assert events[-1] == ("done", {})

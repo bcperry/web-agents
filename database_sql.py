@@ -80,34 +80,6 @@ class SqlValidator(ABC):
         raise NotImplementedError
 
 
-def _reject_comments(sql: str) -> None:
-    """Reject SQL comments outside string/identifier literals.
-
-    Comments can smuggle instructions into anything that later reads the
-    statement, so the contract bans them rather than trying to interpret them.
-    """
-    index = 0
-    length = len(sql)
-    quote: str | None = None
-    while index < length:
-        char = sql[index]
-        if quote is not None:
-            if char == quote:
-                if index + 1 < length and sql[index + 1] == quote:
-                    index += 2
-                    continue
-                quote = None
-            index += 1
-            continue
-        if char in ("'", '"'):
-            quote = char
-        elif sql.startswith("--", index) or sql.startswith("/*", index):
-            raise ValidationError("SQL comments are not permitted.")
-        index += 1
-    if quote is not None:
-        raise ValidationError("SQL contains an unterminated literal.")
-
-
 def _table_function_name(table: exp.Table, func: exp.Func) -> str:
     name = str(func.this) if isinstance(func, exp.Anonymous) else func.sql_name()
     return ".".join(part for part in (table.catalog, table.db, name) if part).lower()
@@ -131,7 +103,6 @@ class SqlGlotValidator(SqlValidator):
         allowed_table_functions: frozenset[str] | None = None,
     ) -> ValidatedSql:
         validate_sql_text(sql)
-        _reject_comments(sql)
         root = self._parse_single_read(sql)
 
         allowed_functions = frozenset(
@@ -171,6 +142,9 @@ class SqlGlotValidator(SqlValidator):
 
     def _parse_single_read(self, sql: str) -> exp.Expression:
         try:
+            tokens = sqlglot.tokenize(sql, read=self.dialect)
+            if any(token.comments for token in tokens):
+                raise ValidationError("SQL comments are not permitted.")
             statements = sqlglot.parse(sql, read=self.dialect)
         except SqlglotError as error:  # never echo the statement text
             raise ValidationError("SQL could not be parsed as a single read query.") from error

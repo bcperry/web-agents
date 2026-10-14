@@ -309,7 +309,31 @@ def test_conversation_record_wire_shape():
         "overrideUpdatedAt": None,
     }
     # round-trips through the Cosmos document form
-    assert cosmos_memory.ConversationRecord.from_doc(record.to_doc()).id == "c1"
+    document = record.to_doc()
+    assert document["doc_type"] == "conversation"
+    assert document["schema_version"] == 1
+    assert document["user_id"] == "u"
+    assert cosmos_memory.ConversationRecord.from_doc(document) == record
+    assert "user_id" not in wire
+
+
+def test_run_record_storage_preserves_metadata_and_response_cap(monkeypatch):
+    monkeypatch.setattr(cosmos_memory, "MAX_RUN_RESPONSE_CHARS", 4)
+    record = cosmos_memory.AutonomousRunRecord(
+        id="run", directive_id="directive", profile_id="profile", session_id="session",
+        status="success", started_at="start", finished_at="finish", response_text="long response",
+        usage={"total_token_count": 3}, tool_events=[{"name": "lookup", "result": "found"}],
+    )
+    document = record.to_doc()
+    assert document["doc_type"] == "autonomous_run"
+    assert document["schema_version"] == 1
+    assert document["response_text"] == "long"
+    assert record.to_wire()["responseText"] == "long"
+    restored = cosmos_memory.AutonomousRunRecord.from_doc(document)
+    assert restored.response_text == "long"
+    assert restored.usage == record.usage
+    assert restored.tool_events == record.tool_events
+    assert record.response_text == "long response"
 
 
 # ---------------------------------------------------------------------------

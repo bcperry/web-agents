@@ -1,14 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type {
   AgentRef,
   CustomAgentDefinition,
   SubAgentToolRef,
 } from '../types/api';
-import {
-  deriveSubAgentToolSurface,
-  disambiguateToolNames,
-  type SubAgentValidationError,
-} from '../utils/agentToolValidation';
+import type { SubAgentValidationError } from '../utils/agentToolValidation';
+import { previewAgentToolNames } from '../api/client';
 
 /** A single agent option exposed in the picker. */
 export interface AgentToolOption {
@@ -25,6 +22,7 @@ interface AgentAsToolPickerProps {
   availableAgents: AgentToolOption[];
   value: SubAgentToolRef[];
   parentAgentId: string;
+  reservedToolNames: string[];
   validationErrors: SubAgentValidationError[];
   onChange: (next: SubAgentToolRef[]) => void;
 }
@@ -46,26 +44,38 @@ export function AgentAsToolPicker({
   availableAgents,
   value,
   parentAgentId,
+  reservedToolNames,
   validationErrors,
   onChange,
 }: AgentAsToolPickerProps) {
   const [expanded, setExpanded] = useState(value.length > 0);
   const [query, setQuery] = useState('');
+  const [preview, setPreview] = useState<{ request: string; names: string[]; error?: string } | null>(null);
 
   // Self is always excluded; everything else is selectable via checkbox.
   const selectableAgents = availableAgents.filter((opt) => opt.id !== parentAgentId);
   const selectedById = new Map(value.map((entry, idx) => [refTargetId(entry.agentRef), idx]));
 
-  // Derive tool-name previews in the same order as `value` and apply the
-  // exact disambiguation rule the backend will use.
-  const baseDerivations = value.map((entry) => {
-    const opt = availableAgents.find((o) => o.id === refTargetId(entry.agentRef));
-    const name = opt?.name ?? refTargetId(entry.agentRef);
-    const desc = opt?.description ?? '';
-    const fallback = refTargetId(entry.agentRef);
-    return deriveSubAgentToolSurface(name, desc, fallback);
+  const previewRequest = JSON.stringify({
+    agents: value.map((entry) => {
+      const id = refTargetId(entry.agentRef);
+      return { id, name: availableAgents.find((option) => option.id === id)?.name ?? id };
+    }),
+    reservedNames: reservedToolNames,
   });
-  const finalToolNames = disambiguateToolNames(baseDerivations.map((d) => d.toolName));
+  useEffect(() => {
+    const controller = new AbortController();
+    const { agents, reservedNames } = JSON.parse(previewRequest);
+    if (agents.length > 0) {
+      void previewAgentToolNames(agents, reservedNames, controller.signal).then((names) => {
+        if (!controller.signal.aborted) setPreview({ request: previewRequest, names });
+      }).catch(() => {
+        if (!controller.signal.aborted) setPreview({ request: previewRequest, names: [], error: 'Tool names could not be loaded.' });
+      });
+    }
+    return () => controller.abort();
+  }, [previewRequest]);
+  const finalToolNames = preview?.request === previewRequest ? preview.names : [];
   const finalToolNameByTargetId = new Map<string, string>();
   value.forEach((entry, idx) => {
     finalToolNameByTargetId.set(refTargetId(entry.agentRef), finalToolNames[idx]);
@@ -111,6 +121,9 @@ export function AgentAsToolPicker({
       {expanded && (
         <div className="agent-builder-capability-content">
           <span className="agent-builder-tool-desc">Other agents this agent can call as tools.</span>
+          {preview?.request === previewRequest && preview.error && value.length > 0 && (
+            <span className="agent-builder-error-text" role="status">{preview.error}</span>
+          )}
           {selectableAgents.length > 8 && (
             <input
               className="agent-builder-input agent-builder-capability-search"

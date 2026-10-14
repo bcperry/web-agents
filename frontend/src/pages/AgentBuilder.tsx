@@ -613,6 +613,7 @@ export function AgentBuilder({
             availableAgents={availableAgentOptions}
             value={form.agentsAsTools}
             parentAgentId={parentAgentId}
+            reservedToolNames={[...form.tools, ...form.mcpServers.map((server) => server.name)]}
             validationErrors={subAgentValidationErrors}
             onChange={handleAgentsAsToolsChange}
           />

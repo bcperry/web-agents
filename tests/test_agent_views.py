@@ -20,6 +20,21 @@ def views_repo(monkeypatch):
     return repo
 
 
+def test_view_record_storage_round_trip_preserves_private_fields_only_in_storage():
+    record = agent_views.AgentViewRecord(
+        id="view", user_id="owner", conversation_id="conversation", title="Title",
+        html="<p>View</p>", profile_id="profile", created_at="now", chars=11, source="chat",
+    )
+    document = record.to_document()
+    assert document == {
+        "id": "view", "user_id": "owner", "conversation_id": "conversation", "title": "Title",
+        "html": "<p>View</p>", "profile_id": "profile", "created_at": "now", "chars": 11, "source": "chat",
+    }
+    assert agent_views.AgentViewRecord.from_document(document) == record
+    assert "user_id" not in record.to_wire()
+    assert "html" not in record.to_summary()
+
+
 def test_validate_view_rejects_empty_title():
     rejection = agent_views.validate_view("   ", "<p>hi</p>")
 

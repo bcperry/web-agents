@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security.utils import get_authorization_scheme_param
+from pydantic import BaseModel, Field
 
 from app_context import build_tool_instances, function_tool_registry
 from auth import AuthenticatedUser, get_current_user
@@ -18,9 +19,29 @@ from profile_definitions import (
     starter_definitions,
 )
 from prompt_config import load_agents_yaml
+from sub_agent_tools import derive_sub_agent_tool_surface, disambiguate_tool_names
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+class ToolNamePreviewTarget(BaseModel):
+    id: str = Field(max_length=100)
+    name: str = Field(max_length=1000)
+
+
+class ToolNamePreviewRequest(BaseModel):
+    agents: list[ToolNamePreviewTarget] = Field(max_length=100)
+    reserved_names: list[str] = Field(default_factory=list, max_length=1000)
+
+
+@router.post("/api/tools/agent-preview")
+async def preview_agent_tool_names(
+    body: ToolNamePreviewRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+):
+    names = [derive_sub_agent_tool_surface(agent.name, "", agent.id)[0] for agent in body.agents]
+    return {"names": disambiguate_tool_names(names, reserved_names=body.reserved_names)}
 
 
 def _check_profile_health(profile_id: str, profile_entry: dict) -> str | None:

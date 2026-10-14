@@ -3,7 +3,7 @@ import type { SkillCreatePayload } from '../types/api';
 
 export type SkillBuilderViewMode = 'list' | 'create' | 'edit';
 
-export const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
+export const SKILL_NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 export function useSkillForm() {
   const [view, setView] = useState<SkillBuilderViewMode>('list');

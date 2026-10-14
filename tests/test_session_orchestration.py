@@ -161,6 +161,93 @@ def test_mcp_allowlist_preserves_empty_collection(transport, allowed_tools):
         assert set(tool.allowed_tools) == set(allowed_tools)
 
 
+@pytest.mark.parametrize("allowed_tools", [None, [], ["lookup"]])
+def test_profile_override_preserves_mcp_restrictions(allowed_tools):
+    from mcp_servers import parse_mcp_server_configs
+    from validators import validate_http_mcp_servers
+
+    override = session_orchestration._parse_profile_override({
+        "custom_prompt": "Help",
+        "mcp_servers": [{
+            "name": "test", "transport": "http", "url": "https://example.test/mcp",
+            "allowed_tools": allowed_tools, "request_timeout": 45,
+        }],
+    })
+    entries = [entry.model_dump(exclude_none=True) for entry in override.mcp_servers]
+    config = parse_mcp_server_configs({
+        "mcp_servers": validate_http_mcp_servers(entries, override=True),
+    })[0]
+    assert config.allowed_tools == allowed_tools
+    assert config.request_timeout == 45
+
+
+def test_profile_mcp_editor_projection_preserves_restrictions_without_secrets():
+    from profile_definitions import safe_mcp_server_definitions
+    from mcp_servers import parse_mcp_server_configs
+
+    entries = safe_mcp_server_definitions([{
+        "name": "test", "transport": "http", "url": "https://example.test/mcp",
+        "allowed_tools": [], "request_timeout": 45, "env": {"SECRET": "hidden"},
+    }])
+    assert "env" not in entries[0]
+    override = session_orchestration._parse_profile_override({"custom_prompt": "Help", "mcp_servers": entries})
+    config = parse_mcp_server_configs({
+        "mcp_servers": [entry.model_dump(exclude_none=True) for entry in override.mcp_servers],
+    })[0]
+    assert config.allowed_tools == []
+    assert config.request_timeout == 45
+
+
+def test_http_mcp_requests_share_aliases_and_restrictions():
+    from definition_creation import HttpMcpServerRequest
+
+    assert session_orchestration.McpServerEntryRequest is HttpMcpServerRequest
+    server = HttpMcpServerRequest.model_validate({
+        "name": "test", "url": "https://example.test/mcp", "auth": True,
+        "auth_scope": "api://example/.default", "allowed_tools": [], "request_timeout": 45,
+    })
+    assert server.model_dump(exclude_none=True) == {
+        "name": "test", "transport": "http", "url": "https://example.test/mcp",
+        "authenticated": True, "authScope": "api://example/.default",
+        "allowed_tools": [], "request_timeout": 45,
+    }
+
+
+@pytest.mark.parametrize("camel_case", [False, True])
+@pytest.mark.parametrize("kind", ["builtin", "custom"])
+def test_agent_reference_schemas_share_yaml_and_wire_aliases(camel_case, kind):
+    from profile_definitions import serialize_agents_as_tools
+    from prompt_config import _parse_sub_agent_tool_refs
+
+    key = "profileId" if kind == "builtin" else "customAgentId"
+    snake_key = "profile_id" if kind == "builtin" else "custom_agent_id"
+    definition = {"id": "child", "systemPrompt": "Help"}
+    reference = {"kind": kind, key if camel_case else snake_key: " child "}
+    if kind == "custom":
+        reference["definition"] = definition
+    payload = [{"agentRef" if camel_case else "agent_ref": reference}]
+    normalized = session_orchestration._normalize_sub_agent_tool_payload(payload)
+    expected = {"kind": kind, snake_key: "child"}
+    if kind == "custom":
+        expected["definition"] = definition
+    assert normalized == [{"agent_ref": expected}]
+    assert _parse_sub_agent_tool_refs(payload) == _parse_sub_agent_tool_refs(normalized)
+    assert serialize_agents_as_tools(payload) == serialize_agents_as_tools(normalized)
+
+
+@pytest.mark.parametrize("payload", [
+    [{"agentRef": {"kind": "other", "profileId": "child"}}],
+    [{"agentRef": {"kind": "builtin", "profileId": " "}}],
+    [{"agentRef": {"kind": "custom", "customAgentId": 42}}],
+    [{"agentRef": []}],
+    [{"agentRef": {"kind": "builtin", "profileId": "child", "unexpected": True}}],
+])
+def test_agent_reference_schemas_reject_invalid_shapes(payload):
+    with pytest.raises(HTTPException) as error:
+        session_orchestration._normalize_sub_agent_tool_payload(payload)
+    assert error.value.status_code == 400
+
+
 def test_unknown_sub_agent_profile_does_not_fall_back():
     with pytest.raises(HTTPException) as error:
         _build_validated_sub_agent_refs("parent", [{"agentRef": {"kind": "builtin", "profileId": "missing-profile"}}], logging.getLogger("test"))

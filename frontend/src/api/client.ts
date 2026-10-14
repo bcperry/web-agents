@@ -45,6 +45,17 @@ export async function fetchTools(): Promise<ToolsResponse> {
   return requestJson(`${API_BASE}/tools`, {}, 'Failed to fetch tools');
 }
 
+export async function previewAgentToolNames(
+  agents: Array<{ id: string; name: string }>,
+  reservedNames: string[],
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const data = await requestJson<{ names: string[] }>(`${API_BASE}/tools/agent-preview`, {
+    method: 'POST', body: JSON.stringify({ agents, reserved_names: reservedNames }), signal,
+  }, 'Failed to preview tool names');
+  return data.names;
+}
+
 export async function fetchSkills(): Promise<ToolInfo[]> {
   const data = await requestJson<{ skills: ToolInfo[] }>(`${API_BASE}/skills`, {}, 'Failed to fetch skills');
   return data.skills;

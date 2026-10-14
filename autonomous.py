@@ -22,7 +22,7 @@ import logging
 import os
 import re
 import uuid
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -89,14 +89,7 @@ class Directive:
 
     def to_doc(self) -> dict[str, Any]:
         return {
-            "id": self.id,
-            "profile_id": self.profile_id,
-            "instruction": self.instruction,
-            "schedule": self.schedule,
-            "enabled": self.enabled,
-            "notify": self.notify,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
+            **asdict(self),
             "doc_type": "autonomous_directive",
             "schema_version": 1,
         }
@@ -211,11 +204,6 @@ def load_autonomous_config(path: Path | None = None) -> AutonomousConfig:
         directives=directives,
         schema_version=schema_version,
     )
-
-
-def load_directives(path: Path | None = None) -> list[Directive]:
-    """Convenience accessor: all configured directives (enabled or not)."""
-    return load_autonomous_config(path).directives
 
 
 # ---------------------------------------------------------------------------
@@ -580,7 +568,6 @@ __all__ = [
     "directive_to_wire",
     "get_autonomous_config",
     "load_autonomous_config",
-    "load_directives",
     "run_autonomous_cycle",
     "seed_autonomous_directives",
     "system_user",

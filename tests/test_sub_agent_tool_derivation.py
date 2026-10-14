@@ -7,6 +7,19 @@ import pytest
 from sub_agent_tools import derive_sub_agent_tool_surface, disambiguate_tool_names
 
 
+def test_tool_name_preview_uses_runtime_rules_and_reserved_names(client):
+    agents = [{"id": "child", "name": "Lookup"}, {"id": "123___name", "name": "!!!"}]
+    reserved = ["lookup", "lookup_2", "a_123_name"]
+    response = client.post("/api/tools/agent-preview", json={"agents": agents, "reserved_names": reserved})
+    assert response.status_code == 200
+    expected = disambiguate_tool_names(
+        [derive_sub_agent_tool_surface(agent["name"], "", agent["id"])[0] for agent in agents],
+        reserved_names=reserved,
+    )
+    assert response.json() == {"names": expected}
+    assert expected == ["lookup_3", "a_123_name_2"]
+
+
 # ---------------------------------------------------------------------------
 # derive_sub_agent_tool_surface
 # ---------------------------------------------------------------------------

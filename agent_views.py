@@ -13,33 +13,21 @@ from __future__ import annotations
 import inspect
 import json
 import logging
-import os
 import time
 import uuid
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from text_limits import env_int
+
 logger = logging.getLogger(__name__)
 
-
-def _env_int(name: str, default: int) -> int:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    try:
-        value = int(raw)
-        return value if value > 0 else default
-    except (TypeError, ValueError):
-        logger.warning("Invalid %s=%r; using default=%s", name, raw, default)
-        return default
-
-
-MAX_AGENT_VIEW_CHARS = _env_int("MAX_AGENT_VIEW_CHARS", 250_000)
-MAX_AGENT_VIEWS_PER_CONVERSATION = _env_int("MAX_AGENT_VIEWS_PER_CONVERSATION", 50)
-MAX_VIEW_DATA_RESPONSE_CHARS = _env_int("MAX_VIEW_DATA_RESPONSE_CHARS", 20_000)
-MAX_VIEW_DATA_REQUESTS_PER_MINUTE = _env_int("MAX_VIEW_DATA_REQUESTS_PER_MINUTE", 60)
+MAX_AGENT_VIEW_CHARS = env_int("MAX_AGENT_VIEW_CHARS", 250_000)
+MAX_AGENT_VIEWS_PER_CONVERSATION = env_int("MAX_AGENT_VIEWS_PER_CONVERSATION", 50)
+MAX_VIEW_DATA_RESPONSE_CHARS = env_int("MAX_VIEW_DATA_RESPONSE_CHARS", 20_000)
+MAX_VIEW_DATA_REQUESTS_PER_MINUTE = env_int("MAX_VIEW_DATA_REQUESTS_PER_MINUTE", 60)
 MAX_VIEW_TITLE_CHARS = 120
 
 
@@ -85,17 +73,7 @@ class AgentViewRecord:
         )
 
     def to_document(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "user_id": self.user_id,
-            "conversation_id": self.conversation_id,
-            "title": self.title,
-            "html": self.html,
-            "profile_id": self.profile_id,
-            "created_at": self.created_at,
-            "chars": self.chars,
-            "source": self.source,
-        }
+        return asdict(self)
 
     def to_summary(self) -> dict[str, Any]:
         return {

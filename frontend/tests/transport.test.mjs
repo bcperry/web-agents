@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { after, test } from 'node:test';
 import { createServer } from 'vite';
 import { parse } from 'yaml';
@@ -14,20 +15,36 @@ const helpers = await server.ssrLoadModule('/src/api/helpers.ts');
 const client = await server.ssrLoadModule('/src/api/client.ts');
 const { generateStandardAgentCandidate } = await server.ssrLoadModule('/src/utils/standardAgentCandidate.ts');
 const { formatToolResult } = await server.ssrLoadModule('/src/utils/content.ts');
-const { disambiguateToolNames, deriveSubAgentToolSurface } = await server.ssrLoadModule('/src/utils/agentToolValidation.ts');
+const { SKILL_NAME_RE } = await server.ssrLoadModule('/src/hooks/useSkillForm.ts');
 
-test('tool preview names match runtime fallbacks and stay within the name limit', () => {
-  assert.deepEqual(deriveSubAgentToolSurface('', '', ''), {
-    toolName: 'sub_agent', toolDescription: 'Delegate to the sub_agent agent.',
-    argDescription: 'Request for the sub_agent agent.',
+test('skill name checks match native Agent Framework validation', () => {
+  const names = ['', 'a', '0', 'my-skill-2', '-bad', 'bad-', 'bad--skill', 'Bad', 'bad_name',
+    'bad name', ' x ', 'x'.repeat(64), 'x'.repeat(65)];
+  const expected = JSON.parse(execFileSync('uv', ['run', '--frozen', 'python', '-c', `
+import json, sys
+from agent_framework import SkillFrontmatter
+accepted = []
+for name in json.loads(sys.argv[1]):
+    try:
+        SkillFrontmatter(name=name, description="Example")
+        accepted.append(True)
+    except ValueError:
+        accepted.append(False)
+print(json.dumps(accepted))
+`, JSON.stringify(names)], { cwd: new URL('../../', import.meta.url), encoding: 'utf8' }));
+  assert.deepEqual(names.map(name => SKILL_NAME_RE.test(name) && name.length <= 64), expected);
+});
+test('tool previews use server names and include reserved function and MCP names', async context => {
+  const agents = [{ id: 'child', name: 'Lookup' }];
+  const reserved = ['lookup', 'remote'];
+  const signal = new AbortController().signal;
+  context.mock.method(globalThis, 'fetch', async (url, init) => {
+    assert.equal(url, '/api/tools/agent-preview');
+    assert.deepEqual(JSON.parse(init.body), { agents, reserved_names: reserved });
+    assert.equal(init.signal, signal);
+    return Response.json({ names: ['lookup_2'] });
   });
-  assert.equal(deriveSubAgentToolSurface('!!!', 'description', '123___name').toolName, 'a_123_name');
-  const name = 'x'.repeat(64);
-  const reserved = `${'x'.repeat(62)}_2`;
-  const result = disambiguateToolNames([name, reserved, ...Array(12).fill(name)]);
-  assert.deepEqual(result.slice(0, 3), [name, reserved, `${'x'.repeat(62)}_3`]);
-  assert.equal(new Set(result).size, result.length);
-  assert.ok(result.every(value => value.length <= 64));
+  assert.deepEqual(await client.previewAgentToolNames(agents, reserved, signal), ['lookup_2']);
 });
 
 test('tool result formatting pretty-prints JSON without rewriting non-JSON text', () => {

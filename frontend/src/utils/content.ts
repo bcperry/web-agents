@@ -27,28 +27,3 @@ export function formatToolResult(raw: string): string {
     return raw;
   }
 }
-
-export function convertFrameworkContentItems(items: Array<Record<string, unknown>> | undefined): ContentItem[] {
-  if (!Array.isArray(items)) return [];
-
-  const converted: ContentItem[] = [];
-  for (const item of items) {
-    if (item.type === 'text') {
-      converted.push({ type: 'text', text: (item.text as string) || '' });
-    } else if (item.type === 'data') {
-      const uri = (item.uri as string) || '';
-      if (uri.startsWith('data:image/')) {
-        const commaIndex = uri.indexOf(',');
-        const header = uri.slice(0, commaIndex);
-        const data = uri.slice(commaIndex + 1);
-        const mimeType = header.split(';')[0].replace('data:', '');
-        if (data && mimeType) {
-          converted.push({ type: 'image', data, mimeType });
-        }
-      }
-    } else if (item.type === 'image' && item.data && item.mimeType) {
-      converted.push(item as unknown as ContentItem);
-    }
-  }
-  return converted;
-}

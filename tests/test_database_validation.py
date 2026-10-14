@@ -53,6 +53,15 @@ def test_accepted_read_only_statements(validator: SqlValidator, sql: str):
     assert validated.normalized_sql_hash
 
 
+@pytest.mark.parametrize("identifier", ["dash--name", "block/*name", "odd'name", "escaped]]name"])
+def test_tsql_quoted_identifiers_are_not_comments(identifier):
+    validated = SqlGlotValidator(dialect="tsql").validate(
+        f"SELECT [{identifier}] FROM reporting.items",
+        approved_schemas=frozenset({"reporting"}),
+    )
+    assert validated.referenced_schemas == frozenset({"reporting"})
+
+
 def test_default_validator_is_parser_backed(validator: SqlValidator):
     assert isinstance(validator, SqlGlotValidator)
     assert isinstance(validator, SqlValidator)
