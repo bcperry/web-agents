@@ -136,7 +136,7 @@ def _build_skills_provider(
         CosmosSkillsSource(user_id),
         predicate=lambda skill, context: skill.frontmatter.name in selected,
     )
-    return SkillsProvider(source)
+    return SkillsProvider(source, disable_load_skill_approval=True)
 
 
 def _get_default_temperature() -> float:

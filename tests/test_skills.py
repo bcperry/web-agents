@@ -45,6 +45,7 @@ def test_published_skill_edits_and_deletion_reach_selected_agents(client, monkey
         assert "unselected-skill" not in options["instructions"]
         assert "missing-skill" not in options["instructions"]
         load_skill = next(tool for tool in options["tools"] if tool.name == "load_skill")
+        assert load_skill.approval_mode == "never_require"
         loaded = asyncio.run(load_skill.invoke(arguments={"skill_name": "workflow-skill"}))
         assert instructions in Message(role="tool", contents=loaded).text
 
